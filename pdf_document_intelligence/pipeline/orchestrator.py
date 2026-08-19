@@ -17,6 +17,8 @@ from typing import Callable
 ProgressCallback = Callable[[str, int, int], None]  # (stage_label, current, total)
 
 from pdf_document_intelligence.audit.log import ProcessingLog
+from pdf_document_intelligence.catalog.apply import apply_catalog_to_row
+from pdf_document_intelligence.catalog.loader import get_default_catalog
 from pdf_document_intelligence.config.settings import Settings
 from pdf_document_intelligence.confidence.engine import score_document
 from pdf_document_intelligence.extract.text import extract_document_text
@@ -33,6 +35,7 @@ def process_document(
     path: Path,
     settings: Settings | None = None,
     enable_ocr: bool = True,
+    enable_catalog: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> DocumentResult:
     settings = settings or Settings()
@@ -118,6 +121,26 @@ def process_document(
             log.record("ocr_cross_validation", f"{validator.ocr_calls} region OCR calls")
             if validator.ocr_calls:
                 ocr_engine_version = "tesseract-5.3.4 (tha+eng)"
+
+    if enable_catalog:
+        with log.step("catalog_lookup", "master catalog barcode lookup + non-product classification"):
+            catalog = get_default_catalog()
+            matched = 0
+            flagged = 0
+            for table in extracted_tables:
+                new_rows = []
+                for row in table.rows:
+                    updated_row = apply_catalog_to_row(row, catalog)
+                    if updated_row.fields["name"].source == "master_catalog":
+                        matched += 1
+                    if updated_row.suspected_non_product:
+                        flagged += 1
+                    new_rows.append(updated_row)
+                table.rows = new_rows
+            log.record(
+                "catalog_lookup",
+                f"{matched}/{total_rows} rows matched catalog; {flagged} flagged as suspected non-product",
+            )
 
     with log.step("validation", "department-level reconciliation + duplicate detection"):
         errors = []

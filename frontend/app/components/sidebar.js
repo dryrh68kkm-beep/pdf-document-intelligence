@@ -3,6 +3,7 @@ const NAV_ITEMS = [
   { view: "departments", icon: "🏷️", label: "Departments" },
   { view: "products", icon: "📦", label: "Products" },
   { view: "review", icon: "⚠️", label: "Review" },
+  { view: "nonproduct", icon: "🎁", label: "ของแถม / ไม่ใช่สินค้า" },
   { view: "documents", icon: "📄", label: "Documents" },
 ];
 
@@ -13,6 +14,7 @@ export function renderSidebar(store) {
     departments: dashboard?.departmentCount ?? 0,
     products: dashboard?.skuCount ?? 0,
     review: dashboard?.reviewCount ?? 0,
+    nonproduct: dashboard?.nonProductCount ?? 0,
     documents: documents.length,
   };
   el.innerHTML = "";

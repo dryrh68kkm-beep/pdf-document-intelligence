@@ -26,6 +26,7 @@ export function renderDashboard(container, store) {
     kpiCard(dashboard.skuCount.toLocaleString(), "SKU"),
     kpiCard(dashboard.departmentCount, "แผนก"),
     kpiCard(dashboard.reviewCount, "ต้องตรวจสอบ", dashboard.reviewCount > 0 ? "warn" : "ok"),
+    ...(dashboard.nonProductCount > 0 ? [kpiCard(dashboard.nonProductCount, "ของแถม/ไม่ใช่สินค้า")] : []),
     ...dashboard.numericColumns.map((c) => kpiCard(fmtNum(dashboard.grandTotals[c.key] ?? 0), c.label)),
   ].join("");
 

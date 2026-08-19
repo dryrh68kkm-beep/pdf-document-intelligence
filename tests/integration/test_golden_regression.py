@@ -10,14 +10,18 @@ Thai `name` fields: this sample's source PDF has a confirmed root cause
 (see docs/OCR_ROOT_CAUSE.md) — its embedded font's ToUnicode CMap never
 maps any glyph code to a Thai combining vowel/tone mark, so those
 characters are physically absent from the text layer; no extraction-side
-fix can recover them. `name` is therefore cross-validated against
-region-level Tesseract OCR (tha+eng) of the rendered page, which reads the
-same glyphs that render correctly on screen. This materially improves
-`name` (see test_ocr_cross_validation_recovers_most_thai_names) but OCR of
-mixed Thai/English SKU-prefix text on a real invoice is not perfect, so
-`name` is still never diffed against exact expected text or auto-approved
-— every row stays `review_required=True` with full raw/OCR evidence
-preserved, per "ไม่แน่ใจ = ห้ามเดา".
+fix can recover them. Two independent recovery paths run, in priority
+order:
+
+1. Master catalog lookup by barcode (catalog/) — ground truth (an exact
+   match against real master data), so a hit is never flagged for review.
+2. Region-level Tesseract OCR (tha+eng) of the rendered page, for rows the
+   catalog doesn't cover — genuinely uncertain, so it stays
+   review_required even when it recovers legible text.
+
+`name` is never diffed against exact expected text for the OCR-only
+remainder (mixed Thai/English SKU-prefix text isn't reliably OCR'd), but
+IS diffed exactly for catalog-sourced rows, since those are ground truth.
 """
 from __future__ import annotations
 
@@ -37,11 +41,11 @@ NUMERIC_CODE_FIELDS = (
     "article", "barcode", "weight_qty", "pu_qty", "sku_qty",
 )
 
-# Below this fraction of `name` fields recovered via OCR, something in the
-# OCR pipeline (rendering DPI, crop padding, tesseract lang data) has
-# regressed — this is not a hard 100% bar because Tesseract's tha+eng model
-# genuinely cannot read every mixed-script SKU-prefix token on this sample.
-MIN_OCR_RECOVERY_RATE = 0.65
+# Below this fraction of `name` fields resolved (catalog match or OCR),
+# something in the recovery pipeline (catalog path, rendering DPI, crop
+# padding, tesseract lang data) has regressed.
+MIN_CATALOG_MATCH_RATE = 0.80
+MIN_TOTAL_RESOLUTION_RATE = 0.90
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +71,8 @@ def test_department_and_row_counts_match_baseline(result, expected):
 
 
 def test_numeric_and_code_fields_match_baseline_exactly(result, expected):
-    """OCR must never touch code/numeric fields — only Thai `name`."""
+    """Neither OCR nor the catalog lookup may ever touch code/numeric
+    fields — only `name`."""
     mismatches = []
     for table, dept in zip(result.tables, expected["departments"]):
         for row, expected_row in zip(table.rows, dept["rows"]):
@@ -78,17 +83,18 @@ def test_numeric_and_code_fields_match_baseline_exactly(result, expected):
                     mismatches.append((table.name, row.row_index, field_name, exp, actual))
                 assert row.fields[field_name].source == "pdf_text", (
                     f"{table.name} row {row.row_index} field {field_name}: "
-                    "OCR must not touch non-Thai fields"
+                    "OCR/catalog must not touch non-Thai fields"
                 )
     assert not mismatches, f"{len(mismatches)} field regressions: {mismatches[:10]}"
 
 
-def test_ocr_cross_validation_recovers_most_thai_names(result, expected):
-    """Regression guard on the actual fix: most `name` fields should now be
-    OCR/cross-validated rather than stuck on the known-broken PDF text, and
-    that source assignment should be deterministic run to run (matches the
-    committed baseline)."""
-    recovered = 0
+def test_catalog_lookup_resolves_most_names_as_ground_truth(result, expected):
+    """Regression guard on the primary fix: most `name` fields should
+    resolve to an exact master-catalog match (never flagged for review),
+    with OCR as the fallback for the remainder - and both sources'
+    assignment must be deterministic (matches the committed baseline)."""
+    catalog_matched = 0
+    resolved = 0
     total = 0
     for table, dept in zip(result.tables, expected["departments"]):
         for row, expected_row in zip(table.rows, dept["rows"]):
@@ -98,18 +104,37 @@ def test_ocr_cross_validation_recovers_most_thai_names(result, expected):
                 f"{table.name} row {row.row_index}: name source drifted from baseline "
                 f"({expected_row['name_source']} -> {source})"
             )
-            if source in ("ocr", "cross_validated"):
-                recovered += 1
-    rate = recovered / total
-    assert rate >= MIN_OCR_RECOVERY_RATE, f"OCR recovery rate {rate:.1%} below {MIN_OCR_RECOVERY_RATE:.0%} floor"
+            if source == "master_catalog":
+                catalog_matched += 1
+                assert row.fields["name"].review_required is False, "a catalog match must never need review"
+            if source in ("master_catalog", "ocr", "cross_validated"):
+                resolved += 1
+
+    catalog_rate = catalog_matched / total
+    resolution_rate = resolved / total
+    assert catalog_rate >= MIN_CATALOG_MATCH_RATE, f"catalog match rate {catalog_rate:.1%} below {MIN_CATALOG_MATCH_RATE:.0%} floor"
+    assert resolution_rate >= MIN_TOTAL_RESOLUTION_RATE, f"total resolution rate {resolution_rate:.1%} below {MIN_TOTAL_RESOLUTION_RATE:.0%} floor"
 
 
-def test_ocr_never_silently_trusted(result, expected):
-    """Regression guard on the *safety* property: every name field must
-    stay flagged review_required (mixed Thai/English retail text is
-    genuinely uncertain even post-OCR), and every field carries a reason
-    plus both raw PDF and raw OCR text for a human to compare — never a
-    single opaque "corrected" string with no evidence trail."""
+def test_catalog_match_is_exact_ground_truth(result):
+    """Spot-check specific known-correct catalog resolutions (verified by
+    hand against the source PDF and the catalog CSV) - guards against a
+    catalog-loading or lookup-key regression silently producing wrong
+    (but still 'confident') values."""
+    bakery = next(t for t in result.tables if t.name == "BAKERY")
+    row1 = bakery.rows[0]
+    assert row1.fields["barcode"].value == "8851886009821"
+    assert row1.fields["name"].value == "มินิเค้กแฟนซี"
+    assert row1.fields["name"].source == "master_catalog"
+
+
+def test_unresolved_names_stay_flagged_for_review(result, expected):
+    """Regression guard on the *safety* property for whatever the catalog
+    doesn't cover: OCR results (or a bare PDF fallback) never get silently
+    trusted - every non-catalog name stays review_required, and every
+    field carries both raw PDF and raw OCR text (when OCR ran) for a human
+    to compare, never a single opaque 'corrected' string with no evidence
+    trail."""
     for table, dept in zip(result.tables, expected["departments"]):
         for row, expected_row in zip(table.rows, dept["rows"]):
             name_field = row.fields["name"]
@@ -118,6 +143,16 @@ def test_ocr_never_silently_trusted(result, expected):
             if name_field.source in ("ocr", "cross_validated"):
                 assert name_field.ocr_raw_value
                 assert name_field.ocr_confidence is not None
+
+
+def test_non_product_classification_matches_baseline(result, expected):
+    """This document has no internal marketing-material/giveaway rows, so
+    the conservative classifier should flag zero - a nonzero count would
+    mean the classifier started matching real products (regression) or a
+    genuinely new case appeared that needs eyes on it either way."""
+    for table, dept in zip(result.tables, expected["departments"]):
+        for row, expected_row in zip(table.rows, dept["rows"]):
+            assert row.suspected_non_product == expected_row["suspected_non_product"]
 
 
 def test_document_status_is_never_silently_auto_approved(result):

@@ -56,6 +56,32 @@ switches `view` in JS state, never a page reload. View modules
 - Global search debounced 200ms, filtering a search index string
   precomputed once per data refresh (not recomputed per keystroke).
 
+## Master catalog lookup (barcode -> authoritative product name)
+
+`pdf_document_intelligence/catalog/` adds a higher-confidence resolution
+path for the `name` field than OCR: `data/barcode_catalog.csv` (~35k
+barcode -> name rows, cp874-encoded) is loaded once and looked up by
+barcode after OCR cross-validation runs. A match is ground truth — an
+exact hit against real master data, not a pixel/glyph reading — so it's
+never flagged for review, and it takes priority over OCR. On the golden
+sample this resolves 133/154 (86%) of names exactly, vs. OCR's 116/154
+legible-but-still-uncertain recoveries; `raw_value`/`ocr_raw_value` are
+preserved either way, never overwritten.
+
+`catalog/classify.py` also flags rows suspected of being internal
+marketing material or explicit free-gift items (`suspected_non_product`),
+using only signals specific enough that a real product can't plausibly
+trigger them (an internal `PAQ1_`/`PAQ2_` barcode-name prefix, or the
+literal phrase "ของแถม"). An earlier draft used looser keywords (`POP`,
+`LABEL`, `STAND`, `TAG`, `"ราคาโปรโมชั่น"`, `"ป้ายห้อย"`) and was rejected
+after verification against the real catalog caught it mis-flagging actual
+products — `JOHNNIE WALKER GOLD LABEL` (real whisky), a real luggage tag,
+and real discounted meat all got wrongly flagged as "not a product". Those
+specific cases are pinned as regression tests in
+`tests/unit/test_catalog_classify.py`. Flagged rows are never deleted or
+silently reclassified — they're grouped into a separate "ของแถม /
+ไม่ใช่สินค้า" view instead of counting toward ordinary SKU/quantity totals.
+
 ## What's implemented (P0 + most of P1)
 
 - App shell, persistent Add Files bar, drag-and-drop anywhere, duplicate

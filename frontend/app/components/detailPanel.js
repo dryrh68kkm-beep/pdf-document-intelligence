@@ -6,8 +6,12 @@ const FLAG_LABEL = {
   SOURCE_CONFLICT: "ข้อความจาก PDF และจาก OCR ไม่ตรงกัน ควรเทียบกับต้นฉบับก่อนยืนยัน",
   MISSING_FIELD: "ไม่พบค่าในตำแหน่งนี้",
   TYPE_PARSE_FAILED: "แปลงชนิดข้อมูลไม่สำเร็จ",
+  CATALOG_MATCH: "พบ Barcode นี้ในฐานข้อมูลสินค้ากลาง — ใช้ชื่อจากฐานข้อมูลแทนการอ่านจาก PDF/OCR",
 };
-const SOURCE_LABEL = { pdf_text: "PDF text layer", ocr: "OCR (Tesseract tha+eng)", cross_validated: "PDF + OCR ตรงกัน" };
+const SOURCE_LABEL = {
+  pdf_text: "PDF text layer", ocr: "OCR (Tesseract tha+eng)", cross_validated: "PDF + OCR ตรงกัน",
+  master_catalog: "ฐานข้อมูลสินค้ากลาง (ยืนยันแล้ว)",
+};
 const FIELD_LABEL = {
   dn_no: "DN no", do_no: "DO", order_no: "Order no.", line: "Line", pallet: "Pallet", lot: "Lot",
   article: "Article", barcode: "Barcode", name: "ชื่อสินค้า", weight_qty: "น้ำหนัก", pu_qty: "PU qty",
@@ -17,15 +21,17 @@ const FIELD_LABEL = {
 function fieldBlock(name, fv) {
   if (!fv) return "";
   const isThai = /[฀-๛]/.test(String(fv.value || fv.raw || ""));
+  const sourceNote = name === "name" ? `<div class="dp-source-note">ที่มา: ${SOURCE_LABEL[fv.source] || fv.source}</div>` : "";
   let html = `
     <div class="dp-field">
       <div class="dp-label">${FIELD_LABEL[name] || name}</div>
       <div class="dp-value${isThai ? " thai" : ""}">${fv.value ?? "—"}</div>
+      ${sourceNote}
     </div>`;
-  if (fv.review) {
+  if (fv.review || fv.source === "master_catalog") {
     html += `
       <div class="dp-field">
-        <div class="dp-label">หลักฐาน (${SOURCE_LABEL[fv.source] || fv.source})</div>
+        <div class="dp-label">หลักฐาน${fv.review ? "" : " (ยืนยันแล้ว ไม่ต้องตรวจสอบ)"}</div>
         <div class="dp-value${isThai ? " thai" : ""}" style="margin-bottom:4px;">Raw PDF: ${fv.raw || "—"}</div>
         ${fv.ocrRaw ? `<div class="dp-value thai" style="margin-bottom:4px;">OCR: ${fv.ocrRaw} (${Math.round((fv.ocrConfidence || 0) * 100)}%)</div>` : ""}
         <ul class="dp-reasons">${(fv.flags || []).map((f) => `<li>${FLAG_LABEL[f] || f}</li>`).join("")}</ul>
@@ -44,6 +50,7 @@ export function renderProductDetail(container, product) {
       </div>
       <button class="close" id="dpClose" aria-label="ปิด" type="button">✕</button>
     </div>
+    ${product.suspectedNonProduct ? `<div class="dp-badge">🎁 สงสัยว่าไม่ใช่สินค้า: ${(product.nonProductReasons || []).join(", ")}</div>` : ""}
     <div class="dp-row">
       ${fieldBlock("barcode", f.barcode)}
       ${fieldBlock("article", f.article)}

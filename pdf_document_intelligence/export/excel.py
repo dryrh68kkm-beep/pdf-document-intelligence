@@ -25,7 +25,8 @@ def _write_header(ws: Worksheet, headers: list[str]) -> None:
 
 def _write_data_sheet(ws: Worksheet, results: list[DocumentResult], multi: bool = False) -> None:
     headers = (["source_file"] if multi else []) + [
-        "department", *[c.canonical_name for c in COLUMNS], "row_confidence", "review_required"
+        "department", *[c.canonical_name for c in COLUMNS],
+        "row_confidence", "review_required", "suspected_non_product", "non_product_reasons",
     ]
     _write_header(ws, headers)
     for result in results:
@@ -39,6 +40,8 @@ def _write_data_sheet(ws: Worksheet, results: list[DocumentResult], multi: bool 
                 review = any(f.review_required for f in row.fields.values())
                 values.append(row.confidence_band)
                 values.append("YES" if review else "")
+                values.append("YES" if row.suspected_non_product else "")
+                values.append(", ".join(row.non_product_reasons))
                 ws.append(values)
     # Code columns (dn_no, do_no, order_no, pallet, lot, article, barcode)
     # are written as text so Excel never strips leading zeros.

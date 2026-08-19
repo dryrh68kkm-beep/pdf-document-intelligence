@@ -8,6 +8,7 @@ const VIEWS = {
   departments: () => import("./views/departments.js").then((m) => m.renderDepartments),
   products: () => import("./views/products.js").then((m) => m.renderProducts),
   review: () => import("./views/review.js").then((m) => m.renderReview),
+  nonproduct: () => import("./views/nonproduct.js").then((m) => m.renderNonProduct),
   documents: () => import("./views/documents.js").then((m) => m.renderDocuments),
 };
 

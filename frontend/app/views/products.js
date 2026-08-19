@@ -23,7 +23,11 @@ export function renderProducts(container, store) {
   }
 
   function currentRows(localQuery) {
-    let rows = products;
+    // Suspected non-product rows (POP/marketing-material internal codes,
+    // explicit "free gift" items) are excluded here to keep the product
+    // list and SKU counts clean - they're not deleted, just regrouped;
+    // see the "ของแถม / ไม่ใช่สินค้า" view.
+    let rows = products.filter((p) => !p.suspectedNonProduct);
     if (deptFilter) rows = rows.filter((p) => p.department === deptFilter);
     const q = (localQuery || "").trim().toLowerCase();
     if (q) rows = rows.filter((p) => p._search.includes(q));

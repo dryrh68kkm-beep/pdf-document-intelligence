@@ -102,6 +102,8 @@ def document_detail_json(doc: DocumentEntry) -> dict:
                     "page": f.get("name").bbox.page if f.get("name") else table.page_start,
                     "band": row.confidence_band,
                     "reviewRequired": review_required,
+                    "suspectedNonProduct": row.suspected_non_product,
+                    "nonProductReasons": row.non_product_reasons,
                     "fields": {name: _field_json(fv) for name, fv in f.items()},
                 }
             )
