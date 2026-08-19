@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>PDF Document Intelligence</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><span aria-hidden="true">📦</span> PDF Document Intelligence</div>
+    <div class="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="globalSearch" type="text" placeholder="ค้นหา Barcode / ชื่อสินค้า / แผนก / ไฟล์..." autocomplete="off" />
+    </div>
+    <div class="topbar-actions">
+      <button class="btn" id="exportBtn">Export Excel</button>
+    </div>
+  </header>
+
+  <div class="body-row">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main class="workspace" id="workspace"></main>
+  </div>
+
+  <footer class="bottombar">
+    <button class="btn btn-primary add-files-btn" id="addFilesBtn">
+      <span aria-hidden="true">＋</span> Add Files
+    </button>
+    <input type="file" id="fileInput" accept="application/pdf" multiple hidden />
+    <div class="stat-inline" id="fileStat">ยังไม่มีเอกสาร</div>
+    <div class="processing-strip" id="processingStrip"></div>
+  </footer>
+</div>
+
+<div class="drag-overlay" id="dragOverlay">
+  <div class="drag-overlay-box">
+    <div class="big">วาง PDF ที่นี่</div>
+    <div class="small">ระบบจะประมวลผลให้อัตโนมัติ</div>
+  </div>
+</div>
+
+<div class="side-panel" id="sidePanel"></div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>

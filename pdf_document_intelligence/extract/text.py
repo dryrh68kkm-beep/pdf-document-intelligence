@@ -140,9 +140,10 @@ def score_text_quality(text: str, settings: Settings) -> TextQuality:
     )
 
 
-def extract_document_text(path: Path, settings: Settings) -> DocumentText:
+def extract_document_text(path: Path, settings: Settings, on_page_done=None) -> DocumentText:
     doc = DocumentText()
     with pdfplumber.open(str(path)) as pdf:
+        total_pages = len(pdf.pages)
         for i, page in enumerate(pdf.pages):
             page_number = i + 1
             raw_words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
@@ -160,4 +161,6 @@ def extract_document_text(path: Path, settings: Settings) -> DocumentText:
             raw_text = page.extract_text() or ""
             quality = score_text_quality(raw_text, settings)
             doc.pages.append(PageText(page_number=page_number, words=words, raw_text=raw_text, quality=quality))
+            if on_page_done:
+                on_page_done(page_number, total_pages)
     return doc

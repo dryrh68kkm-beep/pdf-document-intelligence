@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Callable
+
+ProgressCallback = Callable[[str, int, int], None]  # (stage_label, current, total)
 
 from pdf_document_intelligence.audit.log import ProcessingLog
 from pdf_document_intelligence.config.settings import Settings
@@ -26,10 +29,16 @@ from pdf_document_intelligence.validate.cross_validate import ThaiOcrCrossValida
 from pdf_document_intelligence.validate.reconciliation import check_duplicate_rows, reconcile_table
 
 
-def process_document(path: Path, settings: Settings | None = None, enable_ocr: bool = True) -> DocumentResult:
+def process_document(
+    path: Path,
+    settings: Settings | None = None,
+    enable_ocr: bool = True,
+    on_progress: ProgressCallback | None = None,
+) -> DocumentResult:
     settings = settings or Settings()
     log = ProcessingLog()
     doc_id = str(uuid.uuid4())
+    progress = on_progress or (lambda stage, current, total: None)
 
     with log.step("preflight", f"checking {path.name}"):
         try:
@@ -52,7 +61,9 @@ def process_document(path: Path, settings: Settings | None = None, enable_ocr: b
             )
 
     with log.step("text_extraction", "pdfplumber word/bbox extraction + quality scoring"):
-        doc_text = extract_document_text(path, settings)
+        doc_text = extract_document_text(
+            path, settings, on_page_done=lambda cur, total: progress("อ่านหน้า PDF", cur, total)
+        )
         unreliable_pages = [p.page_number for p in doc_text.pages if not p.quality.reliable]
         log.record(
             "text_extraction",
@@ -86,19 +97,21 @@ def process_document(path: Path, settings: Settings | None = None, enable_ocr: b
             )
         total_rows = sum(len(t.rows) for t in extracted_tables)
         log.record("field_parsing", f"{total_rows} rows parsed across {len(extracted_tables)} tables")
+        progress("สร้างรายการสินค้า", total_rows, total_rows)
 
     ocr_engine_version = settings.ocr_engine_version
     if enable_ocr:
         with log.step("ocr_cross_validation", "selective region-level OCR for Thai fields on unreliable pages"):
             validator = ThaiOcrCrossValidator(path, settings)
-            for table in extracted_tables:
-                for row in table.rows:
-                    updated = {
-                        name: validator.maybe_apply(field, quality_by_page[field.bbox.page])
-                        for name, field in row.fields.items()
-                    }
-                    row.fields = updated
-                    row.confidence_band = compute_confidence_band(updated)
+            all_rows = [row for table in extracted_tables for row in table.rows]
+            for i, row in enumerate(all_rows, start=1):
+                updated = {
+                    name: validator.maybe_apply(field, quality_by_page[field.bbox.page])
+                    for name, field in row.fields.items()
+                }
+                row.fields = updated
+                row.confidence_band = compute_confidence_band(updated)
+                progress("ตรวจภาษาไทยด้วย OCR", i, len(all_rows))
             from pdf_document_intelligence.extract.ocr import clear_page_cache
 
             clear_page_cache()
@@ -109,7 +122,8 @@ def process_document(path: Path, settings: Settings | None = None, enable_ocr: b
     with log.step("validation", "department-level reconciliation + duplicate detection"):
         errors = []
         warnings = []
-        for raw, table in zip(raw_tables, extracted_tables):
+        for i, (raw, table) in enumerate(zip(raw_tables, extracted_tables), start=1):
+            progress(f"คำนวณยอด {table.name}", i, len(extracted_tables))
             for issue in reconcile_table(table, raw, settings):
                 (errors if issue.severity == "error" else warnings).append(issue)
             for issue in check_duplicate_rows(table):
