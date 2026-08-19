@@ -32,6 +32,33 @@ class TableStructureError(Exception):
 class Cell:
     text: str
     words: list[Word]
+    # Set only when `text` was derived by splitting a glued word (see
+    # split_glued_code_suffix) - holds the original, unsplit PDF text so
+    # the evidence trail never loses what the source document actually
+    # contained, even though `text` itself is now the corrected value.
+    raw_text: str | None = None
+
+
+def split_glued_code_suffix(text: str, code_re: re.Pattern[str]) -> tuple[str, str] | None:
+    """Recovers two character streams the source PDF rendered at
+    overlapping X positions and pdfplumber's word-clustering therefore
+    merged into one "word" (observed: a department name overflowing its
+    column, with an Article code's glyphs starting at almost the same X
+    as the name's last couple of letters - see
+    tests/integration/test_golden_regression_bpdc.py for the traced
+    example). Never guesses at content: splits purely by character class
+    (digit/hyphen vs. everything else), preserving each class's own
+    relative left-to-right order, and returns a split only when the
+    digit/hyphen stream is an exact match for `code_re` - otherwise
+    returns None and the caller must leave the glued text untouched for a
+    human to review, per this project's "never guess" rule.
+    """
+    code_chars = "".join(c for c in text if c.isdigit() or c == "-")
+    label_chars = "".join(c for c in text if not (c.isdigit() or c == "-"))
+    label = re.sub(r"\s+", " ", label_chars).strip()
+    if not label or not code_re.match(code_chars):
+        return None
+    return label, code_chars
 
 
 @dataclass

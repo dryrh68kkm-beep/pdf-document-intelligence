@@ -6965,15 +6965,15 @@
       ]
     },
     {
-      "name": "STATIONERY & EDUTAINMEN1T02313106-00-001",
-      "row_count": 1,
+      "name": "STATIONERY & EDUTAINMENT",
+      "row_count": 2,
       "rows": [
         {
           "dn_no": "8705868",
           "do_no": "905892",
           "order_no": "43258128",
           "line": 1,
-          "article": null,
+          "article": "102313106-00-001",
           "barcode": "8851849255531",
           "weight_qty": 0.72,
           "pu_qty": 1,
@@ -6981,19 +6981,13 @@
           "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
-        }
-      ]
-    },
-    {
-      "name": "STATIONERY & EDUTAINMEN1T03219960-00-000",
-      "row_count": 1,
-      "rows": [
+        },
         {
           "dn_no": "8705844",
           "do_no": "282070",
           "order_no": "46764925",
           "line": 1,
-          "article": null,
+          "article": "103219960-00-000",
           "barcode": "8858741761429",
           "weight_qty": 11.15,
           "pu_qty": 1,

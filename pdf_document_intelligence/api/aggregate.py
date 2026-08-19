@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from pdf_document_intelligence.api.store import DocumentEntry
+from pdf_document_intelligence.templates.department_groups import major_department_for
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
 
 # Only the columns the document itself reconciles against a printed total
@@ -99,6 +100,7 @@ def build_dashboard_state(docs: list[DocumentEntry]) -> dict:
     departments = [
         {
             "name": name,
+            "majorDepartment": major_department_for(name),
             "skuCount": len(dept_skus[name]),
             "rowCount": dept_rows[name],
             "reviewCount": dept_review[name],

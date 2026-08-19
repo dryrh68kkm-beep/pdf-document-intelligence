@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 
 from pdf_document_intelligence.extract.text import DocumentText, Word
 from pdf_document_intelligence.tables.geometry import (
+    ARTICLE_RE,
     Boundaries,
     Cell,
     ParsedTotal,
@@ -30,6 +31,7 @@ from pdf_document_intelligence.tables.geometry import (
     cluster_rows,
     find_header_boundaries,
     parse_total,
+    split_glued_code_suffix,
 )
 from pdf_document_intelligence.templates.packing_list_bpdc import (
     COLUMNS,
@@ -83,6 +85,28 @@ def _parse_pallet_line(row: list[Word]) -> tuple[str, str | None]:
     return pallet_id, lot_no
 
 
+def _split_department_article_overflow(raw_row: RawRow) -> None:
+    """When "Department" is long enough to overflow its printed column
+    width, its glyphs can visually overlap the Article code's - observed
+    directly in the sample (e.g. "STATIONERY & EDUTAINMEN1T02313106-00-001")
+    and traced at the character level: it's two separate text runs at
+    near-identical X positions, not a single mangled word. Only applies
+    when the article cell for this row came out empty (i.e. its own words
+    genuinely got swallowed into the department cell) - never overwrites a
+    cleanly-extracted article."""
+    dept_cell = raw_row.cells.get("department")
+    article_cell = raw_row.cells.get("article")
+    if not dept_cell or not dept_cell.text or article_cell is None or article_cell.text:
+        return
+    split = split_glued_code_suffix(dept_cell.text, ARTICLE_RE)
+    if split is None:
+        return
+    label, code = split
+    original = dept_cell.text
+    raw_row.cells["department"] = Cell(text=label, words=dept_cell.words, raw_text=original)
+    raw_row.cells["article"] = Cell(text=code, words=dept_cell.words, raw_text=original)
+
+
 def reconstruct_tables(doc: DocumentText) -> list[PalletBlock]:
     blocks: list[PalletBlock] = []
     boundaries: Boundaries | None = None
@@ -124,6 +148,7 @@ def reconstruct_tables(doc: DocumentText) -> list[PalletBlock]:
                 continue  # stray content before the first block; ignore
             row_top = min(w.top for w in row)
             raw_row = assign_row(row, page.page_number, row_top, boundaries, plain_columns=_PLAIN_COLUMNS)
+            _split_department_article_overflow(raw_row)
             open_block.rows.append(raw_row)
             open_block.page_end = page.page_number
 

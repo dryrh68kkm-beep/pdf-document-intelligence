@@ -38,9 +38,11 @@ def _parse_field(
     page_quality: TextQuality,
     settings: Settings,
     required: bool = True,
+    display_raw_value: str | None = None,
 ) -> FieldValue:
     raw_text = raw_text.strip()
     normalized = normalize_thai_text(raw_text)
+    overflow_split = display_raw_value is not None
     value: str | int | float | None
     validation_flags: list[str] = []
     review_required = False
@@ -103,9 +105,19 @@ def _parse_field(
         if "TEXT_LAYER_UNRELIABLE" not in validation_flags:
             validation_flags.append("TEXT_LAYER_UNRELIABLE")
 
+    # This field's text was recovered by splitting a glued word (see
+    # geometry.split_glued_code_suffix) rather than extracted verbatim
+    # from its own column — the split is deterministic and validated, but
+    # still a correction, so it stays review_required like every other
+    # non-verbatim recovery path (OCR, catalog) in this pipeline.
+    if overflow_split:
+        confidence = min(confidence, 0.85)
+        review_required = True
+        validation_flags.append("COLUMN_OVERFLOW_SPLIT")
+
     return FieldValue(
         name=canonical_name,
-        raw_value=raw_text,
+        raw_value=display_raw_value if display_raw_value is not None else raw_text,
         value=value,
         type=field_type,  # type: ignore[arg-type]
         bbox=bbox,
@@ -138,7 +150,16 @@ def parse_row(
             else:
                 raw_text = group_carry.get(col.canonical_name, "")
 
-        field = _parse_field(col.canonical_name, col.field_type, raw_text, bbox, page_quality, settings, col.required)
+        field = _parse_field(
+            col.canonical_name,
+            col.field_type,
+            raw_text,
+            bbox,
+            page_quality,
+            settings,
+            col.required,
+            display_raw_value=cell.raw_text if cell else None,
+        )
         fields[col.canonical_name] = field
 
     return TableRow(row_index=row_index, fields=fields, confidence_band=compute_confidence_band(fields))
