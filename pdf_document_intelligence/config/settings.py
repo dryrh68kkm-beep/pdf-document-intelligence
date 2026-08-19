@@ -1,0 +1,61 @@
+"""All tunable thresholds/weights/limits for the pipeline.
+
+Nothing here is hard-coded into pipeline logic — every module that needs a
+threshold reads it from a `Settings` instance instead. This is deliberate
+per the architecture proposal: confidence bands, tolerances, and limits
+must stay configuration, not magic numbers buried in code.
+"""
+from __future__ import annotations
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="PDI_", env_file=".env", extra="ignore")
+
+    # --- File / page limits ---
+    max_file_size_bytes: int = 200 * 1024 * 1024
+    max_pages: int = 500
+
+    # --- Text-layer quality thresholds (0.0-1.0) ---
+    min_printable_char_ratio: float = 0.85
+    min_thai_valid_char_ratio: float = 0.90
+    max_replacement_char_ratio: float = 0.01
+    # Minimum fraction of Thai-block characters that must be combining
+    # vowels/tone marks in a Thai-heavy passage, or the text layer is
+    # treated as silently dropping glyphs (see extract/text.py).
+    min_thai_combining_density: float = 0.08
+    # Below this composite text-quality score, a page/field is treated as
+    # "text layer unreliable" and flagged for OCR cross-check (or, when OCR
+    # is unavailable/out of scope, flagged NEEDS_REVIEW rather than trusted).
+    text_quality_ocr_threshold: float = 0.90
+
+    # --- OCR confidence bands ---
+    ocr_confidence_high: float = 0.95
+    ocr_confidence_medium: float = 0.85
+
+    # --- Reconciliation tolerance (currency/quantity sums) ---
+    reconciliation_abs_tolerance: float = 0.02
+
+    # --- Confidence weights (must sum to 1.0; validated in ConfidenceEngine) ---
+    weight_extraction: float = 0.30
+    weight_ocr: float = 0.15
+    weight_layout: float = 0.15
+    weight_schema: float = 0.15
+    weight_validation: float = 0.25
+
+    # --- Document-level status thresholds (percentages, 0-100) ---
+    auto_approved_threshold: float = 98.0
+    review_recommended_threshold: float = 90.0
+
+    # --- Critical-field stricter threshold ---
+    critical_field_min_confidence: float = 0.95
+    critical_fields: tuple[str, ...] = ("document_number", "date", "quantity", "price", "amount", "total")
+
+    engine_version: str = "0.1.0"
+    parser_version: str = "0.1.0"
+    ocr_engine_version: str = "unset"
+
+
+def get_settings() -> Settings:
+    return Settings()
