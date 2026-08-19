@@ -23,4 +23,32 @@ export const api = {
   allProducts: () => fetch(`${BASE}/api/products`).then(json),
   dashboardState: () => fetch(`${BASE}/api/state`).then(json),
   exportUrl: () => `${BASE}/api/export.xlsx`,
+
+  getProduct: (rowId) => fetch(`${BASE}/api/products/${rowId}`).then(json),
+  patchProduct: (rowId, field, value, reason) =>
+    fetch(`${BASE}/api/products/${rowId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field, value, reason }),
+    }).then(json),
+  productHistory: (rowId) => fetch(`${BASE}/api/products/${rowId}/history`).then(json),
+  undoCorrection: (rowId, correctionId) =>
+    fetch(`${BASE}/api/products/${rowId}/undo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ correctionId }),
+    }).then(json),
+  confirmReview: (rowId) => fetch(`${BASE}/api/review/${rowId}/confirm`, { method: "POST" }).then(json),
+
+  listLocalMaster: (search = "") =>
+    fetch(`${BASE}/api/master/local${search ? `?search=${encodeURIComponent(search)}` : ""}`).then(json),
+  addLocalMaster: (entry) =>
+    fetch(`${BASE}/api/master/local`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    }).then(json),
+  officialMasterCount: () => fetch(`${BASE}/api/master/official/count`).then(json),
+
+  health: () => fetch(`${BASE}/api/health`).then(json),
 };

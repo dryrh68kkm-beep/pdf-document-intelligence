@@ -1,0 +1,388 @@
+"""SQLite repository: the only module that writes SQL. Everything above
+this layer (store.py, api/*.py) works with plain dicts, never raw sqlite3
+rows or cursors.
+
+Product-row identity across a reprocess: matched by (department, barcode)
+falling back to (department, article_code) falling back to (department,
+row_index). A matched row keeps its id (so corrections/audit history stay
+attached); an unmatched old row is soft-deleted, never hard-deleted, so its
+correction history remains inspectable.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from pdf_document_intelligence.db.connection import get_connection
+from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN, NUMERIC_FIELDS
+from pdf_document_intelligence.db.migrations import SCHEMA_VERSION, current_version
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def new_id() -> str:
+    return str(uuid.uuid4())
+
+
+class Repository:
+    """Note: `_conn` is looked up fresh on every access rather than cached
+    at construction time, so a long-lived singleton `Repository` (like
+    `api.store.store.repo`) keeps working correctly across a connection
+    swap (used by tests to simulate a server restart, and by
+    `db.backup.restore_backup` which reopens the DB file in place)."""
+
+    def __init__(self, conn: sqlite3.Connection | None = None) -> None:
+        self._fixed_conn = conn
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        return self._fixed_conn or get_connection()
+
+    # ---------------- documents ----------------
+
+    def create_document(self, doc_id: str, sha256: str, filename: str, file_size: int) -> dict:
+        now = _now()
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO documents
+                   (id, sha256, filename, file_size, status, progress_stage,
+                    uploaded_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'processing', 'queued', ?, ?, ?)""",
+                (doc_id, sha256, filename, file_size, now, now, now),
+            )
+        return self.get_document(doc_id)
+
+    def find_document_by_sha256(self, sha256: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM documents WHERE sha256 = ? AND deleted_at IS NULL", (sha256,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_document(self, doc_id: str) -> dict | None:
+        row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_documents(self, include_deleted: bool = False) -> list[dict]:
+        q = "SELECT * FROM documents"
+        if not include_deleted:
+            q += " WHERE deleted_at IS NULL"
+        q += " ORDER BY uploaded_at DESC"
+        return [dict(r) for r in self._conn.execute(q)]
+
+    def update_progress(self, doc_id: str, stage: str, current: int, total: int) -> None:
+        with self._conn:
+            self._conn.execute(
+                """UPDATE documents SET progress_stage=?, progress_current=?, progress_total=?,
+                   updated_at=? WHERE id=?""",
+                (stage, current, total, _now(), doc_id),
+            )
+
+    def set_document_complete(self, doc_id: str, page_count: int, meta: dict) -> None:
+        with self._conn:
+            self._conn.execute(
+                """UPDATE documents SET status='complete', page_count=?, meta_json=?,
+                   error=NULL, updated_at=? WHERE id=?""",
+                (page_count, json.dumps(meta, ensure_ascii=False), _now(), doc_id),
+            )
+
+    def set_document_error(self, doc_id: str, error: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE documents SET status='error', error=?, updated_at=? WHERE id=?",
+                (error, _now(), doc_id),
+            )
+
+    def set_document_processing(self, doc_id: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                """UPDATE documents SET status='processing', error=NULL,
+                   progress_stage='queued', progress_current=0, progress_total=0,
+                   updated_at=? WHERE id=?""",
+                (_now(), doc_id),
+            )
+
+    def soft_delete_document(self, doc_id: str) -> bool:
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE documents SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
+                (_now(), _now(), doc_id),
+            )
+            self._conn.execute(
+                "UPDATE product_rows SET deleted_at=?, updated_at=? WHERE document_id=? AND deleted_at IS NULL",
+                (_now(), _now(), doc_id),
+            )
+        return cur.rowcount > 0
+
+    # ---------------- product rows ----------------
+
+    def replace_document_rows(self, document_id: str, new_rows: list[dict]) -> dict:
+        """Batch-inserts extraction output for a document. On first process
+        this is a plain batch insert. On reprocess, matches new rows against
+        existing (non-deleted) rows by (department, barcode/article/row_index)
+        and UPDATEs extraction-derived columns in place so id, and therefore
+        correction history, is preserved; a field that already carries a
+        correction (resolution_status == 'CORRECTED') is left untouched and
+        reported back rather than silently overwritten. Old rows with no
+        match in the new extraction are soft-deleted, never hard-deleted.
+        """
+        now = _now()
+        existing = [
+            dict(r)
+            for r in self._conn.execute(
+                "SELECT * FROM product_rows WHERE document_id=? AND deleted_at IS NULL",
+                (document_id,),
+            )
+        ]
+
+        def match_key(r: dict) -> tuple:
+            if r.get("barcode"):
+                return ("bc", r["department"], r["barcode"])
+            if r.get("article_code"):
+                return ("art", r["department"], r["article_code"])
+            return ("idx", r["department"], r["row_index"])
+
+        existing_by_key = {match_key(r): r for r in existing}
+        matched_ids: set[str] = set()
+        preserved_corrections: list[dict] = []
+        inserted = 0
+        updated = 0
+
+        with self._conn:
+            for nr in new_rows:
+                key = match_key(nr)
+                old = existing_by_key.get(key)
+                if old:
+                    matched_ids.add(old["id"])
+                    corrected_fields = set(json.loads(old.get("corrected_fields_json") or "[]"))
+                    row_update = dict(nr)
+                    for f in corrected_fields:
+                        if f in row_update:
+                            row_update[f] = old.get(f)
+                            preserved_corrections.append(
+                                {"row_id": old["id"], "field": f, "note": "reprocess did not override corrected field"}
+                            )
+                    self._conn.execute(
+                        """UPDATE product_rows SET
+                            source_page=?, raw_product_name=?, ocr_product_name=?,
+                            resolved_product_name=?, weight_qty=?, pu_qty=?, sku_qty=?,
+                            unit=?, unit_price=?, amount=?, confidence=?, confidence_band=?,
+                            resolution_status=?, review_required=?, review_reasons=?,
+                            suspected_non_product=?, non_product_reasons=?, fields_json=?,
+                            updated_at=?
+                           WHERE id=?""",
+                        (
+                            row_update["source_page"], row_update["raw_product_name"],
+                            row_update["ocr_product_name"], row_update["resolved_product_name"],
+                            row_update["weight_qty"], row_update["pu_qty"], row_update["sku_qty"],
+                            row_update["unit"], row_update["unit_price"], row_update["amount"],
+                            row_update["confidence"], row_update["confidence_band"],
+                            row_update["resolution_status"], int(row_update["review_required"]),
+                            json.dumps(row_update.get("review_reasons") or []),
+                            int(row_update["suspected_non_product"]),
+                            json.dumps(row_update.get("non_product_reasons") or []),
+                            json.dumps(row_update["fields"], ensure_ascii=False),
+                            now, old["id"],
+                        ),
+                    )
+                    updated += 1
+                else:
+                    row_id = new_id()
+                    self._conn.execute(
+                        """INSERT INTO product_rows
+                           (id, document_id, source_page, row_index, department, barcode,
+                            article_code, identity_code, raw_product_name, ocr_product_name,
+                            resolved_product_name, weight_qty, pu_qty, sku_qty, unit,
+                            unit_price, amount, confidence, confidence_band, resolution_status,
+                            review_required, review_reasons, suspected_non_product,
+                            non_product_reasons, fields_json, corrected_fields_json,
+                            created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            row_id, document_id, nr["source_page"], nr["row_index"], nr["department"],
+                            nr.get("barcode"), nr.get("article_code"), nr.get("identity_code"),
+                            nr.get("raw_product_name"), nr.get("ocr_product_name"),
+                            nr.get("resolved_product_name"), nr.get("weight_qty"), nr.get("pu_qty"),
+                            nr.get("sku_qty"), nr.get("unit"), nr.get("unit_price"), nr.get("amount"),
+                            nr.get("confidence"), nr.get("confidence_band"), nr.get("resolution_status", "OCR"),
+                            int(nr.get("review_required", False)), json.dumps(nr.get("review_reasons") or []),
+                            int(nr.get("suspected_non_product", False)),
+                            json.dumps(nr.get("non_product_reasons") or []),
+                            json.dumps(nr["fields"], ensure_ascii=False), "[]",
+                            now, now,
+                        ),
+                    )
+                    inserted += 1
+
+            stale_ids = [r["id"] for r in existing if r["id"] not in matched_ids]
+            for stale_id in stale_ids:
+                self._conn.execute(
+                    "UPDATE product_rows SET deleted_at=?, updated_at=? WHERE id=?",
+                    (now, now, stale_id),
+                )
+
+        return {
+            "inserted": inserted,
+            "updated": updated,
+            "soft_deleted": len(stale_ids),
+            "preserved_corrections": preserved_corrections,
+        }
+
+    def get_product_row(self, row_id: str) -> dict | None:
+        row = self._conn.execute("SELECT * FROM product_rows WHERE id=?", (row_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_product_rows(
+        self, document_id: str | None = None, review_required: bool | None = None,
+        include_deleted: bool = False,
+    ) -> list[dict]:
+        q = "SELECT * FROM product_rows WHERE 1=1"
+        params: list[Any] = []
+        if not include_deleted:
+            q += " AND deleted_at IS NULL"
+        if document_id:
+            q += " AND document_id=?"
+            params.append(document_id)
+        if review_required is not None:
+            q += " AND review_required=?"
+            params.append(int(review_required))
+        q += " ORDER BY document_id, row_index"
+        return [dict(r) for r in self._conn.execute(q, params)]
+
+    def update_product_row_field(
+        self, row_id: str, field_name: str, old_value: Any, new_value: Any,
+        column_updates: dict, reason: str | None, source: str = "LOCAL_USER",
+    ) -> dict:
+        now = _now()
+        with self._conn:
+            row = self.get_product_row(row_id)
+            corrected_fields = set(json.loads(row.get("corrected_fields_json") or "[]"))
+            corrected_fields.add(field_name)
+
+            set_clauses = ", ".join(f"{k}=?" for k in column_updates)
+            values = list(column_updates.values())
+            self._conn.execute(
+                f"""UPDATE product_rows SET {set_clauses}, corrected_fields_json=?,
+                    resolution_status='CORRECTED', updated_at=? WHERE id=?""",
+                (*values, json.dumps(sorted(corrected_fields)), now, row_id),
+            )
+            correction_id = new_id()
+            self._conn.execute(
+                """INSERT INTO corrections
+                   (id, product_row_id, field_name, old_value, new_value, reason, source, created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (correction_id, row_id, field_name, str(old_value) if old_value is not None else None,
+                 str(new_value) if new_value is not None else None, reason, source, now),
+            )
+        return {"correction_id": correction_id}
+
+    def undo_correction(self, correction_id: str, source: str = "LOCAL_USER") -> dict:
+        now = _now()
+        with self._conn:
+            corr = self._conn.execute("SELECT * FROM corrections WHERE id=?", (correction_id,)).fetchone()
+            if not corr:
+                raise ValueError("correction not found")
+            corr = dict(corr)
+            row_id = corr["product_row_id"]
+            field = corr["field_name"]
+            revert_value_str = corr["old_value"]
+            column = FIELD_TO_COLUMN.get(field)
+            revert_value: Any = revert_value_str
+            if column and field in NUMERIC_FIELDS and revert_value_str is not None:
+                revert_value = float(revert_value_str)
+
+            if column:
+                self._conn.execute(
+                    f"UPDATE product_rows SET {column}=?, updated_at=? WHERE id=?",
+                    (revert_value, now, row_id),
+                )
+
+            undo_id = new_id()
+            self._conn.execute(
+                """INSERT INTO corrections
+                   (id, product_row_id, field_name, old_value, new_value, reason, source, undo_of_id, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (undo_id, row_id, field, corr["new_value"], revert_value_str, "undo", source, correction_id, now),
+            )
+        return {"undo_id": undo_id, "field": field, "reverted_to": revert_value, "product_row_id": row_id}
+
+    def list_corrections(self, row_id: str) -> list[dict]:
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                "SELECT * FROM corrections WHERE product_row_id=? ORDER BY created_at ASC", (row_id,)
+            )
+        ]
+
+    # ---------------- local product master ----------------
+
+    def find_local_master_by_barcode(self, barcode: str) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM local_product_master WHERE barcode=?", (barcode,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def add_local_master(
+        self, barcode: str, product_name: str, department: str | None,
+        unit: str | None, article_code: str | None, source_document_id: str | None,
+    ) -> dict:
+        existing = self.find_local_master_by_barcode(barcode)
+        if existing:
+            return {"created": False, "entry": existing}
+        now = _now()
+        entry_id = new_id()
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO local_product_master
+                   (id, barcode, article_code, product_name, department, unit,
+                    source_document_id, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (entry_id, barcode, article_code, product_name, department, unit,
+                 source_document_id, now, now),
+            )
+        return {"created": True, "entry": self.find_local_master_by_barcode(barcode)}
+
+    def list_local_master(self, search: str | None = None) -> list[dict]:
+        q = "SELECT * FROM local_product_master"
+        params: list[Any] = []
+        if search:
+            q += " WHERE barcode LIKE ? OR article_code LIKE ? OR product_name LIKE ?"
+            like = f"%{search}%"
+            params = [like, like, like]
+        q += " ORDER BY updated_at DESC"
+        return [dict(r) for r in self._conn.execute(q, params)]
+
+    def count_local_master(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM local_product_master").fetchone()[0]
+
+    # ---------------- health ----------------
+
+    def reset_all_for_tests(self) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM corrections")
+            self._conn.execute("DELETE FROM product_rows")
+            self._conn.execute("DELETE FROM local_product_master")
+            self._conn.execute("DELETE FROM documents")
+
+    def health(self) -> dict:
+        try:
+            self._conn.execute("SELECT 1").fetchone()
+            db_ok = True
+        except sqlite3.Error:
+            db_ok = False
+        return {
+            "status": "ok" if db_ok else "error",
+            "schemaVersion": current_version(self._conn),
+            "expectedSchemaVersion": SCHEMA_VERSION,
+        }
+
+
+def get_repository() -> Repository:
+    """Returns a Repository that always resolves the connection lazily via
+    the module-level singleton (see Repository._conn) - not one pinned to
+    whatever connection happens to be live right now."""
+    return Repository(None)
