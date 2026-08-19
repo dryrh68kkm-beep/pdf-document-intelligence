@@ -12,19 +12,10 @@ listed as multiple tokens that must appear consecutively.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pdf_document_intelligence.templates.base import ColumnSpec
 
 TEMPLATE_ID = "packing_list_bigc_cdc"
 TEMPLATE_VERSION = "v1"
-
-
-@dataclass(frozen=True)
-class ColumnSpec:
-    canonical_name: str
-    header_tokens: tuple[str, ...]
-    field_type: str  # FieldType from models.document
-    is_group_key: bool = False  # forward-filled: blank cell inherits previous row's value
-    required: bool = True  # blank is legitimate (not MISSING_FIELD) when False
 
 
 COLUMNS: tuple[ColumnSpec, ...] = (

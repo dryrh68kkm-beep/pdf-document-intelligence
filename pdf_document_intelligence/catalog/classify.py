@@ -38,6 +38,14 @@ class ProductClassification:
 
 
 def classify_product(name: str | None) -> ProductClassification:
+    """Note: this document's "Remark" column can carry "FOC" (free of
+    charge). That was tried here as a non-product signal and reverted:
+    checking the actual FOC rows in the BPDC sample (Coke cans, Singha/
+    Chang beer, MSG seasoning) shows FOC marks a real product shipment
+    the receiving store isn't billed for — a pricing/billing attribute,
+    not evidence the line item isn't a real, sellable product. Using it
+    here would have repeated the exact false-positive failure mode
+    documented below for the loose keyword draft."""
     if not name:
         return ProductClassification(False, [])
     reasons: list[str] = []

@@ -9,8 +9,9 @@ from pdf_document_intelligence.extract.text import PageText, TextQuality
 from pdf_document_intelligence.models.document import BoundingBox, FieldValue, TableRow
 from pdf_document_intelligence.normalize.thai import normalize_thai_text
 from pdf_document_intelligence.normalize.types import TypeParseError, parse_integer, parse_number
-from pdf_document_intelligence.tables.reconstruct import Cell, RawRow
-from pdf_document_intelligence.templates.packing_list_bigc import COLUMNS
+from pdf_document_intelligence.tables.geometry import Cell, RawRow
+from pdf_document_intelligence.templates.base import ColumnSpec
+from pdf_document_intelligence.templates.packing_list_bigc import COLUMNS as BIGC_COLUMNS
 
 _THAI_RANGE = range(0x0E01, 0x0E5C)
 
@@ -121,11 +122,12 @@ def parse_row(
     page_quality_by_page: dict[int, TextQuality],
     settings: Settings,
     group_carry: dict[str, str],
+    columns: tuple[ColumnSpec, ...] = BIGC_COLUMNS,
 ) -> TableRow:
     fields: dict[str, FieldValue] = {}
     page_quality = page_quality_by_page[raw_row.page]
 
-    for col in COLUMNS:
+    for col in columns:
         cell = raw_row.cells.get(col.canonical_name)
         raw_text = cell.text.strip() if cell else ""
         bbox = _bbox(cell, raw_row.page) if cell else BoundingBox(x=0, y=0, width=0, height=0, page=raw_row.page)
