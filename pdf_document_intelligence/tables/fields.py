@@ -139,13 +139,14 @@ def parse_row(
         field = _parse_field(col.canonical_name, col.field_type, raw_text, bbox, page_quality, settings, col.required)
         fields[col.canonical_name] = field
 
+    return TableRow(row_index=row_index, fields=fields, confidence_band=compute_confidence_band(fields))
+
+
+def compute_confidence_band(fields: dict[str, FieldValue]) -> str:
     confidences = [f.confidence for f in fields.values()]
     avg = sum(confidences) / len(confidences) if confidences else 0.0
     if avg >= 0.9 and not any(f.review_required for f in fields.values()):
-        band = "HIGH"
-    elif avg >= 0.6:
-        band = "MEDIUM"
-    else:
-        band = "LOW"
-
-    return TableRow(row_index=row_index, fields=fields, confidence_band=band)
+        return "HIGH"
+    if avg >= 0.6:
+        return "MEDIUM"
+    return "LOW"

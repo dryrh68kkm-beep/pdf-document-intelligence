@@ -46,6 +46,12 @@ class FieldValue(BaseModel):
     validation_flags: list[str] = Field(default_factory=list)
     review_required: bool = False
     correction: CorrectionEvent | None = None
+    # Cross-validation evidence (proposal §2/§14): populated only when OCR
+    # was actually attempted for this field. `raw_value` above is always the
+    # PDF text-layer reading and is never overwritten by OCR — `value` is
+    # the pipeline's selected final reading, and `source` says which one won.
+    ocr_raw_value: str | None = None
+    ocr_confidence: float | None = None
 
 
 class TableRow(BaseModel):

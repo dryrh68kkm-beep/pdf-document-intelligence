@@ -19,13 +19,14 @@ from pdf_document_intelligence.confidence.engine import score_document
 from pdf_document_intelligence.extract.text import extract_document_text
 from pdf_document_intelligence.loader.preflight import PreflightError, run_preflight
 from pdf_document_intelligence.models.document import DocumentResult, ExtractedTable, ValidationSummary
-from pdf_document_intelligence.tables.fields import parse_row
+from pdf_document_intelligence.tables.fields import compute_confidence_band, parse_row
 from pdf_document_intelligence.tables.reconstruct import reconstruct_tables
 from pdf_document_intelligence.templates.packing_list_bigc import COLUMNS, TEMPLATE_ID, TEMPLATE_VERSION
+from pdf_document_intelligence.validate.cross_validate import ThaiOcrCrossValidator
 from pdf_document_intelligence.validate.reconciliation import check_duplicate_rows, reconcile_table
 
 
-def process_document(path: Path, settings: Settings | None = None) -> DocumentResult:
+def process_document(path: Path, settings: Settings | None = None, enable_ocr: bool = True) -> DocumentResult:
     settings = settings or Settings()
     log = ProcessingLog()
     doc_id = str(uuid.uuid4())
@@ -86,6 +87,25 @@ def process_document(path: Path, settings: Settings | None = None) -> DocumentRe
         total_rows = sum(len(t.rows) for t in extracted_tables)
         log.record("field_parsing", f"{total_rows} rows parsed across {len(extracted_tables)} tables")
 
+    ocr_engine_version = settings.ocr_engine_version
+    if enable_ocr:
+        with log.step("ocr_cross_validation", "selective region-level OCR for Thai fields on unreliable pages"):
+            validator = ThaiOcrCrossValidator(path, settings)
+            for table in extracted_tables:
+                for row in table.rows:
+                    updated = {
+                        name: validator.maybe_apply(field, quality_by_page[field.bbox.page])
+                        for name, field in row.fields.items()
+                    }
+                    row.fields = updated
+                    row.confidence_band = compute_confidence_band(updated)
+            from pdf_document_intelligence.extract.ocr import clear_page_cache
+
+            clear_page_cache()
+            log.record("ocr_cross_validation", f"{validator.ocr_calls} region OCR calls")
+            if validator.ocr_calls:
+                ocr_engine_version = "tesseract-5.3.4 (tha+eng)"
+
     with log.step("validation", "department-level reconciliation + duplicate detection"):
         errors = []
         warnings = []
@@ -111,7 +131,7 @@ def process_document(path: Path, settings: Settings | None = None) -> DocumentRe
         pages=preflight.page_count,
         document_type=TEMPLATE_ID,
         engine_version=settings.engine_version,
-        ocr_engine_version=settings.ocr_engine_version,
+        ocr_engine_version=ocr_engine_version,
         parser_version=settings.parser_version,
         template_version=TEMPLATE_VERSION,
         confidence=confidence,

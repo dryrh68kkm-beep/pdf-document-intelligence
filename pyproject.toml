@@ -14,8 +14,8 @@ dependencies = [
 
 [project.optional-dependencies]
 ocr = [
-    "paddleocr>=2.8",
-    "opencv-python-headless>=4.10",
+    "pytesseract>=0.3.10",
+    "pillow>=10.3",
 ]
 api = [
     "fastapi>=0.111",

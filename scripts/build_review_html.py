@@ -42,6 +42,9 @@ def build_review_data(pdf_path: Path) -> dict:
             "review": fv.review_required,
             "flags": fv.validation_flags,
             "page": fv.bbox.page,
+            "source": fv.source,
+            "ocrRaw": fv.ocr_raw_value,
+            "ocrConfidence": round(fv.ocr_confidence, 2) if fv.ocr_confidence is not None else None,
         }
 
     for table in result.tables:

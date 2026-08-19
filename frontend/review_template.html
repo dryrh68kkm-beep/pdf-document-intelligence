@@ -318,6 +318,75 @@
   }
   .legend b { color: var(--text); font-weight: 600; }
 
+  /* ---------- Evidence panel ---------- */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 14, 20, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  .backdrop.open { display: flex; }
+  .evidence {
+    width: min(520px, 92vw);
+    max-height: 84vh;
+    overflow: auto;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: 18px 20px 20px;
+  }
+  .evidence-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .evidence-title { font-weight: 700; font-size: 15px; }
+  .evidence-sub { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+  .evidence button.close {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+  }
+  .evidence button.close:hover { color: var(--text); }
+  .ev-field { margin-bottom: 12px; }
+  .ev-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
+    margin-bottom: 3px;
+  }
+  .ev-value {
+    font-family: var(--font-data);
+    font-size: 13px;
+    background: var(--surface-alt);
+    border-radius: 6px;
+    padding: 7px 9px;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .ev-value.thai { font-family: "IBM Plex Sans Thai", var(--font-ui); }
+  .ev-row { display: flex; gap: 10px; }
+  .ev-row .ev-field { flex: 1; min-width: 0; }
+  .ev-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .ev-reasons li {
+    font-size: 12.5px;
+    color: var(--warning);
+    background: var(--warning-soft);
+    border-radius: 6px;
+    padding: 6px 9px;
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .row td { transition: background-color 120ms ease; }
   }
@@ -358,9 +427,53 @@
         <span><span class="conf-chip conf-HIGH"><span class="dot"></span>HIGH</span> มั่นใจสูง</span>
         <span><span class="conf-chip conf-MEDIUM"><span class="dot"></span>MEDIUM</span> ควรตรวจ</span>
         <span><span class="conf-chip conf-LOW"><span class="dot"></span>LOW</span> ต้องตรวจ</span>
-        <span><span class="flag-icon" aria-hidden="true">!</span> มีปัญหาที่ต้องตรวจสอบ (hover เพื่อดูเหตุผล)</span>
+        <span><span class="flag-icon" aria-hidden="true">!</span> มีปัญหาที่ต้องตรวจสอบ — คลิกชื่อสินค้าเพื่อดูหลักฐาน (raw PDF / OCR / confidence)</span>
       </div>
     </section>
+  </div>
+</div>
+
+<div class="backdrop" id="evidenceBackdrop">
+  <div class="evidence" role="dialog" aria-modal="true" aria-labelledby="evTitle">
+    <div class="evidence-head">
+      <div>
+        <div class="evidence-title" id="evTitle">หลักฐานของค่าที่แสดง</div>
+        <div class="evidence-sub" id="evSub"></div>
+      </div>
+      <button class="close" id="evClose" aria-label="ปิด" type="button">✕</button>
+    </div>
+    <div class="ev-row">
+      <div class="ev-field">
+        <div class="ev-label">ค่าที่ใช้จริง (Final)</div>
+        <div class="ev-value thai" id="evFinal"></div>
+      </div>
+      <div class="ev-field">
+        <div class="ev-label">ที่มา (Source)</div>
+        <div class="ev-value" id="evSource"></div>
+      </div>
+    </div>
+    <div class="ev-field">
+      <div class="ev-label">ข้อความดิบจาก PDF Text Layer</div>
+      <div class="ev-value thai" id="evRaw"></div>
+    </div>
+    <div class="ev-field" id="evOcrWrap">
+      <div class="ev-label">ข้อความจาก OCR (Tesseract tha+eng)</div>
+      <div class="ev-value thai" id="evOcr"></div>
+    </div>
+    <div class="ev-row">
+      <div class="ev-field">
+        <div class="ev-label">Confidence สุดท้าย</div>
+        <div class="ev-value" id="evConf"></div>
+      </div>
+      <div class="ev-field">
+        <div class="ev-label">OCR Confidence</div>
+        <div class="ev-value" id="evOcrConf"></div>
+      </div>
+    </div>
+    <div class="ev-field">
+      <div class="ev-label">เหตุผลที่ต้องตรวจสอบ</div>
+      <ul class="ev-reasons" id="evReasons"></ul>
+    </div>
   </div>
 </div>
 
@@ -418,18 +531,53 @@ statRow.appendChild(stat("Reconcile ผิดพลาด", DATA.errors, DATA.er
 statRow.appendChild(stat("Reconcile", DATA.reconciled ? "PASSED" : "FAILED", DATA.reconciled ? "ok" : "critical"));
 
 const FLAG_LABEL = {
-  TEXT_LAYER_UNRELIABLE: "ข้อความอาจผิดเพราะ text layer ต้นฉบับเสีย (สระ/วรรณยุกต์หาย) — รอ OCR ยืนยัน",
+  TEXT_LAYER_UNRELIABLE: "PDF ต้นฉบับ: font ที่ฝังมาไม่มี glyph ของสระบน/ล่างและวรรณยุกต์ไทยเลย (ยืนยันจาก ToUnicode CMap) ทำให้ text layer อ่านไม่ได้ — ใช้ OCR อ่านจากภาพแทน",
+  OCR_LOW_CONFIDENCE: "OCR อ่านได้แต่ความมั่นใจต่ำกว่าเกณฑ์ จึงคงค่าดิบจาก PDF ไว้แทนการเดา",
+  SOURCE_CONFLICT: "ข้อความจาก PDF และจาก OCR ไม่ตรงกัน (คาดว่า PDF ผิดตามที่ทราบสาเหตุแล้ว) — ควรเทียบกับต้นฉบับก่อนยืนยัน",
   MISSING_FIELD: "ไม่พบค่าในตำแหน่งนี้",
   TYPE_PARSE_FAILED: "แปลงชนิดข้อมูลไม่สำเร็จ",
 };
+const SOURCE_LABEL = {
+  pdf_text: "PDF text layer",
+  ocr: "OCR (Tesseract tha+eng)",
+  cross_validated: "PDF + OCR ตรงกัน",
+};
 
-function fieldFlags(row) {
-  const flags = new Set();
-  Object.values(row).forEach(f => {
-    if (f && f.flags) f.flags.forEach(x => flags.add(x));
+const evidenceBackdrop = document.getElementById("evidenceBackdrop");
+function openEvidence(field, columnLabel) {
+  document.getElementById("evSub").textContent = columnLabel;
+  document.getElementById("evFinal").textContent = field.value || "—";
+  document.getElementById("evSource").textContent = SOURCE_LABEL[field.source] || field.source;
+  document.getElementById("evRaw").textContent = field.raw || "—";
+  const ocrWrap = document.getElementById("evOcrWrap");
+  if (field.ocrRaw) {
+    ocrWrap.style.display = "";
+    document.getElementById("evOcr").textContent = field.ocrRaw;
+  } else {
+    ocrWrap.style.display = "none";
+  }
+  document.getElementById("evConf").textContent = Math.round(field.confidence * 100) + "%";
+  document.getElementById("evOcrConf").textContent = field.ocrConfidence != null ? Math.round(field.ocrConfidence * 100) + "%" : "—";
+  const reasonsEl = document.getElementById("evReasons");
+  reasonsEl.innerHTML = "";
+  (field.flags || []).forEach(f => {
+    const li = document.createElement("li");
+    li.textContent = FLAG_LABEL[f] || f;
+    reasonsEl.appendChild(li);
   });
-  return [...flags];
+  if (!field.flags || !field.flags.length) {
+    const li = document.createElement("li");
+    li.textContent = "ไม่มีปัญหาที่ต้องตรวจสอบ";
+    li.style.color = "var(--success)";
+    li.style.background = "var(--success-soft)";
+    reasonsEl.appendChild(li);
+  }
+  evidenceBackdrop.classList.add("open");
 }
+function closeEvidence() { evidenceBackdrop.classList.remove("open"); }
+document.getElementById("evClose").addEventListener("click", closeEvidence);
+evidenceBackdrop.addEventListener("click", e => { if (e.target === evidenceBackdrop) closeEvidence(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeEvidence(); });
 
 function cell(field, opts) {
   opts = opts || {};
@@ -439,12 +587,20 @@ function cell(field, opts) {
   td.textContent = val;
   if (val === "") td.classList.add("cell-muted");
   if (val === "") td.textContent = "—";
+  if (opts.name) {
+    td.style.cursor = "pointer";
+    td.title = "คลิกเพื่อดูหลักฐาน (raw / OCR / confidence)";
+    td.addEventListener("click", e => { e.stopPropagation(); openEvidence(field, "ชื่อสินค้า"); });
+  }
   if (field.review) {
     const icon = document.createElement("span");
     icon.className = "flag-icon";
     icon.setAttribute("aria-hidden", "true");
     icon.textContent = "!";
     icon.title = (field.flags || []).map(f => FLAG_LABEL[f] || f).join(" · ") || "ต้องตรวจสอบ";
+    if (opts.name) {
+      icon.addEventListener("click", e => { e.stopPropagation(); openEvidence(field, "ชื่อสินค้า"); });
+    }
     td.appendChild(icon);
   }
   return td;
