@@ -11,7 +11,7 @@ export function renderReview(container, store) {
     </div>
     ${items.length === 0
       ? `<div class="empty-state"><div class="icon">✅</div><div class="title">ไม่มีรายการต้องตรวจสอบ</div></div>`
-      : `<div class="workspace-sub" style="margin-bottom:12px;">คลิกรายการเพื่อดูหลักฐาน (PDF ต้นฉบับ / OCR / confidence) — การแก้ไขค่าและบันทึกกลับ (audit trail) ยังไม่เปิดใช้งานในเวอร์ชันนี้ ใช้เพื่อตรวจสอบเทียบต้นฉบับก่อน export</div><div id="tableHost"></div>`}
+      : `<div class="workspace-sub" style="margin-bottom:12px;">คลิกรายการเพื่อดูหลักฐาน (PDF ต้นฉบับ / OCR / confidence) แล้วกด "แก้ไข" เพื่อบันทึกค่าที่ถูกต้อง — ทุกการแก้ไขมีประวัติ (audit trail) และ Dashboard จะคำนวณใหม่ทันที</div><div id="tableHost"></div>`}
   `;
 
   if (items.length) {

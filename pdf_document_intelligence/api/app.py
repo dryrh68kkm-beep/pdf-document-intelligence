@@ -4,8 +4,11 @@ Processing runs on a small thread pool, not the request-handling event
 loop: PDF extraction/OCR is CPU-bound Python, so the equivalent of a
 browser Web Worker here is a background thread + polling progress state,
 keeping the API responsive to list/detail/export requests while a
-document is mid-pipeline (spec §23-24, adapted to a server-side
-extraction engine rather than an in-browser one).
+document is mid-pipeline.
+
+State is SQLite-backed (pdf_document_intelligence/db/) so it survives a
+server restart; SHA-256 dedup, corrections, and the local product master
+all persist across process lifetimes.
 """
 from __future__ import annotations
 
@@ -14,14 +17,17 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Body, FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from pdf_document_intelligence.api import review as review_api
 from pdf_document_intelligence.api.aggregate import build_dashboard_state
-from pdf_document_intelligence.api.serialize import all_products_json, document_detail_json, document_summary_json
-from pdf_document_intelligence.api.store import DocumentEntry, store
+from pdf_document_intelligence.api.health import check_health
+from pdf_document_intelligence.api.serialize import _row_stats, document_detail_json, document_summary_json, product_row_json
+from pdf_document_intelligence.api.store import store
 from pdf_document_intelligence.config.settings import Settings
+from pdf_document_intelligence.db import backup as backup_module
 from pdf_document_intelligence.export.excel import export_many_to_excel
 from pdf_document_intelligence.pipeline.orchestrator import process_document
 
@@ -32,21 +38,25 @@ _settings = Settings()
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend" / "app"
 
 
-def _run_processing(entry: DocumentEntry) -> None:
+def _run_processing(doc_id: str, pdf_bytes: bytes) -> None:
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(entry.pdf_bytes)
+        tmp.write(pdf_bytes)
         tmp_path = Path(tmp.name)
     try:
         result = process_document(
             tmp_path,
             settings=_settings,
-            on_progress=lambda stage, current, total: store.set_progress(entry.id, stage, current, total),
+            on_progress=lambda stage, current, total: store.set_progress(doc_id, stage, current, total),
         )
-        store.set_complete(entry.id, result)
+        store.set_complete(doc_id, result)
     except Exception as exc:  # noqa: BLE001 - a single bad PDF must not take the API down
-        store.set_error(entry.id, str(exc))
+        store.set_error(doc_id, str(exc))
     finally:
         tmp_path.unlink(missing_ok=True)
+
+
+def _doc_products(doc_id: str) -> list[dict]:
+    return store.repo.list_product_rows(document_id=doc_id)
 
 
 @app.post("/api/documents")
@@ -68,42 +78,52 @@ async def upload_document(file: UploadFile, force: bool = False):
                 content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
             )
 
-    entry = store.create(file.filename, pdf_bytes)
-    _executor.submit(_run_processing, entry)
-    return document_summary_json(entry)
+    doc = store.create(file.filename, pdf_bytes)
+    _executor.submit(_run_processing, doc["id"], pdf_bytes)
+    return document_summary_json(doc)
 
 
 @app.get("/api/documents")
 def list_documents():
-    return [document_summary_json(d) for d in store.list()]
+    docs = store.list()
+    result = []
+    for d in docs:
+        rows = _doc_products(d["id"]) if d["status"] == "complete" else []
+        stats = _row_stats(rows) if d["status"] == "complete" else None
+        result.append(document_summary_json(d, stats))
+    return result
 
 
 @app.get("/api/documents/{doc_id}")
 def get_document(doc_id: str):
-    entry = store.get(doc_id)
-    if not entry:
+    doc = store.get(doc_id)
+    if not doc:
         raise HTTPException(404, "not found")
-    return document_detail_json(entry)
+    return document_detail_json(doc, _doc_products(doc_id))
 
 
 @app.get("/api/documents/{doc_id}/pdf")
 def get_document_pdf(doc_id: str):
-    entry = store.get(doc_id)
-    if not entry:
+    doc = store.get(doc_id)
+    if not doc:
         raise HTTPException(404, "not found")
-    return StreamingResponse(io.BytesIO(entry.pdf_bytes), media_type="application/pdf")
+    pdf_bytes = store.get_pdf_bytes(doc_id)
+    if pdf_bytes is None:
+        raise HTTPException(404, "pdf file missing on disk")
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf")
 
 
 @app.post("/api/documents/{doc_id}/reprocess")
 def reprocess_document(doc_id: str):
-    entry = store.get(doc_id)
-    if not entry:
+    doc = store.get(doc_id)
+    if not doc:
         raise HTTPException(404, "not found")
-    entry.status = "processing"
-    entry.result = None
-    entry.error = None
-    _executor.submit(_run_processing, entry)
-    return document_summary_json(entry)
+    pdf_bytes = store.get_pdf_bytes(doc_id)
+    if pdf_bytes is None:
+        raise HTTPException(404, "pdf file missing on disk")
+    store.mark_reprocessing(doc_id)
+    _executor.submit(_run_processing, doc_id, pdf_bytes)
+    return document_summary_json(store.get(doc_id))
 
 
 @app.delete("/api/documents/{doc_id}")
@@ -115,22 +135,131 @@ def delete_document(doc_id: str):
 
 @app.get("/api/products")
 def list_all_products():
-    return all_products_json(store.list())
+    docs = {d["id"]: d for d in store.list()}
+    rows = store.repo.list_product_rows()
+    return [product_row_json(r, docs[r["document_id"]]["filename"]) for r in rows if r["document_id"] in docs]
+
+
+@app.get("/api/products/{row_id}")
+def get_product(row_id: str):
+    row = store.repo.get_product_row(row_id)
+    if not row:
+        raise HTTPException(404, "not found")
+    doc = store.get(row["document_id"])
+    return product_row_json(row, doc["filename"] if doc else "")
+
+
+@app.patch("/api/products/{row_id}")
+def patch_product(row_id: str, body: dict = Body(...)):
+    field_name = body.get("field")
+    if not field_name:
+        raise HTTPException(400, "'field' is required")
+    result = review_api.apply_correction(
+        store.repo, row_id, field_name, body.get("value"), body.get("reason"), body.get("source", "LOCAL_USER"),
+    )
+    doc = store.get(result["row"]["document_id"])
+    return {
+        "correctionId": result["correction_id"],
+        "row": product_row_json(result["row"], doc["filename"] if doc else ""),
+    }
+
+
+@app.get("/api/products/{row_id}/history")
+def product_history(row_id: str):
+    if not store.repo.get_product_row(row_id):
+        raise HTTPException(404, "not found")
+    return [
+        {
+            "id": c["id"], "field": c["field_name"], "oldValue": c["old_value"],
+            "newValue": c["new_value"], "reason": c["reason"], "source": c["source"],
+            "undoOfId": c["undo_of_id"], "createdAt": c["created_at"],
+        }
+        for c in store.repo.list_corrections(row_id)
+    ]
+
+
+@app.post("/api/products/{row_id}/undo")
+def undo_product_correction(row_id: str, body: dict = Body(...)):
+    correction_id = body.get("correctionId")
+    if not correction_id:
+        raise HTTPException(400, "'correctionId' is required")
+    try:
+        return store.repo.undo_correction(correction_id, body.get("source", "LOCAL_USER"))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/api/review")
+def list_review_items():
+    return build_dashboard_state(store.repo)["reviewItems"]
+
+
+@app.post("/api/review/{row_id}/confirm")
+def confirm_review(row_id: str, body: dict = Body(default={})):
+    return review_api.confirm_review_row(store.repo, row_id, body.get("source", "LOCAL_USER"))
+
+
+@app.get("/api/master/local")
+def list_local_master(search: str | None = Query(default=None)):
+    entries = store.repo.list_local_master(search)
+    return {"count": len(entries), "entries": entries}
+
+
+@app.post("/api/master/local")
+def add_local_master(body: dict = Body(...)):
+    barcode = body.get("barcode")
+    product_name = body.get("productName")
+    if not barcode or not product_name:
+        raise HTTPException(400, "'barcode' and 'productName' are required")
+    result = store.repo.add_local_master(
+        barcode=barcode, product_name=product_name, department=body.get("department"),
+        unit=body.get("unit"), article_code=body.get("articleCode"),
+        source_document_id=body.get("sourceDocumentId"),
+    )
+    return result
+
+
+@app.get("/api/master/official/count")
+def official_master_count():
+    from pdf_document_intelligence.catalog.loader import get_default_catalog
+
+    return {"count": len(get_default_catalog())}
 
 
 @app.get("/api/state")
 def get_dashboard_state():
-    return build_dashboard_state(store.list())
+    return build_dashboard_state(store.repo)
+
+
+@app.get("/api/health")
+def health():
+    return check_health(store.repo)
+
+
+@app.post("/api/backup")
+def create_backup():
+    path = backup_module.create_backup()
+    return FileResponse(path, media_type="application/zip", filename=path.name)
+
+
+@app.post("/api/restore")
+async def restore_backup(file: UploadFile):
+    data = await file.read()
+    try:
+        return backup_module.restore_backup(data)
+    except backup_module.RestoreError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/export.xlsx")
 def export_excel():
-    completed = [d.result for d in store.list() if d.status == "complete" and d.result]
-    if not completed:
+    doc_ids = [d["id"] for d in store.list() if d["status"] == "complete"]
+    if not doc_ids:
         raise HTTPException(400, "No completed documents to export")
+    results = [document_detail_json(store.get(did), _doc_products(did)) for did in doc_ids]
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
         out_path = Path(tmp.name)
-    export_many_to_excel(completed, out_path)
+    export_many_to_excel(results, out_path)
     return FileResponse(
         out_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

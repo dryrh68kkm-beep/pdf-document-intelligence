@@ -1,39 +1,36 @@
-"""Cross-document dashboard aggregation.
+"""Central recalculation engine: the only place dashboard/department/grand
+summaries get computed. Both `/api/state` and any per-document view call
+into here - dashboard logic must never be duplicated in the frontend, so an
+edit (quantity, department move, ...) recalculates by re-running this
+against the current SQLite rows, never by patching a cached number in JS.
 
-Aggregates only over numeric fields that actually exist in the extracted
-schema (weight_qty/pu_qty/sku_qty for this document type) — never
-fabricates a price/amount total that isn't backed by extracted evidence.
-Department identity is the department name; product identity within a
-department is the `article` code (falls back to `barcode` when article is
-missing), matching how the source documents identify a line item.
+Aggregates only over numeric fields that actually exist for this document
+type (weight_qty/pu_qty/sku_qty for a packing list; unit_price/amount stay
+None and are simply skipped when a future invoice-type template populates
+them) - never fabricates a total that isn't backed by extracted evidence.
 """
 from __future__ import annotations
 
 from collections import defaultdict
 
-from pdf_document_intelligence.api.store import DocumentEntry
+from pdf_document_intelligence.db.repository import Repository
 from pdf_document_intelligence.templates.department_groups import major_department_for
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
 
-# Only the columns the document itself reconciles against a printed total
-# (proposal §27) are meaningful KPI/department totals — a running "Line"
-# sequence number is typed integer too but summing it would be meaningless.
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)
 NUMERIC_LABELS = {"weight_qty": "น้ำหนักรวม (กก.)", "pu_qty": "PU รวม", "sku_qty": "SKU qty รวม"}
+RESOLUTION_LABELS = {
+    "OFFICIAL_MASTER": "Official Master",
+    "LOCAL_MASTER": "Local Master",
+    "OCR": "OCR/PDF",
+    "MANUAL_REVIEW": "Review",
+    "CORRECTED": "แก้ไขแล้ว",
+}
 
 
-def _identity(fields: dict) -> str | None:
-    article = fields.get("article")
-    if article and article.value:
-        return str(article.value)
-    barcode = fields.get("barcode")
-    if barcode and barcode.value:
-        return str(barcode.value)
-    return None
-
-
-def build_dashboard_state(docs: list[DocumentEntry]) -> dict:
-    completed = [d for d in docs if d.status == "complete" and d.result]
+def build_dashboard_state(repo: Repository) -> dict:
+    docs = repo.list_documents()
+    all_rows = repo.list_product_rows()
 
     dept_skus: dict[str, set[str]] = defaultdict(set)
     dept_totals: dict[str, dict[str, float]] = defaultdict(lambda: {c: 0.0 for c in NUMERIC_COLUMNS})
@@ -41,60 +38,52 @@ def build_dashboard_state(docs: list[DocumentEntry]) -> dict:
     dept_rows: dict[str, int] = defaultdict(int)
     dept_non_product: dict[str, int] = defaultdict(int)
     grand_totals: dict[str, float] = {c: 0.0 for c in NUMERIC_COLUMNS}
+    resolution_counts: dict[str, int] = defaultdict(int)
     review_items: list[dict] = []
     non_product_items: list[dict] = []
     total_rows = 0
 
-    for doc in completed:
-        for table in doc.result.tables:
-            for row in table.rows:
-                total_rows += 1
-                name_field = row.fields.get("name")
+    doc_filename = {d["id"]: d["filename"] for d in docs}
 
-                # Suspected non-product rows (proposal-adjacent: internal
-                # POP/marketing-material items or explicit free-gift
-                # descriptions, per catalog/classify.py) are tracked
-                # separately - excluded from the ordinary SKU/quantity
-                # totals rather than silently counted as inventory.
-                if row.suspected_non_product:
-                    dept_non_product[table.name] += 1
-                    non_product_items.append(
-                        {
-                            "rowId": f"{doc.id}:{table.name}:{row.row_index}",
-                            "docId": doc.id,
-                            "docFilename": doc.filename,
-                            "department": table.name,
-                            "name": name_field.value if name_field else None,
-                            "reasons": row.non_product_reasons,
-                            "page": name_field.bbox.page if name_field else table.page_start,
-                        }
-                    )
-                    continue
+    for row in all_rows:
+        if row["suspected_non_product"]:
+            dept_non_product[row["department"]] += 1
+            non_product_items.append(
+                {
+                    "rowId": row["id"], "docId": row["document_id"],
+                    "docFilename": doc_filename.get(row["document_id"]),
+                    "department": row["department"], "name": row["resolved_product_name"],
+                    "reasons": _json_list(row.get("non_product_reasons")), "page": row["source_page"],
+                }
+            )
+            continue
 
-                dept_rows[table.name] += 1
-                identity = _identity(row.fields)
-                if identity:
-                    dept_skus[table.name].add(identity)
-                review_required = any(fv.review_required for fv in row.fields.values())
-                if review_required:
-                    dept_review[table.name] += 1
-                    review_items.append(
-                        {
-                            "rowId": f"{doc.id}:{table.name}:{row.row_index}",
-                            "docId": doc.id,
-                            "docFilename": doc.filename,
-                            "department": table.name,
-                            "name": name_field.value if name_field else None,
-                            "band": row.confidence_band,
-                            "flags": sorted({f for fv in row.fields.values() for f in fv.validation_flags}),
-                            "page": name_field.bbox.page if name_field else table.page_start,
-                        }
-                    )
-                for col in NUMERIC_COLUMNS:
-                    fv = row.fields.get(col)
-                    if fv and isinstance(fv.value, (int, float)):
-                        dept_totals[table.name][col] += fv.value
-                        grand_totals[col] += fv.value
+        total_rows += 1
+        dept_rows[row["department"]] += 1
+        resolution_counts[row["resolution_status"]] += 1
+        identity = row["identity_code"]
+        if identity:
+            dept_skus[row["department"]].add(identity)
+
+        if row["review_required"]:
+            dept_review[row["department"]] += 1
+            review_items.append(
+                {
+                    "rowId": row["id"], "docId": row["document_id"],
+                    "docFilename": doc_filename.get(row["document_id"]),
+                    "department": row["department"], "name": row["resolved_product_name"],
+                    "band": row["confidence_band"], "flags": _json_list(row.get("review_reasons")),
+                    "page": row["source_page"], "priority": _review_priority(row),
+                }
+            )
+
+        for col in NUMERIC_COLUMNS:
+            val = row.get(col)
+            if val is not None:
+                dept_totals[row["department"]][col] += val
+                grand_totals[col] += val
+
+    review_items.sort(key=lambda i: i["priority"])
 
     all_dept_names = set(dept_rows) | set(dept_non_product)
     departments = [
@@ -111,11 +100,22 @@ def build_dashboard_state(docs: list[DocumentEntry]) -> dict:
     ]
     departments.sort(key=lambda d: d["totals"].get("sku_qty", 0), reverse=True)
 
+    resolved_total = sum(resolution_counts.values()) or 1
+    master_coverage = [
+        {
+            "status": status, "label": RESOLUTION_LABELS.get(status, status),
+            "count": resolution_counts.get(status, 0),
+            "percent": round(100 * resolution_counts.get(status, 0) / resolved_total, 1),
+        }
+        for status in ("OFFICIAL_MASTER", "LOCAL_MASTER", "OCR", "MANUAL_REVIEW", "CORRECTED")
+        if resolution_counts.get(status)
+    ]
+
     return {
         "documentCount": len(docs),
-        "completedCount": len(completed),
-        "processingCount": sum(1 for d in docs if d.status == "processing"),
-        "errorCount": sum(1 for d in docs if d.status == "error"),
+        "completedCount": sum(1 for d in docs if d["status"] == "complete"),
+        "processingCount": sum(1 for d in docs if d["status"] == "processing"),
+        "errorCount": sum(1 for d in docs if d["status"] == "error"),
         "departmentCount": len(departments),
         "skuCount": len({s for skus in dept_skus.values() for s in skus}),
         "rowCount": total_rows,
@@ -126,4 +126,29 @@ def build_dashboard_state(docs: list[DocumentEntry]) -> dict:
         "departments": departments,
         "reviewItems": review_items,
         "nonProductItems": non_product_items,
+        "masterCoverage": master_coverage,
     }
+
+
+# Review Queue Intelligence (spec P4): sort so rows that affect reconciled
+# totals surface first, over merely-low-confidence text.
+_REASON_PRIORITY = {
+    "INVALID_IDENTIFIER": 0, "UNKNOWN_BARCODE": 0, "DEPARTMENT_CONFLICT": 0,
+    "AMOUNT_MISMATCH": 1,
+    "MISSING_QUANTITY": 2, "MISSING_AMOUNT": 2,
+    "OCR_CONFLICT": 3, "SOURCE_CONFLICT": 3,
+}
+
+
+def _review_priority(row: dict) -> int:
+    reasons = _json_list(row.get("review_reasons"))
+    ranks = [_REASON_PRIORITY.get(r, 4) for r in reasons]
+    return min(ranks, default=4)
+
+
+def _json_list(raw) -> list:
+    import json
+
+    if not raw:
+        return []
+    return json.loads(raw) if isinstance(raw, str) else raw

@@ -1,119 +1,130 @@
-"""Flattens a DocumentResult into the row-oriented JSON shape the SPA
-consumes, and the field-level evidence needed by the detail/review panels.
+"""Flattens SQLite repository rows into the JSON shape the SPA consumes.
 
-Deliberately generic over which fields exist: this document type (a
-packing list) has weight/PU/SKU quantities but no price/amount — the API
-never fabricates a monetary figure that isn't in the extracted schema.
-`numericColumns` tells the frontend which numeric fields this document
-type actually has, so the UI adapts rather than assuming "amount" exists.
+A product's `fields` dict merges two things: the *original extraction
+evidence* (raw PDF text, OCR text/confidence, bbox) frozen in
+`fields_json` at extraction time, and the *current effective value* which
+is the repository column (`resolved_product_name`, `weight_qty`, ...) -
+the column is what a correction updates, so a corrected row shows the
+corrected value with the original evidence still attached underneath it.
 """
 from __future__ import annotations
 
-from pdf_document_intelligence.api.store import DocumentEntry
-from pdf_document_intelligence.models.document import FieldValue
+import json
+
+from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN as _EDITABLE_FIELD_COLUMN
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
 
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)
 IDENTITY_COLUMN = "article"
 
 
-def _field_json(fv: FieldValue) -> dict:
-    return {
-        "value": fv.value,
-        "raw": fv.raw_value,
-        "type": fv.type,
-        "source": fv.source,
-        "confidence": round(fv.confidence, 3),
-        "review": fv.review_required,
-        "flags": fv.validation_flags,
-        "page": fv.bbox.page,
-        "bbox": {"x": fv.bbox.x, "y": fv.bbox.y, "width": fv.bbox.width, "height": fv.bbox.height},
-        "ocrRaw": fv.ocr_raw_value,
-        "ocrConfidence": round(fv.ocr_confidence, 3) if fv.ocr_confidence is not None else None,
-    }
+def _row_id(row: dict) -> str:
+    return row["id"]
 
 
-def document_summary_json(doc: DocumentEntry) -> dict:
+def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
     base = {
-        "id": doc.id,
-        "filename": doc.filename,
-        "status": doc.status,
-        "uploadedAt": doc.uploaded_at.isoformat(),
+        "id": doc["id"],
+        "filename": doc["filename"],
+        "status": doc["status"],
+        "uploadedAt": doc["uploaded_at"],
         "progress": {
-            "stage": doc.progress.stage,
-            "current": doc.progress.current,
-            "total": doc.progress.total,
+            "stage": doc["progress_stage"],
+            "current": doc["progress_current"],
+            "total": doc["progress_total"],
         },
-        "error": doc.error,
+        "error": doc["error"],
     }
-    if doc.result:
-        r = doc.result
+    if doc["status"] == "complete" and doc.get("meta_json"):
+        meta = json.loads(doc["meta_json"])
+        stats = row_stats or {}
         base.update(
             {
-                "pages": r.pages,
-                "confidence": round(r.confidence, 2),
-                "status_document": r.status,
-                "reconciled": r.validation.reconciled,
-                "errors": len(r.validation.errors),
-                "warnings": len(r.validation.warnings),
-                "rowCount": sum(len(t.rows) for t in r.tables),
-                "departmentCount": len(r.tables),
+                "pages": doc["page_count"],
+                "confidence": round(meta["confidence"], 2) if meta.get("confidence") is not None else None,
+                "status_document": meta.get("statusDocument"),
+                "reconciled": meta.get("reconciled"),
+                "errors": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "error"),
+                "warnings": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "warning"),
+                "rowCount": stats.get("rowCount", 0),
+                "departmentCount": stats.get("departmentCount", 0),
+                "reviewCount": stats.get("reviewCount", 0),
+                "totalAmount": stats.get("totalAmount"),
             }
         )
     return base
 
 
-def document_detail_json(doc: DocumentEntry) -> dict:
-    detail = document_summary_json(doc)
-    if not doc.result:
-        return detail
-    r = doc.result
-    detail["numericColumns"] = NUMERIC_COLUMNS
-    detail["engineVersion"] = r.engine_version
-    detail["ocrEngineVersion"] = r.ocr_engine_version
-    detail["templateVersion"] = r.template_version
-    detail["processingLog"] = [
-        {"step": e.step, "detail": e.detail, "durationMs": round(e.duration_ms, 1) if e.duration_ms else None}
-        for e in r.processing_log
-    ]
-    detail["validationIssues"] = [
-        {
-            "severity": i.severity,
-            "code": i.code,
-            "table": i.table,
-            "rowIndex": i.row_index,
-            "field": i.field,
-            "message": i.message,
-        }
-        for i in [*r.validation.errors, *r.validation.warnings]
-    ]
+def _field_json(field_name: str, fv_json: dict | None, row: dict) -> dict:
+    fv_json = dict(fv_json or {})
+    column = _EDITABLE_FIELD_COLUMN.get(field_name)
+    current_value = row.get(column) if column else fv_json.get("value")
+    return {
+        "value": current_value,
+        "raw": fv_json.get("raw_value"),
+        "type": fv_json.get("type"),
+        "source": fv_json.get("source"),
+        "confidence": round(fv_json["confidence"], 3) if fv_json.get("confidence") is not None else None,
+        "review": bool(fv_json.get("review_required")),
+        "flags": fv_json.get("validation_flags", []),
+        "page": fv_json.get("bbox", {}).get("page"),
+        "bbox": fv_json.get("bbox"),
+        "ocrRaw": fv_json.get("ocr_raw_value"),
+        "ocrConfidence": round(fv_json["ocr_confidence"], 3) if fv_json.get("ocr_confidence") is not None else None,
+        "corrected": current_value != fv_json.get("value") if column else False,
+    }
 
-    products = []
-    for table in r.tables:
-        for row in table.rows:
-            f = row.fields
-            review_required = any(fv.review_required for fv in f.values())
-            products.append(
-                {
-                    "rowId": f"{doc.id}:{table.name}:{row.row_index}",
-                    "docId": doc.id,
-                    "docFilename": doc.filename,
-                    "department": table.name,
-                    "page": f.get("name").bbox.page if f.get("name") else table.page_start,
-                    "band": row.confidence_band,
-                    "reviewRequired": review_required,
-                    "suspectedNonProduct": row.suspected_non_product,
-                    "nonProductReasons": row.non_product_reasons,
-                    "fields": {name: _field_json(fv) for name, fv in f.items()},
-                }
-            )
-    detail["products"] = products
+
+def product_row_json(row: dict, doc_filename: str) -> dict:
+    fields_raw = json.loads(row["fields_json"])
+    fields = {name: _field_json(name, fv, row) for name, fv in fields_raw.items()}
+    return {
+        "rowId": _row_id(row),
+        "docId": row["document_id"],
+        "docFilename": doc_filename,
+        "department": row["department"],
+        "page": row["source_page"],
+        "band": row["confidence_band"],
+        "reviewRequired": bool(row["review_required"]),
+        "reviewReasons": json.loads(row.get("review_reasons") or "[]"),
+        "resolutionStatus": row["resolution_status"],
+        "suspectedNonProduct": bool(row["suspected_non_product"]),
+        "nonProductReasons": json.loads(row.get("non_product_reasons") or "[]"),
+        "fields": fields,
+    }
+
+
+def document_detail_json(doc: dict, product_rows: list[dict]) -> dict:
+    stats = _row_stats(product_rows)
+    detail = document_summary_json(doc, stats)
+    if doc["status"] != "complete" or not doc.get("meta_json"):
+        return detail
+    meta = json.loads(doc["meta_json"])
+    detail["numericColumns"] = NUMERIC_COLUMNS
+    detail["engineVersion"] = meta.get("engineVersion")
+    detail["ocrEngineVersion"] = meta.get("ocrEngineVersion")
+    detail["templateVersion"] = meta.get("templateVersion")
+    detail["processingLog"] = meta.get("processingLog", [])
+    detail["validationIssues"] = meta.get("validationIssues", [])
+    detail["products"] = [product_row_json(r, doc["filename"]) for r in product_rows]
     return detail
 
 
-def all_products_json(docs: list[DocumentEntry]) -> list[dict]:
+def _row_stats(product_rows: list[dict]) -> dict:
+    departments = {r["department"] for r in product_rows}
+    review_count = sum(1 for r in product_rows if r["review_required"])
+    total_amount = sum(r["amount"] for r in product_rows if r.get("amount") is not None)
+    return {
+        "rowCount": len(product_rows),
+        "departmentCount": len(departments),
+        "reviewCount": review_count,
+        "totalAmount": round(total_amount, 2) if any(r.get("amount") is not None for r in product_rows) else None,
+    }
+
+
+def all_products_json(docs_with_rows: list[tuple[dict, list[dict]]]) -> list[dict]:
     products: list[dict] = []
-    for doc in docs:
-        if doc.status == "complete" and doc.result:
-            products.extend(document_detail_json(doc)["products"])
+    for doc, rows in docs_with_rows:
+        if doc["status"] == "complete":
+            products.extend(product_row_json(r, doc["filename"]) for r in rows)
     return products

@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { view: "review", icon: "⚠️", label: "Review" },
   { view: "nonproduct", icon: "🎁", label: "ของแถม / ไม่ใช่สินค้า" },
   { view: "documents", icon: "📄", label: "Documents" },
+  { view: "productMaster", icon: "🗂️", label: "Product Master" },
 ];
 
 export function renderSidebar(store) {

@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { store } from "./state.js";
 import { renderSidebar } from "./components/sidebar.js";
-import { renderProductDetail } from "./components/detailPanel.js";
+import { renderProductDetail, detailPanelIsDirty, detailPanelReset, setDirtyChangeListener } from "./components/detailPanel.js";
 
 const VIEWS = {
   dashboard: () => import("./views/dashboard.js").then((m) => m.renderDashboard),
@@ -10,6 +10,7 @@ const VIEWS = {
   review: () => import("./views/review.js").then((m) => m.renderReview),
   nonproduct: () => import("./views/nonproduct.js").then((m) => m.renderNonProduct),
   documents: () => import("./views/documents.js").then((m) => m.renderDocuments),
+  productMaster: () => import("./views/productMaster.js").then((m) => m.renderProductMaster),
 };
 
 const workspaceEl = document.getElementById("workspace");
@@ -27,6 +28,22 @@ async function render() {
   renderBottomBar();
 }
 
+function closePanelWithDirtyCheck() {
+  if (detailPanelIsDirty()) {
+    store.set({
+      confirmDialog: {
+        title: "มีการแก้ไขที่ยังไม่ได้บันทึก",
+        message: "ปิดหน้าต่างนี้จะทิ้งการแก้ไขที่ยังไม่ได้บันทึก ต้องการปิดหรือไม่?",
+        onConfirm: () => { detailPanelReset(); store.closePanel(); },
+      },
+    });
+    document.dispatchEvent(new CustomEvent("show-confirm"));
+    return;
+  }
+  detailPanelReset();
+  store.closePanel();
+}
+
 function renderSidePanel() {
   const { panel } = store.state;
   if (!panel) {
@@ -35,10 +52,20 @@ function renderSidePanel() {
   }
   sidePanelEl.classList.add("open");
   if (panel.type === "product") {
-    const closeBtn = renderProductDetail(sidePanelEl, panel.data);
-    closeBtn.addEventListener("click", () => store.closePanel());
+    const closeBtn = renderProductDetail(sidePanelEl, panel.data, store);
+    closeBtn.addEventListener("click", closePanelWithDirtyCheck);
   }
 }
+
+// When a correction/undo saves, refresh all data (dashboard/products
+// recalculate from the DB, never patched in place) and re-open the panel
+// on the freshly-saved row so evidence + history reflect the save.
+document.addEventListener("product-saved", async (e) => {
+  await store.refreshAll();
+  const rowId = e.detail.rowId;
+  const fresh = store.state.products.find((p) => p.rowId === rowId);
+  if (fresh) store.openPanel({ type: "product", rowId, data: fresh });
+});
 
 function renderBottomBar() {
   const { documents } = store.state;

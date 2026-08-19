@@ -13,7 +13,7 @@ from pdf_document_intelligence.api.store import store
 
 
 def _reset_store():
-    store._docs.clear()  # noqa: SLF001 - test-only reset of module-level singleton
+    store.reset_for_tests()
 
 
 def test_empty_state():

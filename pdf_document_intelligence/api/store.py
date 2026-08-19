@@ -1,102 +1,94 @@
-"""In-memory, thread-safe multi-document store.
+"""Persistent, SQLite-backed multi-document store (replaces the old
+in-memory dict). Document metadata + product rows survive a server
+restart; the PDF bytes themselves live as files under the data dir
+(`db/paths.get_pdf_path`) rather than as SQLite BLOBs, so the DB file
+stays small regardless of how many/how large the source PDFs are.
 
-Persistence beyond the process lifetime (IndexedDB / a real DB) is P2 per
-the app spec's own priority ordering — this store is the P0/P1 substrate:
-correct multi-document state, SHA-256 dedup, and per-document progress,
-without yet surviving a server restart.
+Callers (app.py, aggregate.py, serialize.py) get back plain dicts, never
+raw sqlite3 rows - the shape returned here is the contract.
 """
 from __future__ import annotations
 
 import hashlib
-import threading
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Literal
+from datetime import datetime
 
+from pdf_document_intelligence.api.rows import persist_document_result
+from pdf_document_intelligence.db.paths import get_pdf_path
+from pdf_document_intelligence.db.repository import Repository, get_repository, new_id
 from pdf_document_intelligence.models.document import DocumentResult
-
-DocumentStatus = Literal["processing", "complete", "error"]
-
-
-@dataclass
-class ProgressState:
-    stage: str = "queued"
-    current: int = 0
-    total: int = 0
-
-
-@dataclass
-class DocumentEntry:
-    id: str
-    filename: str
-    sha256: str
-    uploaded_at: datetime
-    status: DocumentStatus
-    pdf_bytes: bytes
-    progress: ProgressState = field(default_factory=ProgressState)
-    result: DocumentResult | None = None
-    error: str | None = None
 
 
 class DocumentStore:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._docs: dict[str, DocumentEntry] = {}
+    def __init__(self, repo: Repository | None = None) -> None:
+        self._repo = repo or get_repository()
 
-    def find_by_hash(self, sha256: str) -> DocumentEntry | None:
-        with self._lock:
-            for doc in self._docs.values():
-                if doc.sha256 == sha256:
-                    return doc
-        return None
+    @property
+    def repo(self) -> Repository:
+        return self._repo
 
-    def create(self, filename: str, pdf_bytes: bytes) -> DocumentEntry:
+    def find_by_hash(self, sha256: str) -> dict | None:
+        return self._repo.find_document_by_sha256(sha256)
+
+    def create(self, filename: str, pdf_bytes: bytes) -> dict:
         sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-        doc_id = str(uuid.uuid4())
-        entry = DocumentEntry(
-            id=doc_id,
-            filename=filename,
-            sha256=sha256,
-            uploaded_at=datetime.now(timezone.utc),
-            status="processing",
-            pdf_bytes=pdf_bytes,
-        )
-        with self._lock:
-            self._docs[doc_id] = entry
-        return entry
+        doc_id = new_id()
+        get_pdf_path(doc_id).write_bytes(pdf_bytes)
+        return self._repo.create_document(doc_id, sha256, filename, len(pdf_bytes))
 
-    def get(self, doc_id: str) -> DocumentEntry | None:
-        with self._lock:
-            return self._docs.get(doc_id)
+    def get(self, doc_id: str) -> dict | None:
+        return self._repo.get_document(doc_id)
 
-    def list(self) -> list[DocumentEntry]:
-        with self._lock:
-            return sorted(self._docs.values(), key=lambda d: d.uploaded_at, reverse=True)
+    def get_pdf_bytes(self, doc_id: str) -> bytes | None:
+        path = get_pdf_path(doc_id)
+        return path.read_bytes() if path.exists() else None
+
+    def list(self) -> list[dict]:
+        return self._repo.list_documents()
 
     def remove(self, doc_id: str) -> bool:
-        with self._lock:
-            return self._docs.pop(doc_id, None) is not None
+        return self._repo.soft_delete_document(doc_id)
+
+    def mark_reprocessing(self, doc_id: str) -> None:
+        self._repo.set_document_processing(doc_id)
 
     def set_progress(self, doc_id: str, stage: str, current: int, total: int) -> None:
-        with self._lock:
-            doc = self._docs.get(doc_id)
-            if doc:
-                doc.progress = ProgressState(stage=stage, current=current, total=total)
+        self._repo.update_progress(doc_id, stage, current, total)
 
-    def set_complete(self, doc_id: str, result: DocumentResult) -> None:
-        with self._lock:
-            doc = self._docs.get(doc_id)
-            if doc:
-                doc.status = "complete"
-                doc.result = result
+    def set_complete(self, doc_id: str, result: DocumentResult) -> dict:
+        meta = {
+            "confidence": result.confidence,
+            "statusDocument": result.status,
+            "reconciled": result.validation.reconciled,
+            "engineVersion": result.engine_version,
+            "ocrEngineVersion": result.ocr_engine_version,
+            "templateVersion": result.template_version,
+            "processingLog": [
+                {
+                    "step": e.step, "detail": e.detail,
+                    "durationMs": round(e.duration_ms, 1) if e.duration_ms else None,
+                    "timestamp": e.timestamp.isoformat(),
+                }
+                for e in result.processing_log
+            ],
+            "pages": result.pages,
+            "documentType": result.document_type,
+            "parserVersion": result.parser_version,
+            "validationIssues": [
+                {
+                    "severity": i.severity, "code": i.code, "table": i.table,
+                    "rowIndex": i.row_index, "field": i.field, "message": i.message,
+                }
+                for i in [*result.validation.errors, *result.validation.warnings]
+            ],
+        }
+        self._repo.set_document_complete(doc_id, result.pages, meta)
+        return persist_document_result(doc_id, result, self._repo)
 
     def set_error(self, doc_id: str, error: str) -> None:
-        with self._lock:
-            doc = self._docs.get(doc_id)
-            if doc:
-                doc.status = "error"
-                doc.error = error
+        self._repo.set_document_error(doc_id, error)
+
+    def reset_for_tests(self) -> None:
+        self._repo.reset_all_for_tests()
 
 
 store = DocumentStore()

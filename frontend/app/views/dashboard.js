@@ -64,9 +64,14 @@ export function renderDashboard(container, store) {
     ? `<div class="workspace-sub" style="margin-bottom:14px;">⏳ กำลังประมวลผล ${processing.length} ไฟล์ — ข้อมูลจะอัปเดตอัตโนมัติ</div>`
     : "";
 
+  const coverage = (dashboard.masterCoverage || [])
+    .map((c) => `<span class="kpi-coverage-chip">${c.label} <b>${c.percent}%</b></span>`)
+    .join("");
+
   container.innerHTML = `
     ${processingBanner}
     <div class="kpi-row">${kpis}</div>
+    ${coverage ? `<div class="section-title">Master Coverage</div><div class="kpi-coverage-row">${coverage}</div>` : ""}
     <div class="section-title">ยอดตามแผนก (เรียงตาม SKU qty)</div>
     <div class="bar-chart">${bars}</div>
     <div class="section-title">ทุกแผนก</div>
