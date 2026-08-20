@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any
 
-from pdf_document_intelligence.db.connection import get_connection
+from pdf_document_intelligence.db.connection import get_connection, get_write_lock
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN, NUMERIC_FIELDS
 from pdf_document_intelligence.db.migrations import SCHEMA_VERSION, current_version
 
@@ -48,7 +48,7 @@ class Repository:
 
     def create_document(self, doc_id: str, sha256: str, filename: str, file_size: int) -> dict:
         now = _now()
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._conn.execute(
                 """INSERT INTO documents
                    (id, sha256, filename, file_size, status, progress_stage,
@@ -76,7 +76,7 @@ class Repository:
         return [dict(r) for r in self._conn.execute(q)]
 
     def update_progress(self, doc_id: str, stage: str, current: int, total: int) -> None:
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._conn.execute(
                 """UPDATE documents SET progress_stage=?, progress_current=?, progress_total=?,
                    updated_at=? WHERE id=?""",
@@ -84,7 +84,7 @@ class Repository:
             )
 
     def set_document_complete(self, doc_id: str, page_count: int, meta: dict) -> None:
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._set_document_complete_sql(doc_id, page_count, meta)
 
     def _set_document_complete_sql(self, doc_id: str, page_count: int, meta: dict) -> None:
@@ -105,20 +105,37 @@ class Repository:
         block would recover from by marking the document 'error' - an
         actual kill/crash/power loss), the document was left permanently
         showing status='complete' with zero or stale product_rows, with no
-        automatic way to detect or recover from it."""
-        with self._conn:
+        automatic way to detect or recover from it.
+
+        Also guards against a delete/reprocess race (L3-002, reproduced): a
+        background job started before the user deleted this document has
+        no way to know that happened, and used to insert its product_rows
+        anyway - those rows aren't hidden by the document being gone from
+        `list_documents()` (build_dashboard_state sums *all* product_rows,
+        not only ones whose parent document is still active), so a
+        deleted document's weight/PU/SKU totals kept silently counting
+        toward the dashboard grand totals. Checked and skipped inside the
+        same transaction as the write, so this is race-free against a
+        delete happening concurrently.
+        """
+        with get_write_lock(), self._conn:
+            doc = self._conn.execute(
+                "SELECT deleted_at FROM documents WHERE id=?", (doc_id,)
+            ).fetchone()
+            if doc is None or doc["deleted_at"] is not None:
+                return {"skipped": True, "reason": "document was deleted before processing finished"}
             self._set_document_complete_sql(doc_id, page_count, meta)
             return self._replace_document_rows_sql(doc_id, new_rows)
 
     def set_document_error(self, doc_id: str, error: str) -> None:
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._conn.execute(
                 "UPDATE documents SET status='error', error=?, updated_at=? WHERE id=?",
                 (error, _now(), doc_id),
             )
 
     def set_document_processing(self, doc_id: str) -> None:
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._conn.execute(
                 """UPDATE documents SET status='processing', error=NULL,
                    progress_stage='queued', progress_current=0, progress_total=0,
@@ -127,7 +144,7 @@ class Repository:
             )
 
     def soft_delete_document(self, doc_id: str) -> bool:
-        with self._conn:
+        with get_write_lock(), self._conn:
             cur = self._conn.execute(
                 "UPDATE documents SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL",
                 (_now(), _now(), doc_id),
@@ -141,7 +158,7 @@ class Repository:
     # ---------------- product rows ----------------
 
     def replace_document_rows(self, document_id: str, new_rows: list[dict]) -> dict:
-        with self._conn:
+        with get_write_lock(), self._conn:
             return self._replace_document_rows_sql(document_id, new_rows)
 
     def _replace_document_rows_sql(self, document_id: str, new_rows: list[dict]) -> dict:
@@ -311,7 +328,7 @@ class Repository:
         column_updates: dict, reason: str | None, source: str = "LOCAL_USER",
     ) -> dict:
         now = _now()
-        with self._conn:
+        with get_write_lock(), self._conn:
             row = self.get_product_row(row_id)
             corrected_fields = set(json.loads(row.get("corrected_fields_json") or "[]"))
             corrected_fields.add(field_name)
@@ -335,7 +352,7 @@ class Repository:
 
     def undo_correction(self, correction_id: str, source: str = "LOCAL_USER") -> dict:
         now = _now()
-        with self._conn:
+        with get_write_lock(), self._conn:
             corr = self._conn.execute("SELECT * FROM corrections WHERE id=?", (correction_id,)).fetchone()
             if not corr:
                 raise ValueError("correction not found")
@@ -388,7 +405,7 @@ class Repository:
             return {"created": False, "entry": existing}
         now = _now()
         entry_id = new_id()
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._conn.execute(
                 """INSERT INTO local_product_master
                    (id, barcode, article_code, product_name, department, unit,
@@ -415,7 +432,7 @@ class Repository:
     # ---------------- health ----------------
 
     def reset_all_for_tests(self) -> None:
-        with self._conn:
+        with get_write_lock(), self._conn:
             self._conn.execute("DELETE FROM corrections")
             self._conn.execute("DELETE FROM product_rows")
             self._conn.execute("DELETE FROM local_product_master")
