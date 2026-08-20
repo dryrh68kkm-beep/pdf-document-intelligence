@@ -57,9 +57,6 @@ function renderSidePanel() {
   }
 }
 
-// When a correction/undo saves, refresh all data (dashboard/products
-// recalculate from the DB, never patched in place) and re-open the panel
-// on the freshly-saved row so evidence + history reflect the save.
 document.addEventListener("product-saved", async (e) => {
   await store.refreshAll();
   const rowId = e.detail.rowId;
@@ -104,10 +101,10 @@ async function uploadFiles(fileList) {
 function showDuplicateDialog(file, existing) {
   modalBox.innerHTML = `
     <h3>ไฟล์นี้มีอยู่ในระบบแล้ว</h3>
-    <p>${existing.filename} — เพิ่มซ้ำจะประมวลผลไฟล์เดิมอีกครั้งเป็นเอกสารใหม่แยกกัน</p>
+    <p>${existing.filename} — ต้องการประมวลผลเอกสารเดิมอีกครั้งหรือไม่? ข้อมูลที่ผู้ใช้แก้ไขและประวัติการแก้ไขจะยังคงอยู่</p>
     <div class="modal-actions">
       <button class="btn" id="dupCancel">ยกเลิก</button>
-      <button class="btn btn-primary" id="dupAdd">เพิ่มซ้ำ</button>
+      <button class="btn btn-primary" id="dupAdd">ประมวลผลอีกครั้ง</button>
     </div>
   `;
   modalBackdrop.classList.add("open");
@@ -141,7 +138,6 @@ document.addEventListener("show-confirm", () => {
 document.getElementById("addFilesBtn").addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (e) => { uploadFiles(e.target.files); fileInput.value = ""; });
 
-// Drag & drop anywhere on the app
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => {
   if (!e.dataTransfer?.types?.includes("Files")) return;
@@ -164,10 +160,6 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = api.exportUrl();
 });
 
-// Global search: routes to Products view: the view itself reads
-// state.searchQuery as its initial filter value (see views/products.js) -
-// state is the single source of truth here, not a simulated DOM event
-// crossing a re-render boundary.
 let searchDebounce = null;
 document.getElementById("globalSearch").addEventListener("input", (e) => {
   clearTimeout(searchDebounce);
@@ -177,7 +169,6 @@ document.getElementById("globalSearch").addEventListener("input", (e) => {
   }, 200);
 });
 
-// ---------- Polling ----------
 async function pollLoop() {
   if (store.hasProcessing() || store.state.documents.length === 0) {
     await store.refreshAll();
