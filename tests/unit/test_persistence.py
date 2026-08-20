@@ -9,7 +9,7 @@ import pytest
 
 from pdf_document_intelligence.api.aggregate import build_dashboard_state
 from pdf_document_intelligence.api.review import apply_correction, confirm_review_row
-from pdf_document_intelligence.api.rows import persist_document_result
+from pdf_document_intelligence.api.rows import persist_document_result, prepare_flat_rows
 from pdf_document_intelligence.db.connection import open_independent_connection
 from pdf_document_intelligence.db.repository import Repository, new_id
 from tests.unit.db_helpers import make_result, make_row
@@ -153,6 +153,38 @@ def test_reprocess_handles_duplicate_barcode_within_department(db_path):
     assert len(after) == 2  # neither duplicate row silently disappears
     sku_qtys = sorted(r["sku_qty"] for r in after)
     assert sku_qtys == [5.0, 999.0]  # each row kept its own identity/data
+
+
+def test_busy_timeout_is_configured(db_path):
+    """Regression guard (L3-001): default SQLite busy_timeout is 0 - a
+    second writer (background OCR thread pool vs. an API request thread,
+    both writing through the same connection) gets an immediate
+    "database is locked" error instead of a brief retry window."""
+    repo = _repo_at(db_path)
+    value = repo._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    assert value > 0
+
+
+def test_complete_with_rows_skips_a_deleted_document(db_path):
+    """Regression guard (L3-002): a document deleted while a background
+    job was still processing it used to have that job's product_rows
+    inserted anyway - invisible in the Documents list (deleted_at set)
+    but still summed into the dashboard's grand totals, since
+    build_dashboard_state iterates every non-row-deleted product_row
+    without checking its parent document's deleted_at."""
+    repo = _repo_at(db_path)
+    repo.create_document("doc-1", sha256="del", filename="t.pdf", file_size=1)
+    repo.soft_delete_document("doc-1")
+
+    rows = [make_row(0, "BAKERY", "8850000000001", "ART1", "สินค้าที่ถูกลบไปแล้ว", 50.0, 10, 10)]
+    result = make_result("doc-1", "t.pdf", [("BAKERY", rows)])
+    flat = prepare_flat_rows("doc-1", result, repo)
+    outcome = repo.complete_document_with_rows("doc-1", 1, {"confidence": 0.9}, flat)
+
+    assert outcome.get("skipped") is True
+    state = build_dashboard_state(repo)
+    assert state["rowCount"] == 0
+    assert state["grandTotals"]["sku_qty"] == 0.0
 
 
 def test_complete_and_rows_write_atomically(db_path):

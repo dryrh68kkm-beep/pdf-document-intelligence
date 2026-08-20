@@ -13,6 +13,7 @@ all persist across process lifetimes.
 from __future__ import annotations
 
 import io
+import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -78,7 +79,21 @@ async def upload_document(file: UploadFile, force: bool = False):
                 content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
             )
 
-    doc = store.create(file.filename, pdf_bytes)
+    try:
+        doc = store.create(file.filename, pdf_bytes)
+    except sqlite3.IntegrityError:
+        # Two concurrent uploads of the same file both pass the
+        # find_by_hash check above before either commits (check-then-act
+        # race), so the second INSERT hits the sha256 unique index -
+        # reproduced with two threads racing store.create() directly.
+        # Same response shape as the normal duplicate path, not a 500.
+        existing = store.find_by_hash(sha256)
+        if existing:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
+            )
+        raise
     _executor.submit(_run_processing, doc["id"], pdf_bytes)
     return document_summary_json(doc)
 

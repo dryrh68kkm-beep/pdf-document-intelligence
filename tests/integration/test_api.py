@@ -6,6 +6,8 @@ empty - endpoint plumbing, not extraction correctness.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi.testclient import TestClient
 
 from pdf_document_intelligence.api.app import app
@@ -51,3 +53,24 @@ def test_export_with_no_documents_returns_400():
     _reset_store()
     client = TestClient(app)
     assert client.get("/api/export.xlsx").status_code == 400
+
+
+def test_concurrent_duplicate_upload_returns_409_not_500():
+    """Regression guard (L3-003): two concurrent uploads of the same file
+    both pass the find_by_hash duplicate check before either commits
+    (check-then-act race), so the second one used to hit the sha256
+    unique index as an unhandled sqlite3.IntegrityError (500) instead of
+    the normal 409 duplicate response."""
+    _reset_store()
+    client = TestClient(app)
+    content = b"%PDF-1.4\n%fake-but-nonempty\n"
+
+    def upload():
+        return client.post("/api/documents", files={"file": ("same.pdf", content, "application/pdf")})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(upload) for _ in range(2)]
+        responses = [f.result() for f in futures]
+
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [200, 409], f"expected one accepted + one duplicate, got {statuses}"
