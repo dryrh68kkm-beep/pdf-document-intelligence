@@ -102,6 +102,75 @@ def test_reprocess_does_not_silently_override_a_corrected_field(db_path):
     assert reloaded["weight_qty"] == 99.0  # correction preserved, not overwritten by reprocess
 
 
+def test_reprocess_preserves_name_and_article_corrections(db_path):
+    """Regression guard (L2-001): 'name' and 'article' are the two
+    correctable fields whose API-level name differs from its DB column
+    (resolved_product_name / article_code) - a prior bug compared the
+    corrected-fields list against column-keyed data and silently missed
+    exactly these two, letting reprocess overwrite them with no audit
+    trail of the reversal."""
+    repo = _repo_at(db_path)
+    _seed_document(repo)
+    row = next(r for r in repo.list_product_rows() if r["barcode"] == "8850000000001")
+    apply_correction(repo, row["id"], "name", "ชื่อที่แก้ไขแล้ว", reason="ยืนยันจากเอกสารต้นฉบับ")
+    apply_correction(repo, row["id"], "article", "ART-CORRECTED", reason="ยืนยันจากเอกสารต้นฉบับ")
+
+    new_rows = [make_row(0, "BAKERY", "8850000000001", "ART1", "ชื่อใหม่จาก OCR", 10.0, 5, 5)]
+    result = make_result("doc-1", "test.pdf", [("BAKERY", new_rows)])
+    persist_document_result("doc-1", result, repo)
+
+    reloaded = repo.get_product_row(row["id"])
+    assert reloaded["resolved_product_name"] == "ชื่อที่แก้ไขแล้ว"
+    assert reloaded["article_code"] == "ART-CORRECTED"
+
+
+def test_reprocess_handles_duplicate_barcode_within_department(db_path):
+    """Regression guard (L2-002): two rows can legitimately share the same
+    (department, barcode) - a real document can list the same article
+    twice as separate line items (verified against the BPDC golden
+    sample). A prior bug matched by a plain dict keyed on
+    (department, barcode), so the second duplicate silently overwrote the
+    first's match in that dict - one row vanished (soft-deleted) on
+    reprocess and the other absorbed both new rows' updates."""
+    repo = _repo_at(db_path)
+    rows = [
+        make_row(0, "PAPER", "8850046340033", "ART-A", "สินค้า A", 10.0, 5, 5),
+        make_row(1, "PAPER", "8850046340033", "ART-A", "สินค้า B", 20.0, 8, 8),
+    ]
+    result = make_result("doc-1", "test.pdf", [("PAPER", rows)])
+    repo.create_document("doc-1", sha256="dup", filename="test.pdf", file_size=1)
+    repo.set_document_complete("doc-1", 1, {"confidence": 0.9})
+    persist_document_result("doc-1", result, repo)
+
+    before = repo.list_product_rows()
+    assert len(before) == 2
+    apply_correction(repo, before[1]["id"], "sku_qty", 999, reason="test")
+
+    result2 = make_result("doc-1", "test.pdf", [("PAPER", rows)])
+    persist_document_result("doc-1", result2, repo)
+
+    after = repo.list_product_rows()
+    assert len(after) == 2  # neither duplicate row silently disappears
+    sku_qtys = sorted(r["sku_qty"] for r in after)
+    assert sku_qtys == [5.0, 999.0]  # each row kept its own identity/data
+
+
+def test_complete_and_rows_write_atomically(db_path):
+    """Regression guard (L2-003): marking a document complete and writing
+    its product rows used to be two independent transactions - a process
+    kill between the two commits left the document permanently showing
+    status='complete' with zero/stale rows, undetectable by any normal
+    exception handler. Both writes must now succeed or fail together."""
+    repo = _repo_at(db_path)
+    repo.create_document("doc-1", sha256="atomic", filename="test.pdf", file_size=1)
+
+    with pytest.raises(Exception):
+        repo.complete_document_with_rows("doc-1", 5, {"confidence": 0.9}, [{"bad": "row"}])
+
+    doc = repo.get_document("doc-1")
+    assert doc["status"] != "complete"  # the failed row write rolled back the status change too
+
+
 # --- Editable review + audit trail (items 6-10) ---
 
 def test_correction_is_saved_and_recorded_in_audit_history(db_path):

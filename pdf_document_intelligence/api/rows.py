@@ -113,12 +113,22 @@ def flatten_row(document_id: str, table: ExtractedTable, row: TableRow) -> dict:
     }
 
 
-def persist_document_result(document_id: str, result, repo: Repository) -> dict:
-    """Applies local-master resolution then writes all rows for this
-    document via the repository's reprocess-safe replace."""
+def prepare_flat_rows(document_id: str, result, repo: Repository) -> list[dict]:
+    """Applies local-master resolution and flattens every row - the
+    DB-write-free half of `persist_document_result`, split out so a caller
+    (store.py) can prepare rows and write them + the document's completion
+    status in one atomic transaction (see
+    `Repository.complete_document_with_rows`)."""
     flat_rows: list[dict] = []
     for table in result.tables:
         for row in table.rows:
             resolved = resolve_local_master(row, repo)
             flat_rows.append(flatten_row(document_id, table, resolved))
+    return flat_rows
+
+
+def persist_document_result(document_id: str, result, repo: Repository) -> dict:
+    """Applies local-master resolution then writes all rows for this
+    document via the repository's reprocess-safe replace."""
+    flat_rows = prepare_flat_rows(document_id, result, repo)
     return repo.replace_document_rows(document_id, flat_rows)
