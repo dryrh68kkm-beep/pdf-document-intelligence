@@ -64,7 +64,11 @@ def _line_kind(row: list[Word]) -> str:
     texts = [w.text for w in row]
     if texts[:1] == [PALLET_LABEL]:
         return "pallet"
-    if len(texts) >= 2 and texts[0] == COLUMNS[0].header_tokens[0] and texts[1] == COLUMNS[0].header_tokens[1]:
+    # Reuse the same tolerant full-header matcher as template detection.
+    # This avoids detecting a BPDC variant successfully and then silently
+    # ignoring its header during reconstruction because of case/punctuation
+    # or merged-word differences such as "Order no".
+    if find_header_boundaries(row, COLUMNS) is not None:
         return "header"
     if TOTAL_LABEL in texts:
         return "total"

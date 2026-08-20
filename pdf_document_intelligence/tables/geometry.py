@@ -10,6 +10,7 @@ overflows across column boundaries when Thai product-name text is long.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from pdf_document_intelligence.extract.text import PageText, Word
@@ -90,31 +91,72 @@ def cluster_rows(words: list[Word], top_min: float, top_max: float) -> list[list
     return rows
 
 
+def _normalize_header_text(text: str) -> str:
+    """Normalize harmless PDF text-layer differences in table headers.
+
+    The two supported packing-list layouts are stable structurally, but
+    different SAP/PDF exports can vary in case, punctuation and whether a
+    multi-word label is emitted as one or several pdfplumber words. Those
+    differences must not turn the same layout into UNKNOWN_LAYOUT.
+    """
+    value = unicodedata.normalize("NFKC", text).casefold()
+    value = "".join(ch for ch in value if ch.isalnum())
+    # The source exports use both Remark and REMARKS for the same optional
+    # final column. Treat that spelling variation as equivalent only here;
+    # no data-row values are normalized by this helper.
+    if value == "remarks":
+        return "remark"
+    return value
+
+
+def _match_header_phrase(
+    row: list[Word], cursor: int, tokens: tuple[str, ...]
+) -> tuple[int, float, float] | None:
+    """Find one column label from ``cursor`` onward.
+
+    Matching is ordered and geometry-preserving, but compares a normalized
+    concatenation. This handles examples such as ``no`` vs ``no.``, case
+    differences, and ``Order``+``no.`` being emitted as one PDF word,
+    without weakening the actual column sequence required by a template.
+    """
+    target = "".join(_normalize_header_text(token) for token in tokens)
+    if not target:
+        return None
+
+    for start in range(cursor, len(row)):
+        combined = ""
+        for end in range(start, len(row)):
+            piece = _normalize_header_text(row[end].text)
+            if not piece:
+                continue
+            combined += piece
+            if combined == target:
+                return end + 1, row[start].x0, row[end].x1
+            if not target.startswith(combined):
+                break
+    return None
+
+
 def find_header_boundaries(row: list[Word], columns: tuple[ColumnSpec, ...]) -> Boundaries | None:
     """Given one candidate header text-line (already clustered by top),
     matches `columns`' token sequences against it in order and returns
     per-column X boundaries, or None if the line doesn't match this
-    template's full column set."""
+    template's full column set.
+
+    Matching deliberately tolerates text-layer presentation differences
+    (case, punctuation, merged/split words), but it still requires every
+    template column in the original order. This keeps layout detection
+    strict while avoiding false UNKNOWN_LAYOUT results for the same form.
+    """
     row = sorted(row, key=lambda w: w.x0)
     matched: list[tuple[ColumnSpec, float, float]] = []
     cursor = 0
     for col in columns:
-        found_x0 = found_x1 = None
-        i = cursor
-        for token in col.header_tokens:
-            j = i
-            while j < len(row) and row[j].text != token:
-                j += 1
-            if j >= len(row):
-                return None
-            if found_x0 is None:
-                found_x0 = row[j].x0
-            found_x1 = row[j].x1
-            i = j + 1
+        found = _match_header_phrase(row, cursor, col.header_tokens)
+        if found is None:
+            return None
+        cursor, found_x0, found_x1 = found
         matched.append((col, found_x0, found_x1))
-        cursor = i
-    if len(matched) != len(columns):
-        return None
 
     boundaries: Boundaries = {}
     for idx, (col, x0, x1) in enumerate(matched):
@@ -126,13 +168,17 @@ def find_header_boundaries(row: list[Word], columns: tuple[ColumnSpec, ...]) -> 
 
 def find_header_on_page(page: PageText, columns: tuple[ColumnSpec, ...]) -> tuple[float, Boundaries] | None:
     """Scans a whole page for the first line matching `columns`' header
-    signature. Returns (header_bottom, boundaries) or None."""
-    words = sorted(page.words, key=lambda w: (w.top, w.x0))
-    first_token = columns[0].header_tokens[0]
-    for anchor in words:
-        if anchor.text != first_token:
-            continue
-        row = [w for w in words if abs(w.top - anchor.top) < 1.5]
+    signature. Returns (header_bottom, boundaries) or None.
+
+    We cluster candidate lines instead of anchoring on an exact ``DN``
+    token so case/punctuation/word-grouping differences receive the same
+    tolerant matching as ``find_header_boundaries``.
+    """
+    if not page.words:
+        return None
+    top_min = min(w.top for w in page.words) - 1.0
+    top_max = max(w.bottom for w in page.words) + 1.0
+    for row in cluster_rows(page.words, top_min, top_max):
         boundaries = find_header_boundaries(row, columns)
         if boundaries is not None:
             return max(w.bottom for w in row), boundaries

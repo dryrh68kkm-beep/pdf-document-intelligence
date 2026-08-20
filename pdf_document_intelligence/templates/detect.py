@@ -1,9 +1,10 @@
-"""Template auto-detection (proposal §38/§41, hand-rolled fingerprint
-rather than a learned matcher): tries each registered template's header
-column signature against the first few pages and returns whichever
-matches. A real TemplateMatcher would fingerprint on more than the header
-row (page size, anchor text blocks, column count) — this is deliberately
-minimal until there's a third template to force that generalization.
+"""Template auto-detection for the two supported Packing List layouts.
+
+Detection stays header/geometry driven, but it must not assume the first
+three pages always contain a usable table header. Some exports begin with
+cover/continuation content before the first full header. Text for every
+page is already extracted before this function runs, so scanning the
+remaining pages adds no OCR work.
 """
 from __future__ import annotations
 
@@ -15,11 +16,12 @@ from pdf_document_intelligence.templates.packing_list_bpdc import COLUMNS as BPD
 from pdf_document_intelligence.templates.packing_list_bpdc import TEMPLATE_ID as BPDC_TEMPLATE_ID
 
 UNKNOWN_TEMPLATE = "UNKNOWN_LAYOUT"
-_PAGES_TO_CHECK = 3
 
 
 def detect_template(doc_text: DocumentText) -> str:
-    for page in doc_text.pages[:_PAGES_TO_CHECK]:
+    # Do not cap this at the first N pages. This is text-layer inspection
+    # only; no OCR is triggered here. The first complete table header wins.
+    for page in doc_text.pages:
         if find_header_on_page(page, BIGC_COLUMNS) is not None:
             return BIGC_TEMPLATE_ID
         if find_header_on_page(page, BPDC_COLUMNS) is not None:
