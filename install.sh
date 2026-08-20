@@ -8,6 +8,16 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "ไม่พบ python3 กรุณาติดตั้ง Python 3.11+ ก่อน: https://www.python.org/downloads/"
   exit 1
 fi
+# pyproject.toml requires-python = ">=3.11" - a python3 that merely exists
+# but is too old (e.g. the 3.8 many older Linux distros ship as the
+# default python3) used to fail deep inside `pip install -e .` with a
+# confusing dependency-resolution error instead of a clear message here.
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+  found_version=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || echo "unknown")
+  echo "พบ python3 เวอร์ชัน $found_version แต่แอปนี้ต้องการ Python 3.11 ขึ้นไป"
+  echo "กรุณาติดตั้ง Python 3.11+ ก่อน: https://www.python.org/downloads/"
+  exit 1
+fi
 
 echo "== 2/3 ตรวจสอบ Tesseract OCR (ภาษาไทย) =="
 if ! command -v tesseract >/dev/null 2>&1; then

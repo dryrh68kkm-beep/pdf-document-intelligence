@@ -10,6 +10,16 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+REM pyproject.toml requires-python = ">=3.11" - a python.exe that merely
+REM exists but is too old used to fail deep inside "pip install -e ." with
+REM a confusing dependency-resolution error instead of a clear message here.
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+if errorlevel 1 (
+  echo พบ Python แต่เวอร์ชันเก่าเกินไป แอปนี้ต้องการ Python 3.11 ขึ้นไป
+  echo กรุณาติดตั้ง Python 3.11+ จาก https://www.python.org/downloads/
+  pause
+  exit /b 1
+)
 
 where tesseract >nul 2>nul
 if errorlevel 1 (
