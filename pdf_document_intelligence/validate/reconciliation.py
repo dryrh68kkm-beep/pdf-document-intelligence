@@ -87,6 +87,15 @@ def check_duplicate_rows(table: ExtractedTable) -> list[ValidationIssue]:
             issues.append(
                 ValidationIssue(
                     code="DUPLICATE_ROW",
+                    # Deliberately "warning", not "error": verified against the
+                    # BPDC golden sample, a dn/line/article/barcode match can be
+                    # a real, separately-quantified line item the source
+                    # document legitimately lists twice (confirmed by that
+                    # document's own declared Total reconciling with both rows
+                    # counted) - not always an extraction double-count. A human
+                    # can still see it in validation warnings; it must not by
+                    # itself force MANUAL_REVIEW_REQUIRED on an otherwise
+                    # correct, fully-reconciled document.
                     message=f"Row {row.row_index} duplicates row {seen[key]} (dn/line/article/barcode)",
                     severity="warning",
                     table=table.name,
