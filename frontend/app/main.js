@@ -57,6 +57,9 @@ function renderSidePanel() {
   }
 }
 
+// When a correction/undo saves, refresh all data (dashboard/products
+// recalculate from the DB, never patched in place) and re-open the panel
+// on the freshly-saved row so evidence + history reflect the save.
 document.addEventListener("product-saved", async (e) => {
   await store.refreshAll();
   const rowId = e.detail.rowId;
@@ -138,6 +141,7 @@ document.addEventListener("show-confirm", () => {
 document.getElementById("addFilesBtn").addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", (e) => { uploadFiles(e.target.files); fileInput.value = ""; });
 
+// Drag & drop anywhere on the app
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => {
   if (!e.dataTransfer?.types?.includes("Files")) return;
@@ -160,6 +164,10 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = api.exportUrl();
 });
 
+// Global search: routes to Products view: the view itself reads
+// state.searchQuery as its initial filter value (see views/products.js) -
+// state is the single source of truth here, not a simulated DOM event
+// crossing a re-render boundary.
 let searchDebounce = null;
 document.getElementById("globalSearch").addEventListener("input", (e) => {
   clearTimeout(searchDebounce);
@@ -169,6 +177,7 @@ document.getElementById("globalSearch").addEventListener("input", (e) => {
   }, 200);
 });
 
+// ---------- Polling ----------
 async function pollLoop() {
   if (store.hasProcessing() || store.state.documents.length === 0) {
     await store.refreshAll();
