@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
-from pdf_document_intelligence.api.rows import persist_document_result
+from pdf_document_intelligence.api.rows import prepare_flat_rows
 from pdf_document_intelligence.db.paths import get_pdf_path
 from pdf_document_intelligence.db.repository import Repository, get_repository, new_id
 from pdf_document_intelligence.models.document import DocumentResult
@@ -81,8 +81,14 @@ class DocumentStore:
                 for i in [*result.validation.errors, *result.validation.warnings]
             ],
         }
-        self._repo.set_document_complete(doc_id, result.pages, meta)
-        return persist_document_result(doc_id, result, self._repo)
+        # Prepared (local-master resolution + flatten) before the write so
+        # the actual DB write - marking the document complete and writing
+        # its rows - happens as a single atomic transaction (L2-003): the
+        # two used to be separate commits, leaving a real window where a
+        # killed process left the document stuck at status='complete' with
+        # zero/stale rows.
+        flat_rows = prepare_flat_rows(doc_id, result, self._repo)
+        return self._repo.complete_document_with_rows(doc_id, result.pages, meta, flat_rows)
 
     def set_error(self, doc_id: str, error: str) -> None:
         self._repo.set_document_error(doc_id, error)

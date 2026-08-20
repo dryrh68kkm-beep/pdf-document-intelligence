@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any
 
@@ -84,11 +85,30 @@ class Repository:
 
     def set_document_complete(self, doc_id: str, page_count: int, meta: dict) -> None:
         with self._conn:
-            self._conn.execute(
-                """UPDATE documents SET status='complete', page_count=?, meta_json=?,
-                   error=NULL, updated_at=? WHERE id=?""",
-                (page_count, json.dumps(meta, ensure_ascii=False), _now(), doc_id),
-            )
+            self._set_document_complete_sql(doc_id, page_count, meta)
+
+    def _set_document_complete_sql(self, doc_id: str, page_count: int, meta: dict) -> None:
+        """Caller must already hold the write transaction - see
+        `_replace_document_rows_sql`'s docstring for why."""
+        self._conn.execute(
+            """UPDATE documents SET status='complete', page_count=?, meta_json=?,
+               error=NULL, updated_at=? WHERE id=?""",
+            (page_count, json.dumps(meta, ensure_ascii=False), _now(), doc_id),
+        )
+
+    def complete_document_with_rows(self, doc_id: str, page_count: int, meta: dict, new_rows: list[dict]) -> dict:
+        """Atomically marks a document complete and writes its product rows
+        in one transaction. Fixes a real crash window (L2-003, reproduced):
+        `set_document_complete` and `replace_document_rows` used to be two
+        independent transactions - if the process was killed between the
+        two commits (not a Python exception, which the caller's except
+        block would recover from by marking the document 'error' - an
+        actual kill/crash/power loss), the document was left permanently
+        showing status='complete' with zero or stale product_rows, with no
+        automatic way to detect or recover from it."""
+        with self._conn:
+            self._set_document_complete_sql(doc_id, page_count, meta)
+            return self._replace_document_rows_sql(doc_id, new_rows)
 
     def set_document_error(self, doc_id: str, error: str) -> None:
         with self._conn:
@@ -121,6 +141,10 @@ class Repository:
     # ---------------- product rows ----------------
 
     def replace_document_rows(self, document_id: str, new_rows: list[dict]) -> dict:
+        with self._conn:
+            return self._replace_document_rows_sql(document_id, new_rows)
+
+    def _replace_document_rows_sql(self, document_id: str, new_rows: list[dict]) -> dict:
         """Batch-inserts extraction output for a document. On first process
         this is a plain batch insert. On reprocess, matches new rows against
         existing (non-deleted) rows by (department, barcode/article/row_index)
@@ -129,6 +153,20 @@ class Repository:
         correction (resolution_status == 'CORRECTED') is left untouched and
         reported back rather than silently overwritten. Old rows with no
         match in the new extraction are soft-deleted, never hard-deleted.
+
+        Caller must already hold the write transaction (`with self._conn:`)
+        - this method issues no commit/rollback of its own, so it can be
+        composed with other writes (see `complete_document_with_rows`) into
+        one atomic transaction.
+
+        Matching uses a FIFO queue per key, not a single dict slot: two
+        rows can legitimately share the same (department, barcode) - a real
+        document can list the same article twice as separate line items
+        (verified against the BPDC golden sample) - so a plain dict would
+        let the second one silently overwrite the first's match, causing
+        the first to look "gone" from the new extraction and get
+        soft-deleted, while both new rows updated the single surviving old
+        row instead of one each.
         """
         now = _now()
         existing = [
@@ -146,96 +184,99 @@ class Repository:
                 return ("art", r["department"], r["article_code"])
             return ("idx", r["department"], r["row_index"])
 
-        existing_by_key = {match_key(r): r for r in existing}
+        existing_by_key: dict[tuple, deque] = defaultdict(deque)
+        for r in existing:
+            existing_by_key[match_key(r)].append(r)
+
         matched_ids: set[str] = set()
         preserved_corrections: list[dict] = []
         inserted = 0
         updated = 0
 
-        with self._conn:
-            for nr in new_rows:
-                key = match_key(nr)
-                old = existing_by_key.get(key)
-                if old:
-                    matched_ids.add(old["id"])
-                    corrected_fields = set(json.loads(old.get("corrected_fields_json") or "[]"))
-                    row_update = dict(nr)
-                    for f in corrected_fields:
-                        # `corrected_fields` stores API-level field names (what
-                        # api/review.py's PATCH accepts, e.g. "name",
-                        # "article"), not DB column names - most are identical
-                        # (weight_qty, department, ...) but "name" ->
-                        # resolved_product_name and "article" -> article_code
-                        # are not, so comparing the raw name against
-                        # `row_update` (which is column-keyed, from
-                        # api/rows.py::flatten_row) silently missed those two
-                        # and let reprocess overwrite the correction with no
-                        # audit record of the reversal. Map through the same
-                        # FIELD_TO_COLUMN table api/review.py itself uses.
-                        column = FIELD_TO_COLUMN.get(f, f)
-                        if column in row_update:
-                            row_update[column] = old.get(column)
-                            preserved_corrections.append(
-                                {"row_id": old["id"], "field": f, "note": "reprocess did not override corrected field"}
-                            )
-                    self._conn.execute(
-                        """UPDATE product_rows SET
-                            source_page=?, raw_product_name=?, ocr_product_name=?,
-                            resolved_product_name=?, weight_qty=?, pu_qty=?, sku_qty=?,
-                            unit=?, unit_price=?, amount=?, confidence=?, confidence_band=?,
-                            resolution_status=?, review_required=?, review_reasons=?,
-                            suspected_non_product=?, non_product_reasons=?, fields_json=?,
-                            updated_at=?
-                           WHERE id=?""",
-                        (
-                            row_update["source_page"], row_update["raw_product_name"],
-                            row_update["ocr_product_name"], row_update["resolved_product_name"],
-                            row_update["weight_qty"], row_update["pu_qty"], row_update["sku_qty"],
-                            row_update["unit"], row_update["unit_price"], row_update["amount"],
-                            row_update["confidence"], row_update["confidence_band"],
-                            row_update["resolution_status"], int(row_update["review_required"]),
-                            json.dumps(row_update.get("review_reasons") or []),
-                            int(row_update["suspected_non_product"]),
-                            json.dumps(row_update.get("non_product_reasons") or []),
-                            json.dumps(row_update["fields"], ensure_ascii=False),
-                            now, old["id"],
-                        ),
-                    )
-                    updated += 1
-                else:
-                    row_id = new_id()
-                    self._conn.execute(
-                        """INSERT INTO product_rows
-                           (id, document_id, source_page, row_index, department, barcode,
-                            article_code, identity_code, raw_product_name, ocr_product_name,
-                            resolved_product_name, weight_qty, pu_qty, sku_qty, unit,
-                            unit_price, amount, confidence, confidence_band, resolution_status,
-                            review_required, review_reasons, suspected_non_product,
-                            non_product_reasons, fields_json, corrected_fields_json,
-                            created_at, updated_at)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        (
-                            row_id, document_id, nr["source_page"], nr["row_index"], nr["department"],
-                            nr.get("barcode"), nr.get("article_code"), nr.get("identity_code"),
-                            nr.get("raw_product_name"), nr.get("ocr_product_name"),
-                            nr.get("resolved_product_name"), nr.get("weight_qty"), nr.get("pu_qty"),
-                            nr.get("sku_qty"), nr.get("unit"), nr.get("unit_price"), nr.get("amount"),
-                            nr.get("confidence"), nr.get("confidence_band"), nr.get("resolution_status", "OCR"),
-                            int(nr.get("review_required", False)), json.dumps(nr.get("review_reasons") or []),
-                            int(nr.get("suspected_non_product", False)),
-                            json.dumps(nr.get("non_product_reasons") or []),
-                            json.dumps(nr["fields"], ensure_ascii=False), "[]",
-                            now, now,
-                        ),
-                    )
-                    inserted += 1
-
-            stale_ids = [r["id"] for r in existing if r["id"] not in matched_ids]
-            for stale_id in stale_ids:
+        for nr in new_rows:
+            key = match_key(nr)
+            bucket = existing_by_key.get(key)
+            old = bucket.popleft() if bucket else None
+            if old:
+                matched_ids.add(old["id"])
+                corrected_fields = set(json.loads(old.get("corrected_fields_json") or "[]"))
+                row_update = dict(nr)
+                for f in corrected_fields:
+                    # `corrected_fields` stores API-level field names (what
+                    # api/review.py's PATCH accepts, e.g. "name",
+                    # "article"), not DB column names - most are identical
+                    # (weight_qty, department, ...) but "name" ->
+                    # resolved_product_name and "article" -> article_code
+                    # are not, so comparing the raw name against
+                    # `row_update` (which is column-keyed, from
+                    # api/rows.py::flatten_row) silently missed those two
+                    # and let reprocess overwrite the correction with no
+                    # audit record of the reversal. Map through the same
+                    # FIELD_TO_COLUMN table api/review.py itself uses.
+                    column = FIELD_TO_COLUMN.get(f, f)
+                    if column in row_update:
+                        row_update[column] = old.get(column)
+                        preserved_corrections.append(
+                            {"row_id": old["id"], "field": f, "note": "reprocess did not override corrected field"}
+                        )
                 self._conn.execute(
-                    "UPDATE product_rows SET deleted_at=?, updated_at=? WHERE id=?",
-                    (now, now, stale_id),
+                    """UPDATE product_rows SET
+                        source_page=?, raw_product_name=?, ocr_product_name=?,
+                        resolved_product_name=?, weight_qty=?, pu_qty=?, sku_qty=?,
+                        unit=?, unit_price=?, amount=?, confidence=?, confidence_band=?,
+                        resolution_status=?, review_required=?, review_reasons=?,
+                        suspected_non_product=?, non_product_reasons=?, fields_json=?,
+                        updated_at=?
+                       WHERE id=?""",
+                    (
+                        row_update["source_page"], row_update["raw_product_name"],
+                        row_update["ocr_product_name"], row_update["resolved_product_name"],
+                        row_update["weight_qty"], row_update["pu_qty"], row_update["sku_qty"],
+                        row_update["unit"], row_update["unit_price"], row_update["amount"],
+                        row_update["confidence"], row_update["confidence_band"],
+                        row_update["resolution_status"], int(row_update["review_required"]),
+                        json.dumps(row_update.get("review_reasons") or []),
+                        int(row_update["suspected_non_product"]),
+                        json.dumps(row_update.get("non_product_reasons") or []),
+                        json.dumps(row_update["fields"], ensure_ascii=False),
+                        now, old["id"],
+                    ),
                 )
+                updated += 1
+            else:
+                row_id = new_id()
+                self._conn.execute(
+                    """INSERT INTO product_rows
+                       (id, document_id, source_page, row_index, department, barcode,
+                        article_code, identity_code, raw_product_name, ocr_product_name,
+                        resolved_product_name, weight_qty, pu_qty, sku_qty, unit,
+                        unit_price, amount, confidence, confidence_band, resolution_status,
+                        review_required, review_reasons, suspected_non_product,
+                        non_product_reasons, fields_json, corrected_fields_json,
+                        created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        row_id, document_id, nr["source_page"], nr["row_index"], nr["department"],
+                        nr.get("barcode"), nr.get("article_code"), nr.get("identity_code"),
+                        nr.get("raw_product_name"), nr.get("ocr_product_name"),
+                        nr.get("resolved_product_name"), nr.get("weight_qty"), nr.get("pu_qty"),
+                        nr.get("sku_qty"), nr.get("unit"), nr.get("unit_price"), nr.get("amount"),
+                        nr.get("confidence"), nr.get("confidence_band"), nr.get("resolution_status", "OCR"),
+                        int(nr.get("review_required", False)), json.dumps(nr.get("review_reasons") or []),
+                        int(nr.get("suspected_non_product", False)),
+                        json.dumps(nr.get("non_product_reasons") or []),
+                        json.dumps(nr["fields"], ensure_ascii=False), "[]",
+                        now, now,
+                    ),
+                )
+                inserted += 1
+
+        stale_ids = [r["id"] for r in existing if r["id"] not in matched_ids]
+        for stale_id in stale_ids:
+            self._conn.execute(
+                "UPDATE product_rows SET deleted_at=?, updated_at=? WHERE id=?",
+                (now, now, stale_id),
+            )
 
         return {
             "inserted": inserted,

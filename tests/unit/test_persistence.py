@@ -124,6 +124,53 @@ def test_reprocess_preserves_name_and_article_corrections(db_path):
     assert reloaded["article_code"] == "ART-CORRECTED"
 
 
+def test_reprocess_handles_duplicate_barcode_within_department(db_path):
+    """Regression guard (L2-002): two rows can legitimately share the same
+    (department, barcode) - a real document can list the same article
+    twice as separate line items (verified against the BPDC golden
+    sample). A prior bug matched by a plain dict keyed on
+    (department, barcode), so the second duplicate silently overwrote the
+    first's match in that dict - one row vanished (soft-deleted) on
+    reprocess and the other absorbed both new rows' updates."""
+    repo = _repo_at(db_path)
+    rows = [
+        make_row(0, "PAPER", "8850046340033", "ART-A", "สินค้า A", 10.0, 5, 5),
+        make_row(1, "PAPER", "8850046340033", "ART-A", "สินค้า B", 20.0, 8, 8),
+    ]
+    result = make_result("doc-1", "test.pdf", [("PAPER", rows)])
+    repo.create_document("doc-1", sha256="dup", filename="test.pdf", file_size=1)
+    repo.set_document_complete("doc-1", 1, {"confidence": 0.9})
+    persist_document_result("doc-1", result, repo)
+
+    before = repo.list_product_rows()
+    assert len(before) == 2
+    apply_correction(repo, before[1]["id"], "sku_qty", 999, reason="test")
+
+    result2 = make_result("doc-1", "test.pdf", [("PAPER", rows)])
+    persist_document_result("doc-1", result2, repo)
+
+    after = repo.list_product_rows()
+    assert len(after) == 2  # neither duplicate row silently disappears
+    sku_qtys = sorted(r["sku_qty"] for r in after)
+    assert sku_qtys == [5.0, 999.0]  # each row kept its own identity/data
+
+
+def test_complete_and_rows_write_atomically(db_path):
+    """Regression guard (L2-003): marking a document complete and writing
+    its product rows used to be two independent transactions - a process
+    kill between the two commits left the document permanently showing
+    status='complete' with zero/stale rows, undetectable by any normal
+    exception handler. Both writes must now succeed or fail together."""
+    repo = _repo_at(db_path)
+    repo.create_document("doc-1", sha256="atomic", filename="test.pdf", file_size=1)
+
+    with pytest.raises(Exception):
+        repo.complete_document_with_rows("doc-1", 5, {"confidence": 0.9}, [{"bad": "row"}])
+
+    doc = repo.get_document("doc-1")
+    assert doc["status"] != "complete"  # the failed row write rolled back the status change too
+
+
 # --- Editable review + audit trail (items 6-10) ---
 
 def test_correction_is_saved_and_recorded_in_audit_history(db_path):
