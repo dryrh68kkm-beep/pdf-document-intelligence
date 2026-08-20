@@ -43,9 +43,15 @@ class Store {
     return this.state.documents.some((d) => d.status === "processing");
   }
 
-  async refreshDocuments() {
+  async refreshDocuments({ silent = false } = {}) {
     const documents = await api.listDocuments();
-    this.set({ documents });
+    if (silent) {
+      // Progress polling should not rebuild the whole active view every 1.5s.
+      // main.js updates only the sidebar/bottom progress UI for silent polls.
+      Object.assign(this.state, { documents });
+    } else {
+      this.set({ documents });
+    }
     return documents;
   }
 
