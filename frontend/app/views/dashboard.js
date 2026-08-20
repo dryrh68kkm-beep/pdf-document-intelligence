@@ -1,15 +1,56 @@
-function kpiCard(value, label, cls = "") {
-  return `<div class="kpi-card"><div class="kpi-value ${cls}">${value}</div><div class="kpi-label">${label}</div></div>`;
-}
+// Dashboard Phase 1: Division -> Department -> Product. The home page
+// leads with the 6 major divisions (data/department_hierarchy.csv is the
+// only source for that structure - see templates/department_groups.py
+// and api/divisions.py); it never starts at Department directly.
+import { api } from "../api.js";
+
+const DIVISION_ACCENTS = ["#4a6fa5", "#5a8f7b", "#a5764a", "#8a5a9c", "#b0553f", "#3f7f9c"];
 
 function fmtNum(n) {
-  return n.toLocaleString("th-TH", { maximumFractionDigits: 2 });
+  return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function statusLabel(status) {
+  return { complete: "ประมวลผลสำเร็จ", processing: "กำลังประมวลผล", error: "ผิดพลาด" }[status] || status;
+}
+
+function kpiCard(value, label) {
+  return `<div class="kpi-card"><div class="kpi-value">${value}</div><div class="kpi-label">${label}</div></div>`;
+}
+
+function divisionCard(d, index) {
+  const accent = DIVISION_ACCENTS[index % DIVISION_ACCENTS.length];
+  const statusBadge =
+    d.status === "REVIEW"
+      ? `<span class="dept-card-badge warn">${d.reviewCount} ต้องตรวจสอบ</span>`
+      : `<span class="dept-card-badge">ปกติ</span>`;
+  return `
+    <div class="division-card" data-division="${d.divisionCode}" style="--division-accent:${accent}">
+      <div class="division-card-head">
+        <span class="division-card-code">${d.divisionCode}</span>
+        <span class="division-card-name">${d.divisionName}</span>
+        ${statusBadge}
+      </div>
+      <div class="division-card-stats">
+        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.rowCount)}</span><span class="division-stat-label">รายการ</span></div>
+        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.weight)}</span><span class="division-stat-label">น้ำหนัก (กก.)</span></div>
+        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.puQty)}</span><span class="division-stat-label">PU</span></div>
+        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.skuQty)}</span><span class="division-stat-label">SKU</span></div>
+      </div>
+      <div class="division-card-foot">${d.departmentCount} แผนก</div>
+    </div>`;
 }
 
 export function renderDashboard(container, store) {
-  const { dashboard, documents } = store.state;
+  const { documents, currentDocumentId, divisionSummary } = store.state;
+  const doc = documents.find((d) => d.id === currentDocumentId);
 
-  if (!dashboard || dashboard.completedCount === 0) {
+  if (!doc) {
     container.innerHTML = `
       <div class="empty-state">
         <div class="icon">📦</div>
@@ -21,64 +62,84 @@ export function renderDashboard(container, store) {
     return;
   }
 
-  const kpis = [
-    kpiCard(dashboard.rowCount.toLocaleString(), "สินค้าเข้า"),
-    kpiCard(dashboard.skuCount.toLocaleString(), "SKU"),
-    kpiCard(dashboard.departmentCount, "แผนก"),
-    kpiCard(dashboard.reviewCount, "ต้องตรวจสอบ", dashboard.reviewCount > 0 ? "warn" : "ok"),
-    ...(dashboard.nonProductCount > 0 ? [kpiCard(dashboard.nonProductCount, "ของแถม/ไม่ใช่สินค้า")] : []),
-    ...dashboard.numericColumns.map((c) => kpiCard(fmtNum(dashboard.grandTotals[c.key] ?? 0), c.label)),
-  ].join("");
-
-  const maxTotal = Math.max(...dashboard.departments.map((d) => d.totals.sku_qty || 0), 1);
-  const bars = dashboard.departments
-    .slice(0, 8)
-    .map((d) => {
-      const val = d.totals.sku_qty || 0;
-      const pct = Math.max(4, Math.round((val / maxTotal) * 100));
-      return `
-        <div class="bar-row">
-          <div>${d.name}</div>
-          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
-          <div class="bar-value">${fmtNum(val)}</div>
-        </div>`;
-    })
-    .join("");
-
-  const deptCards = dashboard.departments
-    .map(
-      (d) => `
-      <div class="dept-card" data-dept="${d.name}">
-        <div class="dept-card-head">
-          <span class="dept-card-name">${d.name}</span>
-          ${d.reviewCount > 0 ? `<span class="dept-card-badge warn">${d.reviewCount} ต้องตรวจสอบ</span>` : `<span class="dept-card-badge">✓</span>`}
+  const header = `
+    <div class="doc-header">
+      <div class="doc-header-info">
+        <div class="doc-header-title">${doc.filename}</div>
+        <div class="doc-header-meta">
+          <span>${fmtDate(doc.uploadedAt)}</span>
+          <span>·</span>
+          <span>${doc.pages ?? "—"} หน้า</span>
+          <span>·</span>
+          <span class="status-pill status-${doc.status}">${statusLabel(doc.status)}</span>
         </div>
-        <div class="dept-card-stat">${d.skuCount} SKU · ${fmtNum(d.totals.pu_qty || 0)} PU</div>
-        <div class="dept-card-stat">น้ำหนัก ${fmtNum(d.totals.weight_qty || 0)} กก. · SKU qty ${fmtNum(d.totals.sku_qty || 0)}</div>
-      </div>`
-    )
-    .join("");
-
-  const processing = documents.filter((d) => d.status === "processing");
-  const processingBanner = processing.length
-    ? `<div class="workspace-sub" style="margin-bottom:14px;">⏳ กำลังประมวลผล ${processing.length} ไฟล์ — ข้อมูลจะอัปเดตอัตโนมัติ</div>`
-    : "";
-
-  const coverage = (dashboard.masterCoverage || [])
-    .map((c) => `<span class="kpi-coverage-chip">${c.label} <b>${c.percent}%</b></span>`)
-    .join("");
-
-  container.innerHTML = `
-    ${processingBanner}
-    <div class="kpi-row">${kpis}</div>
-    ${coverage ? `<div class="section-title">Master Coverage</div><div class="kpi-coverage-row">${coverage}</div>` : ""}
-    <div class="section-title">ยอดตามแผนก (เรียงตาม SKU qty)</div>
-    <div class="bar-chart">${bars}</div>
-    <div class="section-title">ทุกแผนก</div>
-    <div class="dept-grid">${deptCards}</div>
+      </div>
+      <div class="doc-header-actions">
+        <button class="btn" id="dashRefreshBtn">↻ Refresh</button>
+        <button class="btn btn-primary" id="dashExportBtn">Export Excel</button>
+      </div>
+    </div>
   `;
 
-  container.querySelectorAll(".dept-card").forEach((el) => {
-    el.addEventListener("click", () => store.navigate("products", { deptFilter: el.dataset.dept }));
+  container.innerHTML = header;
+  container.querySelector("#dashExportBtn").addEventListener("click", () => {
+    window.location.href = api.exportUrl();
+  });
+  container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
+
+  if (doc.status !== "complete" || !divisionSummary) {
+    const body = document.createElement("div");
+    body.className = "empty-state";
+    body.innerHTML =
+      doc.status === "error"
+        ? `<div class="icon">⚠️</div><div class="title">อ่านไฟล์ไม่สำเร็จ</div><div>${doc.error || ""}</div>`
+        : `<div class="icon">⏳</div><div class="title">กำลังประมวลผลเอกสาร</div><div>${doc.progress?.stage || ""}</div>`;
+    container.appendChild(body);
+    return;
+  }
+
+  const kpis = [
+    kpiCard(fmtNum(divisionSummary.documentTotals.rowCount), "รายการทั้งหมด"),
+    kpiCard(fmtNum(divisionSummary.documentTotals.weight), "น้ำหนักรวม (กก.)"),
+    kpiCard(fmtNum(divisionSummary.documentTotals.puQty), "PU รวม"),
+    kpiCard(fmtNum(divisionSummary.documentTotals.skuQty), "SKU รวม"),
+  ].join("");
+
+  const divisionCards = divisionSummary.divisions.map((d, i) => divisionCard(d, i)).join("");
+
+  const dq = divisionSummary.dataQuality;
+  const rec = divisionSummary.reconciliation;
+  const dqRow = (label, value) => `<div class="dq-row"><span>${label}</span><span class="mono">${fmtNum(value)}</span></div>`;
+  const dataQuality = `
+    <div class="dq-panel">
+      <div class="section-title">Data Quality</div>
+      ${dqRow("Clean rows", dq.cleanRows)}
+      ${dqRow("Review required", dq.reviewRequired)}
+      ${dqRow("Corrected", dq.corrected)}
+      ${dqRow("Resolved from Master", dq.resolvedFromMaster)}
+      ${dqRow("Resolved from OCR", dq.resolvedFromOcr)}
+      ${dqRow("Unresolved", dq.unresolved)}
+      ${dqRow("Unmapped departments", dq.unmappedDepartments.length)}
+      ${dq.unmappedDepartments.length ? `<div class="dq-unmapped">${dq.unmappedDepartments.join(", ")}</div>` : ""}
+      <div class="section-title" style="margin-top:18px;">Reconciliation</div>
+      <div class="dq-row"><span>Status</span><span class="mono">${rec.status ?? "—"}</span></div>
+      <div class="dq-row"><span>Errors</span><span class="mono">${rec.errors}</span></div>
+    </div>
+  `;
+
+  const body = document.createElement("div");
+  body.className = "dashboard-body";
+  body.innerHTML = `
+    <div class="dashboard-main">
+      <div class="kpi-row">${kpis}</div>
+      <div class="section-title">สรุปตามฝ่าย</div>
+      <div class="division-grid">${divisionCards}</div>
+    </div>
+    <aside class="dashboard-aside">${dataQuality}</aside>
+  `;
+  container.appendChild(body);
+
+  body.querySelectorAll(".division-card").forEach((el) => {
+    el.addEventListener("click", () => store.openDivision(el.dataset.division));
   });
 }

@@ -22,6 +22,9 @@ class Store {
       deptFilter: null,
       panel: null,
       searchQuery: "",
+      currentDocumentId: null,
+      divisionSummary: null,
+      divisionDetail: null,
     };
     this._listeners = [];
   }
@@ -53,7 +56,32 @@ class Store {
       api.allProducts(),
     ]);
     const products = rawProducts.map((p) => ({ ...p, _search: buildSearchIndex(p) }));
-    this.set({ documents, dashboard, products });
+    // "Current document" for the Dashboard's Division rollup: the most
+    // recently uploaded document (documents is already sorted newest
+    // first by the API) - the Dashboard shows one packing list at a time.
+    const currentDocumentId = documents[0]?.id ?? null;
+    this.set({ documents, dashboard, products, currentDocumentId });
+    await this.refreshDivisions();
+  }
+
+  async refreshDivisions() {
+    const doc = this.state.documents.find((d) => d.id === this.state.currentDocumentId);
+    if (!doc || doc.status !== "complete") {
+      this.set({ divisionSummary: null });
+      return;
+    }
+    try {
+      const divisionSummary = await api.getDivisions(doc.id);
+      this.set({ divisionSummary });
+    } catch {
+      this.set({ divisionSummary: null });
+    }
+  }
+
+  async openDivision(divisionCode) {
+    const docId = this.state.currentDocumentId;
+    const detail = await api.getDivisionDepartments(docId, divisionCode);
+    this.set({ view: "divisionDetail", panel: null, divisionDetail: detail });
   }
 
   openPanel(panel) { this.set({ panel }); }
