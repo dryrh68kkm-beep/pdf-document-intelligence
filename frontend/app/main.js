@@ -20,6 +20,10 @@ const fileInput = document.getElementById("fileInput");
 const dragOverlay = document.getElementById("dragOverlay");
 const modalBackdrop = document.getElementById("modalBackdrop");
 const modalBox = document.getElementById("modalBox");
+const addFilesBtn = document.getElementById("addFilesBtn");
+
+let uploadInProgress = false;
+let pollInProgress = false;
 
 async function render() {
   renderSidebar(store);
@@ -90,16 +94,81 @@ function renderBottomBar() {
     .join("");
 }
 
+function renderLightweightProgressUi() {
+  // Polling progress must not tear down/rebuild the active dashboard/table.
+  renderSidebar(store);
+  renderBottomBar();
+}
+
+function setUploadBusy(busy) {
+  uploadInProgress = busy;
+  addFilesBtn.disabled = busy;
+  fileInput.disabled = busy;
+  addFilesBtn.setAttribute("aria-busy", busy ? "true" : "false");
+  if (busy) {
+    addFilesBtn.dataset.originalText = addFilesBtn.textContent;
+    addFilesBtn.textContent = "กำลังเพิ่มไฟล์...";
+  } else if (addFilesBtn.dataset.originalText) {
+    addFilesBtn.textContent = addFilesBtn.dataset.originalText;
+    delete addFilesBtn.dataset.originalText;
+  }
+}
+
+function showUploadError(error) {
+  modalBox.innerHTML = `
+    <h3>เพิ่มไฟล์ไม่สำเร็จ</h3>
+    <p>${String(error?.message || error)}</p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="uploadErrorOk">ตกลง</button>
+    </div>
+  `;
+  modalBackdrop.classList.add("open");
+  modalBox.querySelector("#uploadErrorOk").addEventListener("click", () => modalBackdrop.classList.remove("open"));
+}
+
 // ---------- Upload / dedupe ----------
 async function uploadFiles(fileList) {
-  for (const file of Array.from(fileList)) {
-    if (!file.name.toLowerCase().endsWith(".pdf")) continue;
-    const { status, body } = await api.uploadDocument(file);
-    if (status === 409) {
-      showDuplicateDialog(file, body.existingDocument);
+  if (uploadInProgress) return;
+  const files = Array.from(fileList).filter((file) => file.name.toLowerCase().endsWith(".pdf"));
+  if (files.length === 0) return;
+
+  setUploadBusy(true);
+  try {
+    for (const file of files) {
+      const { status, body } = await api.uploadDocument(file);
+      if (status === 409) {
+        showDuplicateDialog(file, body.existingDocument);
+      }
     }
+
+    // Only fetch document/progress state here. Loading dashboard + every
+    // product immediately while OCR is starting caused the UI to freeze.
+    await store.refreshDocuments({ silent: true });
+    renderLightweightProgressUi();
+
+    // Very small documents may finish before the first poll. In that case
+    // refresh the heavy views exactly once now.
+    if (!store.hasProcessing()) await store.refreshAll();
+  } catch (error) {
+    showUploadError(error);
+  } finally {
+    setUploadBusy(false);
   }
-  await store.refreshAll();
+}
+
+async function reprocessDuplicate(file) {
+  if (uploadInProgress) return;
+  setUploadBusy(true);
+  try {
+    await api.uploadDocument(file, true);
+    await store.refreshDocuments({ silent: true });
+    renderLightweightProgressUi();
+    if (!store.hasProcessing()) await store.refreshAll();
+  } catch (error) {
+    showUploadError(error);
+  } finally {
+    setUploadBusy(false);
+  }
 }
 
 function showDuplicateDialog(file, existing) {
@@ -115,8 +184,7 @@ function showDuplicateDialog(file, existing) {
   modalBox.querySelector("#dupCancel").addEventListener("click", () => modalBackdrop.classList.remove("open"));
   modalBox.querySelector("#dupAdd").addEventListener("click", async () => {
     modalBackdrop.classList.remove("open");
-    await api.uploadDocument(file, true);
-    await store.refreshAll();
+    await reprocessDuplicate(file);
   });
 }
 
@@ -139,13 +207,19 @@ document.addEventListener("show-confirm", () => {
   });
 });
 
-document.getElementById("addFilesBtn").addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", (e) => { uploadFiles(e.target.files); fileInput.value = ""; });
+addFilesBtn.addEventListener("click", () => {
+  if (!uploadInProgress) fileInput.click();
+});
+fileInput.addEventListener("change", (e) => {
+  const files = Array.from(e.target.files || []);
+  fileInput.value = "";
+  uploadFiles(files);
+});
 
 // Drag & drop anywhere on the app
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => {
-  if (!e.dataTransfer?.types?.includes("Files")) return;
+  if (uploadInProgress || !e.dataTransfer?.types?.includes("Files")) return;
   dragDepth++;
   dragOverlay.classList.add("active");
 });
@@ -158,7 +232,7 @@ window.addEventListener("drop", (e) => {
   e.preventDefault();
   dragDepth = 0;
   dragOverlay.classList.remove("active");
-  if (e.dataTransfer?.files?.length) uploadFiles(e.dataTransfer.files);
+  if (!uploadInProgress && e.dataTransfer?.files?.length) uploadFiles(e.dataTransfer.files);
 });
 
 document.getElementById("exportBtn").addEventListener("click", () => {
@@ -180,12 +254,34 @@ document.getElementById("globalSearch").addEventListener("input", (e) => {
 
 // ---------- Polling ----------
 async function pollLoop() {
-  if (store.hasProcessing() || store.state.documents.length === 0) {
-    await store.refreshAll();
-  } else {
-    await store.refreshDocuments();
+  if (pollInProgress) return;
+  pollInProgress = true;
+  let nextDelay = 5000;
+
+  try {
+    const wasProcessing = store.hasProcessing();
+
+    // During OCR we only need document/progress state. The old loop called
+    // refreshAll() every 1.5s, re-fetching every product + dashboard and
+    // triggering multiple full renders, which made the app appear to hang
+    // and flicker/rerender continuously while a file was being added.
+    await store.refreshDocuments({ silent: true });
+    const isProcessing = store.hasProcessing();
+    renderLightweightProgressUi();
+
+    if (wasProcessing && !isProcessing) {
+      // Processing just finished: hydrate dashboard/products once.
+      await store.refreshAll();
+    }
+
+    nextDelay = isProcessing ? 1500 : 5000;
+  } catch (error) {
+    console.error("poll failed", error);
+    nextDelay = 5000;
+  } finally {
+    pollInProgress = false;
+    setTimeout(pollLoop, nextDelay);
   }
-  setTimeout(pollLoop, store.hasProcessing() ? 1500 : 5000);
 }
 
 store.subscribe(render);
