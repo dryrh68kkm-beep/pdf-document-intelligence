@@ -102,6 +102,28 @@ def test_reprocess_does_not_silently_override_a_corrected_field(db_path):
     assert reloaded["weight_qty"] == 99.0  # correction preserved, not overwritten by reprocess
 
 
+def test_reprocess_preserves_name_and_article_corrections(db_path):
+    """Regression guard (L2-001): 'name' and 'article' are the two
+    correctable fields whose API-level name differs from its DB column
+    (resolved_product_name / article_code) - a prior bug compared the
+    corrected-fields list against column-keyed data and silently missed
+    exactly these two, letting reprocess overwrite them with no audit
+    trail of the reversal."""
+    repo = _repo_at(db_path)
+    _seed_document(repo)
+    row = next(r for r in repo.list_product_rows() if r["barcode"] == "8850000000001")
+    apply_correction(repo, row["id"], "name", "ชื่อที่แก้ไขแล้ว", reason="ยืนยันจากเอกสารต้นฉบับ")
+    apply_correction(repo, row["id"], "article", "ART-CORRECTED", reason="ยืนยันจากเอกสารต้นฉบับ")
+
+    new_rows = [make_row(0, "BAKERY", "8850000000001", "ART1", "ชื่อใหม่จาก OCR", 10.0, 5, 5)]
+    result = make_result("doc-1", "test.pdf", [("BAKERY", new_rows)])
+    persist_document_result("doc-1", result, repo)
+
+    reloaded = repo.get_product_row(row["id"])
+    assert reloaded["resolved_product_name"] == "ชื่อที่แก้ไขแล้ว"
+    assert reloaded["article_code"] == "ART-CORRECTED"
+
+
 # --- Editable review + audit trail (items 6-10) ---
 
 def test_correction_is_saved_and_recorded_in_audit_history(db_path):

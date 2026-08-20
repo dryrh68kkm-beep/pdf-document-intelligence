@@ -161,8 +161,20 @@ class Repository:
                     corrected_fields = set(json.loads(old.get("corrected_fields_json") or "[]"))
                     row_update = dict(nr)
                     for f in corrected_fields:
-                        if f in row_update:
-                            row_update[f] = old.get(f)
+                        # `corrected_fields` stores API-level field names (what
+                        # api/review.py's PATCH accepts, e.g. "name",
+                        # "article"), not DB column names - most are identical
+                        # (weight_qty, department, ...) but "name" ->
+                        # resolved_product_name and "article" -> article_code
+                        # are not, so comparing the raw name against
+                        # `row_update` (which is column-keyed, from
+                        # api/rows.py::flatten_row) silently missed those two
+                        # and let reprocess overwrite the correction with no
+                        # audit record of the reversal. Map through the same
+                        # FIELD_TO_COLUMN table api/review.py itself uses.
+                        column = FIELD_TO_COLUMN.get(f, f)
+                        if column in row_update:
+                            row_update[column] = old.get(column)
                             preserved_corrections.append(
                                 {"row_id": old["id"], "field": f, "note": "reprocess did not override corrected field"}
                             )
