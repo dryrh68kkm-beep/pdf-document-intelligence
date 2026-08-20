@@ -104,10 +104,10 @@ async function uploadFiles(fileList) {
 function showDuplicateDialog(file, existing) {
   modalBox.innerHTML = `
     <h3>ไฟล์นี้มีอยู่ในระบบแล้ว</h3>
-    <p>${existing.filename} — เพิ่มซ้ำจะประมวลผลไฟล์เดิมอีกครั้งเป็นเอกสารใหม่แยกกัน</p>
+    <p>${existing.filename} — ต้องการประมวลผลเอกสารเดิมอีกครั้งหรือไม่? ข้อมูลที่ผู้ใช้แก้ไขและประวัติการแก้ไขจะยังคงอยู่</p>
     <div class="modal-actions">
       <button class="btn" id="dupCancel">ยกเลิก</button>
-      <button class="btn btn-primary" id="dupAdd">เพิ่มซ้ำ</button>
+      <button class="btn btn-primary" id="dupAdd">ประมวลผลอีกครั้ง</button>
     </div>
   `;
   modalBackdrop.classList.add("open");
