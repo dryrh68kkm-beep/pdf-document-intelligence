@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from pdf_document_intelligence.config.settings import Settings
+from pdf_document_intelligence.extract.ocr import OCRResult
 from pdf_document_intelligence.extract.text import TextQuality
 from pdf_document_intelligence.models.document import BoundingBox, FieldValue
 from pdf_document_intelligence.validate.cross_validate import ThaiOcrCrossValidator
@@ -46,3 +48,20 @@ def test_skips_zero_area_bbox():
     v = ThaiOcrCrossValidator(pdf_path="unused.pdf", settings=Settings())
     field = _field(bbox=BoundingBox(x=0, y=0, width=0, height=0, page=1))
     assert v.maybe_apply(field, UNRELIABLE) is field
+
+
+def test_high_confidence_ocr_still_stays_review_required():
+    """Regression guard (L1-002): a page already flagged text-layer-
+    unreliable is why OCR runs at all - tesseract's own confidence score
+    measures glyph-recognition certainty, not semantic correctness, so a
+    "confident" OCR misread must still surface for human review. Must
+    hold even when the OCR text doesn't conflict with the (already
+    known-unreliable) PDF text layer."""
+    v = ThaiOcrCrossValidator(pdf_path="unused.pdf", settings=Settings())
+    field = _field(bbox=BoundingBox(x=0, y=0, width=10, height=10, page=1))
+    high_confidence_result = OCRResult(text="มินิเค้กแฟนซี", confidence=0.99)
+    with patch("pdf_document_intelligence.validate.cross_validate.render_page", return_value=None), \
+         patch("pdf_document_intelligence.validate.cross_validate.ocr_region", return_value=high_confidence_result):
+        updated = v.maybe_apply(field, UNRELIABLE)
+    assert updated.confidence == 0.99
+    assert updated.review_required is True

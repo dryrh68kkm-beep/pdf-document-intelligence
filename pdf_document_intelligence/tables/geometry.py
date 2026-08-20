@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 
 from pdf_document_intelligence.extract.text import PageText, Word
+from pdf_document_intelligence.normalize.types import TypeParseError, parse_integer, parse_number
 from pdf_document_intelligence.templates.base import ColumnSpec
 
 ROW_TOLERANCE = 3.0
@@ -218,13 +219,35 @@ def parse_total(
         matched = [w.text for w in total_words if left <= w.x0 < right]
         return matched[0] if matched else None
 
+    # Same locale-aware parsing (thousands separators, Thai digits) as every
+    # row value goes through - a bare float()/int() here would raise on a
+    # department total >= 1,000 (e.g. "1,267.30"), taking down the whole
+    # document's processing instead of just leaving this one total
+    # unreconciled (reconcile_table already handles a None total by
+    # skipping that check, not by fabricating a match).
+    def parse_decimal_or_none(text: str | None) -> float | None:
+        if not text:
+            return None
+        try:
+            return parse_number(text)
+        except TypeParseError:
+            return None
+
+    def parse_int_or_none(text: str | None) -> int | None:
+        if not text:
+            return None
+        try:
+            return parse_integer(text)
+        except TypeParseError:
+            return None
+
     weight = in_col("weight_qty")
     pu = in_col("pu_qty")
     sku = in_col("sku_qty")
     return ParsedTotal(
         line_count=line_count,
-        weight_qty=float(weight) if weight else None,
-        pu_qty=int(pu) if pu else None,
-        sku_qty=int(sku) if sku else None,
+        weight_qty=parse_decimal_or_none(weight),
+        pu_qty=parse_int_or_none(pu),
+        sku_qty=parse_int_or_none(sku),
         page=page_no,
     )

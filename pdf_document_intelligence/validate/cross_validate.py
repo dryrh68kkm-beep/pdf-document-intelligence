@@ -83,7 +83,6 @@ class ThaiOcrCrossValidator:
         if conflict:
             flags.append("SOURCE_CONFLICT")
 
-        high_confidence = result.confidence >= self.settings.ocr_confidence_high
         return field.model_copy(
             update={
                 "value": ocr_text,
@@ -92,6 +91,13 @@ class ThaiOcrCrossValidator:
                 "ocr_raw_value": result.text,
                 "ocr_confidence": result.confidence,
                 "validation_flags": flags,
-                "review_required": not high_confidence,
+                # Always True, regardless of OCR confidence: this only runs on a
+                # page whose text layer is already known-unreliable, and
+                # tesseract's confidence measures glyph-recognition certainty,
+                # not semantic correctness - a "confident" misread is exactly
+                # the case review exists to catch, per this module's own
+                # documented policy above ("genuinely uncertain ... stays
+                # review_required even when it recovers legible text").
+                "review_required": True,
             }
         )

@@ -49,8 +49,11 @@ class Settings(BaseSettings):
     review_recommended_threshold: float = 90.0
 
     # --- Critical-field stricter threshold ---
+    # Names must match a document type's actual canonical field names (see
+    # templates/*.py ColumnSpec) or this list silently matches nothing and
+    # the extra penalty below never applies to any field.
     critical_field_min_confidence: float = 0.95
-    critical_fields: tuple[str, ...] = ("document_number", "date", "quantity", "price", "amount", "total")
+    critical_fields: tuple[str, ...] = ("barcode", "weight_qty", "pu_qty", "sku_qty")
 
     engine_version: str = "0.1.0"
     parser_version: str = "0.1.0"
