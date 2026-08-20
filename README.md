@@ -2,9 +2,9 @@
 
 Accuracy-first PDF document intelligence pipeline: PDF in, structured
 department/product data out, with full evidence back to the source
-document for every value. See `docs/ARCHITECTURE_PROPOSAL.md` for the
-full design rationale and `docs/OCR_ROOT_CAUSE.md` for a worked example of
-the evidence-first approach applied to a real corrupted PDF.
+document for every value. See `docs/APPLICATION.md` for the current
+application architecture and `docs/OCR_ROOT_CAUSE.md` for a worked
+example of the evidence-first approach applied to a real corrupted PDF.
 
 ## Running the desktop web application
 
@@ -30,6 +30,8 @@ application architecture and what's implemented vs. deferred.
 pytest
 ```
 
-The golden regression test (`tests/integration/test_golden_regression.py`)
-runs the full pipeline including OCR against a real sample document and
-takes about a minute.
+The golden regression tests (`tests/integration/test_golden_regression*.py`)
+run the full pipeline including real Tesseract OCR against sample
+documents and take a few minutes (~4-5 minutes for the full suite,
+measured) - `.github/workflows/tests.yml` splits these into their own CI
+job for that reason, separate from the fast unit/API tests.

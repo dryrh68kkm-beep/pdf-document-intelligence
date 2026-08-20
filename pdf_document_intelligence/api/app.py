@@ -21,6 +21,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from pdf_document_intelligence.api import review as review_api
 from pdf_document_intelligence.api.aggregate import build_dashboard_state
@@ -279,6 +280,13 @@ def export_excel():
         out_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename="pdf-document-intelligence-export.xlsx",
+        # FileResponse does not delete the file it streams - reproduced:
+        # `delete=False` (needed so the file still exists once openpyxl
+        # writes to it and FileResponse reads it back) otherwise leaked
+        # one .xlsx file into the OS temp dir per export, forever, for
+        # the app's whole lifetime. BackgroundTask runs after the
+        # response is fully sent.
+        background=BackgroundTask(out_path.unlink, missing_ok=True),
     )
 
 
