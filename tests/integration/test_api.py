@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
+import pdf_document_intelligence.api.app as app_module
 from pdf_document_intelligence.api.app import app
 from pdf_document_intelligence.api.store import store
 
@@ -74,3 +75,32 @@ def test_concurrent_duplicate_upload_returns_409_not_500():
 
     statuses = sorted(r.status_code for r in responses)
     assert statuses == [200, 409], f"expected one accepted + one duplicate, got {statuses}"
+
+
+def test_force_duplicate_reprocesses_existing_document(monkeypatch):
+    """FAT-001: force=true must reprocess the existing active document,
+    never attempt to create a second active row with the same SHA-256."""
+    _reset_store()
+    client = TestClient(app)
+    content = b"%PDF-1.4\n%fat-001-fixture\n"
+    original = store.create("same.pdf", content)
+    submitted = []
+
+    class ImmediateCaptureExecutor:
+        def submit(self, fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            return None
+
+    monkeypatch.setattr(app_module, "_executor", ImmediateCaptureExecutor())
+
+    duplicate = client.post("/api/documents", files={"file": ("same.pdf", content, "application/pdf")})
+    assert duplicate.status_code == 409
+
+    forced = client.post("/api/documents?force=true", files={"file": ("same.pdf", content, "application/pdf")})
+    assert forced.status_code == 200
+    body = forced.json()
+    assert body["id"] == original["id"]
+    assert body["reprocessedExisting"] is True
+    assert len(store.list()) == 1
+    assert len(submitted) == 1
+    assert submitted[0][1][0] == original["id"]
