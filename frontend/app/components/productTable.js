@@ -7,7 +7,7 @@ const BUFFER = 8;
 const COLS = "120px 1fr 90px 60px 70px 70px 110px 50px 90px";
 
 export function renderProductTable(container, rows, opts) {
-  const { onRowClick, selectedRowId } = opts;
+  const { onRowClick, selectedRowId, initialScrollTop } = opts;
   container.innerHTML = "";
 
   const wrap = document.createElement("div");
@@ -31,6 +31,15 @@ export function renderProductTable(container, rows, opts) {
   body.appendChild(spacer);
   wrap.appendChild(body);
   container.appendChild(wrap);
+  // The whole table is rebuilt from scratch on every re-render (state.js
+  // fires a full app re-render on any store change, including ones
+  // unrelated to this table's own data - e.g. a background poll tick
+  // refreshing just the Documents list every few seconds). Restoring the
+  // scroll position here is what keeps the row window the caller
+  // actually asked for; without it every poll tick silently snapped the
+  // table back to the top mid-scroll (confirmed in a real browser: 6s
+  // after scrolling to 2000px, scrollTop read back as 0).
+  if (initialScrollTop) body.scrollTop = initialScrollTop;
 
   function fmt(v) {
     if (v === null || v === undefined || v === "") return "—";

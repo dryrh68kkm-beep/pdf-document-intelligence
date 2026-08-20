@@ -3,6 +3,9 @@ import { renderProductTable } from "../components/productTable.js";
 export function renderReview(container, store) {
   const { products, panel } = store.state;
   const items = products.filter((p) => p.reviewRequired);
+  // See views/products.js for why this is captured before the rebuild -
+  // same virtual-scroll table, same background-poll-resets-scroll bug.
+  const scrollTop = container.querySelector(".vtable-body")?.scrollTop || 0;
 
   container.innerHTML = `
     <div class="workspace-header">
@@ -17,6 +20,7 @@ export function renderReview(container, store) {
   if (items.length) {
     renderProductTable(container.querySelector("#tableHost"), items, {
       selectedRowId: panel?.rowId,
+      initialScrollTop: scrollTop,
       onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
     });
   }

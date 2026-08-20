@@ -4,6 +4,10 @@ let debounceTimer = null;
 
 export function renderProducts(container, store) {
   const { products, deptFilter, panel, searchQuery } = store.state;
+  // Captured before the container is wiped below, so a re-render
+  // triggered by something unrelated (e.g. a background poll tick) can
+  // restore where the user was instead of snapping back to row 1.
+  const scrollTop = container.querySelector(".vtable-body")?.scrollTop || 0;
 
   container.innerHTML = `
     ${deptFilter ? `<div class="back-link" id="clearDept">‹ ทุกแผนก</div>` : ""}
@@ -38,21 +42,26 @@ export function renderProducts(container, store) {
   const countEl = container.querySelector("#productCount");
   const visibleEl = container.querySelector("#visibleCount");
 
-  function draw(localQuery) {
+  function draw(localQuery, preserveScrollTop) {
     const rows = currentRows(localQuery);
     countEl.textContent = `${rows.length.toLocaleString()} รายการ`;
     visibleEl.textContent = `${rows.length.toLocaleString()} แสดงอยู่`;
     renderProductTable(host, rows, {
       selectedRowId: panel?.rowId,
+      initialScrollTop: preserveScrollTop ? scrollTop : 0,
       onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
     });
   }
 
-  draw(searchQuery || "");
+  // Preserve scroll on the initial draw (this render may have been
+  // triggered by an unrelated background refresh, not the user changing
+  // view/filter); a search-box edit below always resets to the top since
+  // the visible row set actually changed.
+  draw(searchQuery || "", true);
 
   container.querySelector("#productFilter").addEventListener("input", (e) => {
     clearTimeout(debounceTimer);
     const val = e.target.value;
-    debounceTimer = setTimeout(() => draw(val), 200); // debounced, not per-keystroke
+    debounceTimer = setTimeout(() => draw(val, false), 200); // debounced, not per-keystroke
   });
 }
