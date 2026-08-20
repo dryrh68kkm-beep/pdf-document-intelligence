@@ -61,6 +61,22 @@ def _doc_products(doc_id: str) -> list[dict]:
     return store.repo.list_product_rows(document_id=doc_id)
 
 
+def _reprocess_existing(existing: dict, pdf_bytes: bytes) -> dict:
+    """Reprocess an already-active document without creating a duplicate row.
+
+    The active-document SHA-256 unique index remains the final data-integrity
+    guard.  A forced duplicate upload means "reprocess this exact document",
+    not "create a second active copy that would double-count dashboard/export
+    totals".
+    """
+    doc_id = existing["id"]
+    store.mark_reprocessing(doc_id)
+    _executor.submit(_run_processing, doc_id, pdf_bytes)
+    response = document_summary_json(store.get(doc_id))
+    response["reprocessedExisting"] = True
+    return response
+
+
 @app.post("/api/documents")
 async def upload_document(file: UploadFile, force: bool = False):
     if not file.filename.lower().endswith(".pdf"):
@@ -72,24 +88,25 @@ async def upload_document(file: UploadFile, force: bool = False):
     import hashlib
 
     sha256 = hashlib.sha256(pdf_bytes).hexdigest()
-    if not force:
-        existing = store.find_by_hash(sha256)
-        if existing:
-            return JSONResponse(
-                status_code=409,
-                content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
-            )
+    existing = store.find_by_hash(sha256)
+    if existing:
+        if force:
+            return _reprocess_existing(existing, pdf_bytes)
+        return JSONResponse(
+            status_code=409,
+            content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
+        )
 
     try:
         doc = store.create(file.filename, pdf_bytes)
     except sqlite3.IntegrityError:
-        # Two concurrent uploads of the same file both pass the
-        # find_by_hash check above before either commits (check-then-act
-        # race), so the second INSERT hits the sha256 unique index -
-        # reproduced with two threads racing store.create() directly.
-        # Same response shape as the normal duplicate path, not a 500.
+        # Two concurrent uploads of the same file can both pass the
+        # find_by_hash check before either commits. The unique active-SHA
+        # index is intentionally kept as a final integrity guard.
         existing = store.find_by_hash(sha256)
         if existing:
+            if force:
+                return _reprocess_existing(existing, pdf_bytes)
             return JSONResponse(
                 status_code=409,
                 content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
@@ -280,12 +297,6 @@ def export_excel():
         out_path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename="pdf-document-intelligence-export.xlsx",
-        # FileResponse does not delete the file it streams - reproduced:
-        # `delete=False` (needed so the file still exists once openpyxl
-        # writes to it and FileResponse reads it back) otherwise leaked
-        # one .xlsx file into the OS temp dir per export, forever, for
-        # the app's whole lifetime. BackgroundTask runs after the
-        # response is fully sent.
         background=BackgroundTask(out_path.unlink, missing_ok=True),
     )
 
