@@ -10,6 +10,10 @@ function fmtNum(n) {
   return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 }
 
+function fmtBaht(n) {
+  return "฿" + (n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function fmtDate(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
@@ -36,6 +40,7 @@ function divisionCard(d, index) {
         <span class="division-card-name">${d.divisionName}</span>
         ${statusBadge}
       </div>
+      <div class="division-card-amount">${fmtBaht(d.amount)}</div>
       <div class="division-card-stats">
         <div class="division-stat"><span class="division-stat-value">${fmtNum(d.rowCount)}</span><span class="division-stat-label">รายการ</span></div>
         <div class="division-stat"><span class="division-stat-value">${fmtNum(d.weight)}</span><span class="division-stat-label">น้ำหนัก (กก.)</span></div>
@@ -43,6 +48,38 @@ function divisionCard(d, index) {
         <div class="division-stat"><span class="division-stat-value">${fmtNum(d.skuQty)}</span><span class="division-stat-label">SKU</span></div>
       </div>
       <div class="division-card-foot">${d.departmentCount} แผนก</div>
+    </div>`;
+}
+
+let chartMetric = "sku";
+
+function divisionChart(divisions) {
+  const metricKey = chartMetric === "amount" ? "amount" : "skuQty";
+  const sorted = [...divisions].sort((a, b) => b[metricKey] - a[metricKey]);
+  const max = Math.max(1, ...sorted.map((d) => d[metricKey]));
+  const rows = sorted
+    .map((d) => {
+      const pct = Math.max(2, (d[metricKey] / max) * 100);
+      const valueLabel = chartMetric === "amount" ? fmtBaht(d.amount) : fmtNum(d.skuQty);
+      const title = `${d.divisionName} · รายการ ${fmtNum(d.rowCount)} · น้ำหนัก ${fmtNum(d.weight)} กก. · PU ${fmtNum(d.puQty)} · SKU ${fmtNum(d.skuQty)} · มูลค่ารวม ${fmtBaht(d.amount)}`;
+      return `
+        <div class="bar-row" title="${title}">
+          <span>${d.divisionCode} ${d.divisionName}</span>
+          <span class="bar-track"><span class="bar-fill" style="width:${pct}%"></span></span>
+          <span class="mono">${valueLabel}</span>
+        </div>`;
+    })
+    .join("");
+  return `
+    <div class="chart-panel">
+      <div class="section-title chart-title-row">
+        <span>ภาพรวม 6 ฝ่ายใหญ่</span>
+        <span class="chart-toggle">
+          <button class="sort-btn${chartMetric === "sku" ? " active" : ""}" data-metric="sku">SKU</button>
+          <button class="sort-btn${chartMetric === "amount" ? " active" : ""}" data-metric="amount">มูลค่า ฿</button>
+        </span>
+      </div>
+      <div class="bar-chart">${rows}</div>
     </div>`;
 }
 
@@ -103,9 +140,11 @@ export function renderDashboard(container, store) {
     kpiCard(fmtNum(divisionSummary.documentTotals.weight), "น้ำหนักรวม (กก.)"),
     kpiCard(fmtNum(divisionSummary.documentTotals.puQty), "PU รวม"),
     kpiCard(fmtNum(divisionSummary.documentTotals.skuQty), "SKU รวม"),
+    kpiCard(fmtBaht(divisionSummary.documentTotals.amount), "มูลค่ารวม (฿)"),
   ].join("");
 
   const divisionCards = divisionSummary.divisions.map((d, i) => divisionCard(d, i)).join("");
+  const chart = divisionChart(divisionSummary.divisions);
 
   const dq = divisionSummary.dataQuality;
   const rec = divisionSummary.reconciliation;
@@ -121,6 +160,7 @@ export function renderDashboard(container, store) {
       ${dqRow("Unresolved", dq.unresolved)}
       ${dqRow("Unmapped departments", dq.unmappedDepartments.length)}
       ${dq.unmappedDepartments.length ? `<div class="dq-unmapped">${dq.unmappedDepartments.join(", ")}</div>` : ""}
+      ${dq.unmappedRowCount ? `<div class="dq-row"><span>Unmapped amount</span><span class="mono">${fmtBaht(dq.unmappedAmount)}</span></div>` : ""}
       <div class="section-title" style="margin-top:18px;">Reconciliation</div>
       <div class="dq-row"><span>Status</span><span class="mono">${rec.status ?? "—"}</span></div>
       <div class="dq-row"><span>Errors</span><span class="mono">${rec.errors}</span></div>
@@ -132,6 +172,7 @@ export function renderDashboard(container, store) {
   body.innerHTML = `
     <div class="dashboard-main">
       <div class="kpi-row">${kpis}</div>
+      ${chart}
       <div class="section-title">สรุปตามฝ่าย</div>
       <div class="division-grid">${divisionCards}</div>
     </div>
@@ -141,5 +182,12 @@ export function renderDashboard(container, store) {
 
   body.querySelectorAll(".division-card").forEach((el) => {
     el.addEventListener("click", () => store.openDivision(el.dataset.division));
+  });
+
+  body.querySelectorAll(".chart-toggle .sort-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      chartMetric = btn.dataset.metric;
+      renderDashboard(container, store);
+    });
   });
 }

@@ -17,6 +17,7 @@ never has to reason about double-counting itself.
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal
 
 from fastapi import HTTPException
 
@@ -28,6 +29,15 @@ from pdf_document_intelligence.templates.department_groups import (
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
 
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)  # weight_qty, pu_qty, sku_qty
+
+
+def _decimal(val) -> Decimal | None:
+    """Money must never round-trip through float - the DB driver hands us
+    a Python float (SQLite REAL affinity), so convert via str() rather than
+    Decimal(float) directly to avoid inheriting float's binary imprecision."""
+    if val is None:
+        return None
+    return Decimal(str(val))
 
 
 def _active_document(repo: Repository, doc_id: str) -> dict:
@@ -57,14 +67,16 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
     buckets = {
         code: {
             "rowCount": 0, "weight": 0.0, "puQty": 0.0, "skuQty": 0.0,
-            "reviewCount": 0, "departments": set(),
+            "amount": Decimal("0"), "reviewCount": 0, "departments": set(),
         }
         for code, _ in divisions
     }
 
     unmapped_departments: set[str] = set()
     unmapped_row_count = 0
+    unmapped_amount = Decimal("0")
     doc_totals = {c: 0.0 for c in NUMERIC_COLUMNS}
+    doc_amount = Decimal("0")
     doc_row_count = 0
     review_required = 0
     corrected = 0
@@ -96,11 +108,16 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             val = row.get(col)
             if val is not None:
                 doc_totals[col] += val
+        row_amount = _decimal(row.get("amount"))
+        if row_amount is not None:
+            doc_amount += row_amount
 
         division = division_for_department(row["department"])
         if division is None:
             unmapped_departments.add(row["department"])
             unmapped_row_count += 1
+            if row_amount is not None:
+                unmapped_amount += row_amount
             continue
 
         code, _ = division
@@ -113,6 +130,8 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             val = row.get(col)
             if val is not None:
                 bucket[{"weight_qty": "weight", "pu_qty": "puQty", "sku_qty": "skuQty"}[col]] += val
+        if row_amount is not None:
+            bucket["amount"] += row_amount
 
     division_list = []
     for code, name in divisions:
@@ -126,6 +145,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
                 "weight": round(b["weight"], 3),
                 "puQty": round(b["puQty"], 3),
                 "skuQty": round(b["skuQty"], 3),
+                "amount": float(b["amount"].quantize(Decimal("0.01"))),
                 "reviewCount": b["reviewCount"],
                 "status": "REVIEW" if b["reviewCount"] > 0 else "OK",
             }
@@ -138,6 +158,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             "weight": round(doc_totals["weight_qty"], 3),
             "puQty": round(doc_totals["pu_qty"], 3),
             "skuQty": round(doc_totals["sku_qty"], 3),
+            "amount": float(doc_amount.quantize(Decimal("0.01"))),
         },
         "divisions": division_list,
         "dataQuality": {
@@ -149,6 +170,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             "unresolved": unresolved,
             "unmappedDepartments": sorted(unmapped_departments),
             "unmappedRowCount": unmapped_row_count,
+            "unmappedAmount": float(unmapped_amount.quantize(Decimal("0.01"))),
         },
         "reconciliation": _reconciliation(doc),
     }
@@ -163,7 +185,10 @@ def build_division_departments(repo: Repository, doc_id: str, division_code: str
     rows = repo.list_product_rows(document_id=doc_id)
 
     dept_buckets: dict[str, dict] = defaultdict(
-        lambda: {"rowCount": 0, "weight": 0.0, "puQty": 0.0, "skuQty": 0.0, "reviewCount": 0}
+        lambda: {
+            "rowCount": 0, "weight": 0.0, "puQty": 0.0, "skuQty": 0.0,
+            "amount": Decimal("0"), "reviewCount": 0,
+        }
     )
 
     for row in rows:
@@ -180,6 +205,9 @@ def build_division_departments(repo: Repository, doc_id: str, division_code: str
             val = row.get(col)
             if val is not None:
                 b[{"weight_qty": "weight", "pu_qty": "puQty", "sku_qty": "skuQty"}[col]] += val
+        row_amount = _decimal(row.get("amount"))
+        if row_amount is not None:
+            b["amount"] += row_amount
 
     departments = [
         {
@@ -188,6 +216,7 @@ def build_division_departments(repo: Repository, doc_id: str, division_code: str
             "weight": round(b["weight"], 3),
             "puQty": round(b["puQty"], 3),
             "skuQty": round(b["skuQty"], 3),
+            "amount": float(b["amount"].quantize(Decimal("0.01"))),
             "reviewCount": b["reviewCount"],
         }
         for name, b in dept_buckets.items()

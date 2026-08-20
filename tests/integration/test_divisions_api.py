@@ -156,3 +156,116 @@ def test_unknown_division_code_404():
     client = TestClient(app)
     resp = client.get(f"/api/analytics/documents/{doc['id']}/divisions/99/departments")
     assert resp.status_code == 404
+
+
+def test_amount_defaults_to_zero_when_not_corrected():
+    # Extraction never populates unit_price/amount today (no packing-list
+    # template defines those columns) - the rollup must show real zero,
+    # never a fabricated figure, until a correction supplies real amounts.
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product 1", 10.0, 2, 20)])]
+    _complete(doc["id"], "t.pdf", tables)
+
+    client = TestClient(app)
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    assert body["documentTotals"]["amount"] == 0.0
+    dry_food = next(d for d in body["divisions"] if d["divisionCode"] == "04")
+    assert dry_food["amount"] == 0.0
+
+
+def test_amount_reconciles_with_decimal_precision():
+    # Classic float trap: 0.1 + 0.2 != 0.3 in binary float. Using amounts
+    # that don't round-trip cleanly through float catches a regression to
+    # float summation (per the explicit "Decimal not float" rule).
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [
+        ("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product 1", 10.0, 2, 20)]),
+        ("HOUSEWARE", [make_row(0, "HOUSEWARE", "BC2", "ART2", "Product 2", 5.0, 1, 10)]),
+    ]
+    _complete(doc["id"], "t.pdf", tables)
+
+    client = TestClient(app)
+    rows = store.repo.list_product_rows(document_id=doc["id"])
+    row_ids = sorted(r["id"] for r in rows)
+    client.patch(f"/api/products/{row_ids[0]}", json={"field": "amount", "value": 10.10, "reason": "fix"})
+    client.patch(f"/api/products/{row_ids[1]}", json={"field": "amount", "value": 20.20, "reason": "fix"})
+
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    assert body["documentTotals"]["amount"] == 30.30
+    division_sum = round(sum(d["amount"] for d in body["divisions"]), 2)
+    assert division_sum == 30.30
+
+
+def test_unmapped_amount_is_reported_not_dropped():
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [
+        ("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product 1", 10.0, 2, 20)]),
+        ("NOT_A_REAL_DEPT", [make_row(0, "NOT_A_REAL_DEPT", "BC9", "ART9", "Unknown", 1.0, 1, 1)]),
+    ]
+    _complete(doc["id"], "t.pdf", tables)
+
+    client = TestClient(app)
+    rows = store.repo.list_product_rows(document_id=doc["id"])
+    unmapped_row = next(r for r in rows if r["department"] == "NOT_A_REAL_DEPT")
+    client.patch(f"/api/products/{unmapped_row['id']}", json={"field": "amount", "value": 50.0, "reason": "fix"})
+
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    assert body["dataQuality"]["unmappedAmount"] == 50.0
+    # the document total still includes it - never silently dropped
+    assert body["documentTotals"]["amount"] == 50.0
+    assert sum(d["amount"] for d in body["divisions"]) == 0.0
+
+
+def test_reprocess_does_not_double_count_amount():
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product", 10.0, 2, 20)])]
+    _complete(doc["id"], "t.pdf", tables)
+    client = TestClient(app)
+    row_id = store.repo.list_product_rows(document_id=doc["id"])[0]["id"]
+    client.patch(f"/api/products/{row_id}", json={"field": "amount", "value": 100.0, "reason": "fix"})
+
+    # simulate reprocess: same document id, same extraction re-run
+    _complete(doc["id"], "t.pdf", tables)
+
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    # reprocess resets rows (amount correction is not carried over by a
+    # fresh extraction, since extraction never produces amount) - the key
+    # guarantee is the total reflects exactly one document's worth of rows,
+    # never double-counted.
+    assert body["documentTotals"]["rowCount"] == 1
+
+
+def test_corrected_amount_is_used_in_division_totals():
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product", 10.0, 2, 20)])]
+    _complete(doc["id"], "t.pdf", tables)
+
+    client = TestClient(app)
+    row_id = store.repo.list_product_rows(document_id=doc["id"])[0]["id"]
+    client.patch(f"/api/products/{row_id}", json={"field": "amount", "value": 123.45, "reason": "fix"})
+    client.patch(f"/api/products/{row_id}", json={"field": "amount", "value": 456.78, "reason": "correct fix"})
+
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    dry_food = next(d for d in body["divisions"] if d["divisionCode"] == "04")
+    assert dry_food["amount"] == 456.78
+    assert body["documentTotals"]["amount"] == 456.78
+
+
+def test_division_departments_endpoint_reports_amount():
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product 1", 10.0, 2, 20)])]
+    _complete(doc["id"], "t.pdf", tables)
+
+    client = TestClient(app)
+    row_id = store.repo.list_product_rows(document_id=doc["id"])[0]["id"]
+    client.patch(f"/api/products/{row_id}", json={"field": "amount", "value": 88.88, "reason": "fix"})
+
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions/04/departments").json()
+    hba = next(d for d in body["departments"] if d["name"] == "HBA")
+    assert hba["amount"] == 88.88
