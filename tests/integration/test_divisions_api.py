@@ -1,6 +1,6 @@
 """Dashboard Phase 1: GET /api/analytics/documents/{id}/divisions and
 .../divisions/{code}/departments. Uses synthetic rows (tests/unit/db_helpers)
-against real department names from data/department_hierarchy.csv so the
+against real department names from data/master_catalog.csv so the
 division mapping under test is the real one, not a stub.
 """
 from __future__ import annotations
