@@ -163,6 +163,10 @@ button { font-family: inherit; }
 .bar-track { background: var(--surface-alt); border-radius: 4px; height: 16px; overflow: hidden; }
 .bar-fill { background: var(--accent); height: 100%; border-radius: 4px; }
 .bar-value { font-family: var(--font-data); text-align: right; color: var(--text-muted); }
+.chart-panel { margin-bottom: 6px; }
+.chart-title-row { display: flex; align-items: center; justify-content: space-between; }
+.chart-toggle { display: flex; gap: 4px; }
+.bar-row .mono { font-family: var(--font-data); text-align: right; }
 
 /* ---------- Data table (virtualized) ---------- */
 .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; box-shadow: var(--shadow); }
@@ -327,6 +331,7 @@ button { font-family: inherit; }
 .division-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 .division-card-code { font-family: var(--font-data); font-size: 11.5px; color: var(--text-faint); }
 .division-card-name { font-weight: 700; font-size: 15px; flex: 1; }
+.division-card-amount { font-family: var(--font-data); font-size: 20px; font-weight: 700; color: var(--accent-strong); margin-bottom: 12px; }
 .division-card-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
 .division-stat { display: flex; flex-direction: column; }
 .division-stat-value { font-family: var(--font-data); font-size: 15px; font-weight: 600; }
