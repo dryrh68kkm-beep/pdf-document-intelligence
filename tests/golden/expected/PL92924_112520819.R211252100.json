@@ -52,8 +52,8 @@
           "weight_qty": 0.495,
           "pu_qty": 1,
           "sku_qty": 3,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -68,8 +68,8 @@
           "weight_qty": 0.495,
           "pu_qty": 1,
           "sku_qty": 3,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -84,8 +84,8 @@
           "weight_qty": 0.3,
           "pu_qty": 6,
           "sku_qty": 6,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {

@@ -1,7 +1,7 @@
 """Division-level analytics (Dashboard Phase 1): the only place the
 Division -> Department -> Product rollup gets computed. Always scoped to
 one document (the Dashboard shows one packing list at a time), always
-sourced from data/department_hierarchy.csv via
+sourced from data/master_catalog.csv via
 templates/department_groups.py - never a hand-typed division list.
 
 Mirrors aggregate.py's rule: this is the single source of truth for these

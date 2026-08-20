@@ -1,18 +1,18 @@
 """Department -> Division rollup for the Dashboard/Departments views,
 display-only (never touches extraction, reconciliation, row data, or
-export). Backed by the full store division/department/class master
-hierarchy the user supplied (data/department_hierarchy.csv, ~30k rows:
-DIVISION_NAME, DEPT_GROUP_NAME, DEPARTMENT_NAME, SUBDEPARTMENT_NAME,
-CLASS_NAME, SUBCLASS_NAME, ART_SV_NAME) - the DEPARTMENT_NAME ->
-DIVISION_NAME rollup used here is a distinct-pair projection of that
-file, verified 1:1 (no department name maps to more than one division)
-and verified to cover every one of the BPDC sample's 23 extracted
-department names exactly (case and spelling, including the truncated
-"HOME IMPROVEMEN" and the "_SME" suffix variants) - not an inferred or
-guessed grouping. A department name this table doesn't cover (a future
-document's department the user hasn't supplied master data for) is left
-as its own major department rather than guessed - never a fuzzy/partial
-match.
+export). Backed by the same unified store master file the barcode
+catalog uses (data/master_catalog.csv, catalog/loader.py) - ~30k rows
+including DIVISION_NAME, DEPT_GROUP_NAME, DEPARTMENT_NAME,
+SUBDEPARTMENT_NAME, CLASS_NAME, SUBCLASS_NAME, ART_SV_NAME alongside the
+barcode/name columns - the DEPARTMENT_NAME -> DIVISION_NAME rollup used
+here is a distinct-pair projection of that file, verified 1:1 (no
+department name maps to more than one division) and verified to cover
+every one of the BPDC sample's 23 extracted department names exactly
+(case and spelling, including the truncated "HOME IMPROVEMEN" and the
+"_SME" suffix variants) - not an inferred or guessed grouping. A
+department name this table doesn't cover (a future document's department
+the user hasn't supplied master data for) is left as its own major
+department rather than guessed - never a fuzzy/partial match.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import functools
 import re
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).parent.parent.parent / "data" / "department_hierarchy.csv"
+DEFAULT_PATH = Path(__file__).parent.parent.parent / "data" / "master_catalog.csv"
 _LEADING_CODE_RE = re.compile(r"^\d+\s+")
 
 
@@ -68,7 +68,7 @@ def _split_code(name: str) -> tuple[str | None, str]:
 
 def load_divisions(path: Path | None = None) -> list[tuple[str, str]]:
     """The Dashboard's source of truth for "the 6 divisions": a
-    distinct-value projection of DIVISION_NAME from data/department_hierarchy.csv,
+    distinct-value projection of DIVISION_NAME from data/master_catalog.csv,
     in the order first encountered, as (code, bare_name) pairs - e.g.
     ("04", "DRY FOOD"). Never hand-typed; this file always drives it."""
     path = path or DEFAULT_PATH
@@ -114,7 +114,7 @@ def get_default_department_to_division_code() -> dict[str, tuple[str, str]]:
 
 def division_for_department(name: str) -> tuple[str, str] | None:
     """(division_code, division_bare_name) for a bare department name, or
-    None if it can't be mapped through data/department_hierarchy.csv - the
+    None if it can't be mapped through data/master_catalog.csv - the
     UNMAPPED case (rule: never invent a 7th division for it)."""
     bare = _strip_code((name or "").strip())
     return get_default_department_to_division_code().get(bare)

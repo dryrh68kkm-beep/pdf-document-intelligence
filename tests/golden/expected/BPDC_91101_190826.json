@@ -718,8 +718,8 @@
           "weight_qty": 46.656,
           "pu_qty": 6,
           "sku_qty": 48,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -732,8 +732,8 @@
           "weight_qty": 46.752,
           "pu_qty": 6,
           "sku_qty": 48,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -2086,8 +2086,8 @@
           "weight_qty": 5.004,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -2100,8 +2100,8 @@
           "weight_qty": 5.004,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "pdf_text",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -3304,8 +3304,8 @@
           "weight_qty": 0.792,
           "pu_qty": 2,
           "sku_qty": 12,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -3402,7 +3402,7 @@
           "weight_qty": 3.96,
           "pu_qty": 6,
           "sku_qty": 18,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         },
@@ -3834,7 +3834,7 @@
           "weight_qty": 0.78,
           "pu_qty": 1,
           "sku_qty": 6,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         },
@@ -4700,7 +4700,7 @@
           "weight_qty": 0.612,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         },
@@ -4874,8 +4874,8 @@
           "weight_qty": 9.0,
           "pu_qty": 1,
           "sku_qty": 24,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -5112,8 +5112,8 @@
           "weight_qty": 7.68,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -5126,8 +5126,8 @@
           "weight_qty": 7.68,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "ocr",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -5884,7 +5884,7 @@
           "weight_qty": 7.098,
           "pu_qty": 1,
           "sku_qty": 6,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         },
@@ -5898,7 +5898,7 @@
           "weight_qty": 7.098,
           "pu_qty": 1,
           "sku_qty": 6,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         },
@@ -5912,7 +5912,7 @@
           "weight_qty": 7.098,
           "pu_qty": 1,
           "sku_qty": 6,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         }
@@ -7628,8 +7628,8 @@
           "weight_qty": 12.504,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "pdf_text",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -8054,8 +8054,8 @@
           "weight_qty": 4.008,
           "pu_qty": 1,
           "sku_qty": 24,
-          "name_source": "pdf_text",
-          "name_review_required": true,
+          "name_source": "master_catalog",
+          "name_review_required": false,
           "suspected_non_product": false
         },
         {
@@ -8872,7 +8872,7 @@
           "weight_qty": 0.396,
           "pu_qty": 1,
           "sku_qty": 12,
-          "name_source": "pdf_text",
+          "name_source": "master_catalog",
           "name_review_required": false,
           "suspected_non_product": false
         }

@@ -14,8 +14,11 @@ import csv
 import functools
 from pathlib import Path
 
-DEFAULT_CATALOG_PATH = Path(__file__).parent.parent.parent / "data" / "barcode_catalog.csv"
-CATALOG_ENCODING = "cp874"  # Thai Windows codepage the source export uses
+DEFAULT_CATALOG_PATH = Path(__file__).parent.parent.parent / "data" / "master_catalog.csv"
+# The unified master file (also the Division rollup's source - see
+# templates/department_groups.py) is stored UTF-8 in this repo, converted
+# once from the source export's iso8859_11 (Thai) encoding on ingestion.
+CATALOG_ENCODING = "utf-8"
 
 
 class CatalogEntry:
@@ -34,15 +37,15 @@ def load_catalog(path: Path | None = None) -> dict[str, CatalogEntry]:
     with path.open("r", encoding=CATALOG_ENCODING, errors="replace", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            barcode = (row.get("Barcode") or "").strip()
-            name = (row.get(" Name ") or "").strip()
+            barcode = (row.get("BARCODE") or "").strip()
+            name = (row.get("ART_SV_NAME") or "").strip()
             if not barcode or not name:
                 continue
             catalog[barcode] = CatalogEntry(
                 barcode=barcode,
                 name=name,
-                structure=(row.get("Structure") or "").strip(),
-                root_code=(row.get("Root  Code") or "").strip(),
+                structure=(row.get("SUBCLASS_NAME") or "").strip(),
+                root_code=(row.get("ART_NO") or "").strip(),
             )
     return catalog
 

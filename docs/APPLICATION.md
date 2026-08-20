@@ -59,8 +59,9 @@ switches `view` in JS state, never a page reload. View modules
 ## Master catalog lookup (barcode -> authoritative product name)
 
 `pdf_document_intelligence/catalog/` adds a higher-confidence resolution
-path for the `name` field than OCR: `data/barcode_catalog.csv` (~35k
-barcode -> name rows, cp874-encoded) is loaded once and looked up by
+path for the `name` field than OCR: `data/master_catalog.csv` (~30k
+barcode -> name rows, also the Division rollup's source - see
+`templates/department_groups.py`) is loaded once and looked up by
 barcode after OCR cross-validation runs. A match is ground truth — an
 exact hit against real master data, not a pixel/glyph reading — so it's
 never flagged for review, and it takes priority over OCR. On the golden

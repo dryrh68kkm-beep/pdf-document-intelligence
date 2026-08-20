@@ -63,7 +63,7 @@ def test_no_department_maps_to_more_than_one_division():
     import csv
     from pathlib import Path
 
-    path = Path(__file__).parent.parent.parent / "data" / "department_hierarchy.csv"
+    path = Path(__file__).parent.parent.parent / "data" / "master_catalog.csv"
     seen: dict[str, str] = {}
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
