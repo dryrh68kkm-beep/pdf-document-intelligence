@@ -5,6 +5,7 @@ import { renderProductDetail, detailPanelIsDirty, detailPanelReset, setDirtyChan
 
 const VIEWS = {
   dashboard: () => import("./views/dashboard.js").then((m) => m.renderDashboard),
+  divisionDetail: () => import("./views/divisionDetail.js").then((m) => m.renderDivisionDetail),
   departments: () => import("./views/departments.js").then((m) => m.renderDepartments),
   products: () => import("./views/products.js").then((m) => m.renderProducts),
   review: () => import("./views/review.js").then((m) => m.renderReview),

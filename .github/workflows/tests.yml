@@ -27,7 +27,7 @@ jobs:
       # correctness") - no tesseract binary needed for this job, so it
       # stays fast and gives PRs a quick pass/fail signal.
       - name: Run unit + API tests
-        run: python -m pytest tests/unit tests/integration/test_api.py -q
+        run: python -m pytest tests/unit tests/integration/test_api.py tests/integration/test_divisions_api.py -q
 
   golden-regression:
     name: Golden regression + full persistence flow (real OCR)

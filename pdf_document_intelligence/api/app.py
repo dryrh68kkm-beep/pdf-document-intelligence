@@ -25,6 +25,7 @@ from starlette.background import BackgroundTask
 
 from pdf_document_intelligence.api import review as review_api
 from pdf_document_intelligence.api.aggregate import build_dashboard_state
+from pdf_document_intelligence.api.divisions import build_division_departments, build_division_summary
 from pdf_document_intelligence.api.health import check_health
 from pdf_document_intelligence.api.serialize import _row_stats, document_detail_json, document_summary_json, product_row_json
 from pdf_document_intelligence.api.store import store
@@ -133,6 +134,16 @@ def get_document(doc_id: str):
     if not doc:
         raise HTTPException(404, "not found")
     return document_detail_json(doc, _doc_products(doc_id))
+
+
+@app.get("/api/analytics/documents/{doc_id}/divisions")
+def get_document_divisions(doc_id: str):
+    return build_division_summary(store.repo, doc_id)
+
+
+@app.get("/api/analytics/documents/{doc_id}/divisions/{division_code}/departments")
+def get_document_division_departments(doc_id: str, division_code: str):
+    return build_division_departments(store.repo, doc_id, division_code)
 
 
 @app.get("/api/documents/{doc_id}/pdf")
