@@ -156,7 +156,7 @@ export function renderDashboard(container, store) {
     body.innerHTML =
       doc.status === "error"
         ? `<div class="icon">⚠️</div><div class="title">อ่านไฟล์ไม่สำเร็จ</div><div>${doc.error || ""}</div>`
-        : `<div class="icon">⏳</div><div class="title">กำลังประมวลผลเอกสาร</div><div>${doc.progress?.stage || ""}</div>`;
+        : `<div class="icon processing-hourglass" role="status" aria-label="กำลังประมวลผล">⏳</div><div class="title">กำลังประมวลผลเอกสาร</div><div>${doc.progress?.stage || ""}</div>`;
     container.appendChild(body);
     return;
   }
