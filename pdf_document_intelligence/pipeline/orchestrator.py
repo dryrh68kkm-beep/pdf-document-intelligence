@@ -132,10 +132,10 @@ def process_document(
             fields=[],
             validation=validation,
             processing_log=log.entries,
-        document_date=document_date.value if document_date else None,
-        document_date_raw=document_date.raw_value if document_date else None,
-        document_date_label=document_date.label if document_date else None,
-        document_date_page=document_date.page if document_date else None,
+            document_date=document_date.value if document_date else None,
+            document_date_raw=document_date.raw_value if document_date else None,
+            document_date_label=document_date.label if document_date else None,
+            document_date_page=document_date.page if document_date else None,
         )
 
     if template_id == BIGC_TEMPLATE_ID:
