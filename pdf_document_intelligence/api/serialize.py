@@ -50,6 +50,9 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
                 "departmentCount": stats.get("departmentCount", 0),
                 "reviewCount": stats.get("reviewCount", 0),
                 "totalAmount": stats.get("totalAmount"),
+                # Date inside the PDF, not the record's upload timestamp.
+                "documentDate": meta.get("documentDate"),
+                "documentDateEvidence": meta.get("documentDateEvidence"),
             }
         )
     return base
