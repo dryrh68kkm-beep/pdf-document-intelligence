@@ -113,3 +113,9 @@ class DocumentResult(BaseModel):
     fields: list[FieldValue] = Field(default_factory=list)
     validation: ValidationSummary
     processing_log: list[ProcessingLogEntry] = Field(default_factory=list)
+    # Transaction date extracted from an explicit label in the PDF. It is never
+    # inferred from upload time, filename, MFG, expiry, or lot fields.
+    document_date: date | None = None
+    document_date_raw: str | None = None
+    document_date_label: str | None = None
+    document_date_page: int | None = None
