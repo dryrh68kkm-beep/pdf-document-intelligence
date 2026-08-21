@@ -376,6 +376,20 @@ button { font-family: inherit; }
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+.doc-date-filter {
+  display: block;
+  width: min(220px, 100%);
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  color: var(--text);
+  background: var(--surface-alt);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+.doc-date-filter:focus { border-color: var(--accent); outline: none; }
+
 .doc-selector {
   width: min(460px, 100%);
   margin-bottom: 10px;
@@ -393,5 +407,5 @@ button { font-family: inherit; }
   .doc-header { flex-direction: column; }
   .doc-header-actions { width: 100%; }
   .doc-header-actions .btn { flex: 1; }
-  .doc-selector { width: 100%; }
+  .doc-selector, .doc-date-filter { width: 100%; }
 }
