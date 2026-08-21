@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pdf_document_intelligence.extract.text import DocumentText, PageText, TextQuality, Word
 from pdf_document_intelligence.tables.geometry import find_header_boundaries
+from pdf_document_intelligence.tables.reconstruct_bpdc import _line_kind, _parse_pallet_line
 from pdf_document_intelligence.templates.detect import detect_template
 from pdf_document_intelligence.templates.packing_list_bpdc import COLUMNS as BPDC_COLUMNS
 from pdf_document_intelligence.templates.packing_list_bpdc import TEMPLATE_ID as BPDC_TEMPLATE_ID
@@ -29,8 +30,6 @@ def _words(texts: list[str], *, top: float = 150.0, page: int = 1) -> list[Word]
 
 
 def _bpdc_variant_header(page: int = 1) -> list[Word]:
-    # Same BPDC column order, but with harmless export/text-layer variations:
-    # case changes, no punctuation, Order+no merged, and Remark pluralized.
     return _words(
         [
             "dn",
@@ -74,3 +73,16 @@ def test_template_detection_scans_past_first_three_pages() -> None:
     )
 
     assert detect_template(DocumentText(pages=pages)) == BPDC_TEMPLATE_ID
+
+
+def test_bpdc_pallet_marker_accepts_merged_no_variant() -> None:
+    row = _words(["Pallet no.", ":", "P123", "Lot no.", ":", "L456"])
+    assert _line_kind(row) == "pallet"
+    pallet, lot = _parse_pallet_line(row)
+    assert pallet == "P123"
+    assert lot == "L456"
+
+
+def test_bpdc_total_marker_accepts_case_and_punctuation_variant() -> None:
+    row = _words(["TOTAL:", "10", "100.00", "20", "30"])
+    assert _line_kind(row) == "total"
