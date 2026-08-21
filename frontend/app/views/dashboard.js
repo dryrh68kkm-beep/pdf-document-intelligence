@@ -27,7 +27,7 @@ function kpiCard(value, label) {
   return `<div class="kpi-card"><div class="kpi-value">${value}</div><div class="kpi-label">${label}</div></div>`;
 }
 
-function divisionCard(d, index) {
+function divisionCard(d, index, hasAmountData) {
   const accent = DIVISION_ACCENTS[index % DIVISION_ACCENTS.length];
   const statusBadge =
     d.status === "REVIEW"
@@ -40,7 +40,7 @@ function divisionCard(d, index) {
         <span class="division-card-name">${d.divisionName}</span>
         ${statusBadge}
       </div>
-      <div class="division-card-amount">${fmtBaht(d.amount)}</div>
+      ${hasAmountData ? `<div class="division-card-amount">${fmtBaht(d.amount)}</div>` : ""}
       <div class="division-card-stats">
         <div class="division-stat"><span class="division-stat-value">${fmtNum(d.rowCount)}</span><span class="division-stat-label">รายการ</span></div>
         <div class="division-stat"><span class="division-stat-value">${fmtNum(d.weight)}</span><span class="division-stat-label">น้ำหนัก (กก.)</span></div>
@@ -53,15 +53,17 @@ function divisionCard(d, index) {
 
 let chartMetric = "sku";
 
-function divisionChart(divisions) {
-  const metricKey = chartMetric === "amount" ? "amount" : "skuQty";
+function divisionChart(divisions, hasAmountData) {
+  const activeMetric = hasAmountData ? chartMetric : "sku";
+  const metricKey = activeMetric === "amount" ? "amount" : "skuQty";
   const sorted = [...divisions].sort((a, b) => b[metricKey] - a[metricKey]);
   const max = Math.max(1, ...sorted.map((d) => d[metricKey]));
   const rows = sorted
     .map((d) => {
       const pct = Math.max(2, (d[metricKey] / max) * 100);
-      const valueLabel = chartMetric === "amount" ? fmtBaht(d.amount) : fmtNum(d.skuQty);
-      const title = `${d.divisionName} · รายการ ${fmtNum(d.rowCount)} · น้ำหนัก ${fmtNum(d.weight)} กก. · PU ${fmtNum(d.puQty)} · SKU ${fmtNum(d.skuQty)} · มูลค่ารวม ${fmtBaht(d.amount)}`;
+      const valueLabel = activeMetric === "amount" ? fmtBaht(d.amount) : fmtNum(d.skuQty);
+      const amountText = hasAmountData ? ` · มูลค่ารวม ${fmtBaht(d.amount)}` : "";
+      const title = `${d.divisionName} · รายการ ${fmtNum(d.rowCount)} · น้ำหนัก ${fmtNum(d.weight)} กก. · PU ${fmtNum(d.puQty)} · SKU ${fmtNum(d.skuQty)}${amountText}`;
       return `
         <div class="bar-row" title="${title}">
           <span>${d.divisionCode} ${d.divisionName}</span>
@@ -75,8 +77,8 @@ function divisionChart(divisions) {
       <div class="section-title chart-title-row">
         <span>ภาพรวม 6 ฝ่ายใหญ่</span>
         <span class="chart-toggle">
-          <button class="sort-btn${chartMetric === "sku" ? " active" : ""}" data-metric="sku">SKU</button>
-          <button class="sort-btn${chartMetric === "amount" ? " active" : ""}" data-metric="amount">มูลค่า ฿</button>
+          <button class="sort-btn${activeMetric === "sku" ? " active" : ""}" data-metric="sku">SKU</button>
+          ${hasAmountData ? `<button class="sort-btn${activeMetric === "amount" ? " active" : ""}" data-metric="amount">มูลค่า ฿</button>` : ""}
         </span>
       </div>
       <div class="bar-chart">${rows}</div>
@@ -99,9 +101,15 @@ export function renderDashboard(container, store) {
     return;
   }
 
+  const documentOptions = documents
+    .map((item) => `<option value="${item.id}"${item.id === currentDocumentId ? " selected" : ""}>${item.filename}</option>`)
+    .join("");
+
   const header = `
     <div class="doc-header">
       <div class="doc-header-info">
+        <label class="doc-selector-label" for="dashDocumentSelect">เอกสารที่กำลังดู</label>
+        <select class="doc-selector" id="dashDocumentSelect">${documentOptions}</select>
         <div class="doc-header-title">${doc.filename}</div>
         <div class="doc-header-meta">
           <span>${fmtDate(doc.uploadedAt)}</span>
@@ -123,6 +131,9 @@ export function renderDashboard(container, store) {
     window.location.href = api.exportUrl();
   });
   container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
+  container.querySelector("#dashDocumentSelect").addEventListener("change", (event) => {
+    store.selectDashboardDocument(event.target.value);
+  });
 
   if (doc.status !== "complete" || !divisionSummary) {
     const body = document.createElement("div");
@@ -135,16 +146,17 @@ export function renderDashboard(container, store) {
     return;
   }
 
+  const hasAmountData = Boolean(divisionSummary.amountAvailable);
   const kpis = [
     kpiCard(fmtNum(divisionSummary.documentTotals.rowCount), "รายการทั้งหมด"),
     kpiCard(fmtNum(divisionSummary.documentTotals.weight), "น้ำหนักรวม (กก.)"),
     kpiCard(fmtNum(divisionSummary.documentTotals.puQty), "PU รวม"),
     kpiCard(fmtNum(divisionSummary.documentTotals.skuQty), "SKU รวม"),
-    kpiCard(fmtBaht(divisionSummary.documentTotals.amount), "มูลค่ารวม (฿)"),
+    ...(hasAmountData ? [kpiCard(fmtBaht(divisionSummary.documentTotals.amount), "มูลค่ารวม (฿)")] : []),
   ].join("");
 
-  const divisionCards = divisionSummary.divisions.map((d, i) => divisionCard(d, i)).join("");
-  const chart = divisionChart(divisionSummary.divisions);
+  const divisionCards = divisionSummary.divisions.map((d, i) => divisionCard(d, i, hasAmountData)).join("");
+  const chart = divisionChart(divisionSummary.divisions, hasAmountData);
 
   const dq = divisionSummary.dataQuality;
   const rec = divisionSummary.reconciliation;
@@ -160,7 +172,7 @@ export function renderDashboard(container, store) {
       ${dqRow("Unresolved", dq.unresolved)}
       ${dqRow("Unmapped departments", dq.unmappedDepartments.length)}
       ${dq.unmappedDepartments.length ? `<div class="dq-unmapped">${dq.unmappedDepartments.join(", ")}</div>` : ""}
-      ${dq.unmappedRowCount ? `<div class="dq-row"><span>Unmapped amount</span><span class="mono">${fmtBaht(dq.unmappedAmount)}</span></div>` : ""}
+      ${hasAmountData && dq.unmappedRowCount ? `<div class="dq-row"><span>Unmapped amount</span><span class="mono">${fmtBaht(dq.unmappedAmount)}</span></div>` : ""}
       <div class="section-title" style="margin-top:18px;">Reconciliation</div>
       <div class="dq-row"><span>Status</span><span class="mono">${rec.status ?? "—"}</span></div>
       <div class="dq-row"><span>Errors</span><span class="mono">${rec.errors}</span></div>
