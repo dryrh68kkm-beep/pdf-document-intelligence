@@ -65,7 +65,10 @@ class Store {
     // "Current document" for the Dashboard's Division rollup: the most
     // recently uploaded document (documents is already sorted newest
     // first by the API) - the Dashboard shows one packing list at a time.
-    const currentDocumentId = documents[0]?.id ?? null;
+    const previousDocumentId = this.state.currentDocumentId;
+    const currentDocumentId = documents.some((doc) => doc.id === previousDocumentId)
+      ? previousDocumentId
+      : documents[0]?.id ?? null;
     this.set({ documents, dashboard, products, currentDocumentId });
     await this.refreshDivisions();
   }
@@ -82,6 +85,12 @@ class Store {
     } catch {
       this.set({ divisionSummary: null });
     }
+  }
+
+  async selectDashboardDocument(docId) {
+    if (docId === this.state.currentDocumentId) return;
+    this.set({ currentDocumentId: docId, divisionSummary: null, divisionDetail: null });
+    await this.refreshDivisions();
   }
 
   async openDivision(divisionCode) {
