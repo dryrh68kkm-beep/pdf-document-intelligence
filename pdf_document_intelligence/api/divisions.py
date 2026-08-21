@@ -75,6 +75,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
     unmapped_departments: set[str] = set()
     unmapped_row_count = 0
     unmapped_amount = Decimal("0")
+    amount_available = False
     doc_totals = {c: 0.0 for c in NUMERIC_COLUMNS}
     doc_amount = Decimal("0")
     doc_row_count = 0
@@ -110,6 +111,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
                 doc_totals[col] += val
         row_amount = _decimal(row.get("amount"))
         if row_amount is not None:
+            amount_available = True
             doc_amount += row_amount
 
         division = division_for_department(row["department"])
@@ -161,6 +163,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             "amount": float(doc_amount.quantize(Decimal("0.01"))),
         },
         "divisions": division_list,
+        "amountAvailable": amount_available,
         "dataQuality": {
             "cleanRows": clean_rows,
             "reviewRequired": review_required,

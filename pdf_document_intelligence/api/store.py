@@ -73,6 +73,17 @@ class DocumentStore:
             "pages": result.pages,
             "documentType": result.document_type,
             "parserVersion": result.parser_version,
+            "documentDate": result.document_date.isoformat() if result.document_date else None,
+            "documentDateEvidence": (
+                {
+                    "raw": result.document_date_raw,
+                    "label": result.document_date_label,
+                    "page": result.document_date_page,
+                    "source": "pdf_text",
+                }
+                if result.document_date
+                else None
+            ),
             "validationIssues": [
                 {
                     "severity": i.severity, "code": i.code, "table": i.table,

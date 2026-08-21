@@ -23,6 +23,7 @@ class Store {
       panel: null,
       searchQuery: "",
       currentDocumentId: null,
+      dashboardDateFilter: "",
       divisionSummary: null,
       divisionDetail: null,
     };
@@ -65,7 +66,14 @@ class Store {
     // "Current document" for the Dashboard's Division rollup: the most
     // recently uploaded document (documents is already sorted newest
     // first by the API) - the Dashboard shows one packing list at a time.
-    const currentDocumentId = documents[0]?.id ?? null;
+    const previousDocumentId = this.state.currentDocumentId;
+    const dateFilter = this.state.dashboardDateFilter;
+    const visibleDocuments = dateFilter
+      ? documents.filter((doc) => doc.documentDate === dateFilter)
+      : documents;
+    const currentDocumentId = visibleDocuments.some((doc) => doc.id === previousDocumentId)
+      ? previousDocumentId
+      : visibleDocuments[0]?.id ?? null;
     this.set({ documents, dashboard, products, currentDocumentId });
     await this.refreshDivisions();
   }
@@ -82,6 +90,24 @@ class Store {
     } catch {
       this.set({ divisionSummary: null });
     }
+  }
+
+  async selectDashboardDocument(docId) {
+    if (docId === this.state.currentDocumentId) return;
+    this.set({ currentDocumentId: docId, divisionSummary: null, divisionDetail: null });
+    await this.refreshDivisions();
+  }
+
+  async setDashboardDateFilter(documentDate) {
+    const dashboardDateFilter = documentDate || "";
+    const visibleDocuments = dashboardDateFilter
+      ? this.state.documents.filter((doc) => doc.documentDate === dashboardDateFilter)
+      : this.state.documents;
+    const currentDocumentId = visibleDocuments.some((doc) => doc.id === this.state.currentDocumentId)
+      ? this.state.currentDocumentId
+      : visibleDocuments[0]?.id ?? null;
+    this.set({ dashboardDateFilter, currentDocumentId, divisionSummary: null, divisionDetail: null });
+    await this.refreshDivisions();
   }
 
   async openDivision(divisionCode) {

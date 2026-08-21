@@ -269,3 +269,21 @@ def test_division_departments_endpoint_reports_amount():
     body = client.get(f"/api/analytics/documents/{doc['id']}/divisions/04/departments").json()
     hba = next(d for d in body["departments"] if d["name"] == "HBA")
     assert hba["amount"] == 88.88
+
+
+def test_amount_availability_is_explicit_for_dashboard_rendering():
+    """A zero amount is not proof that this packing list carries price data."""
+    _reset_store()
+    doc = store.create("t.pdf", b"%PDF-1.4 fake")
+    tables = [("HBA", [make_row(0, "HBA", "BC1", "ART1", "Product 1", 10.0, 2, 20)])]
+    _complete(doc["id"], "t.pdf", tables)
+
+    client = TestClient(app)
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    assert body["documentTotals"]["amount"] == 0.0
+    assert body["amountAvailable"] is False
+
+    row_id = store.repo.list_product_rows(document_id=doc["id"])[0]["id"]
+    client.patch(f"/api/products/{row_id}", json={"field": "amount", "value": 0.0, "reason": "confirmed zero"})
+    body = client.get(f"/api/analytics/documents/{doc['id']}/divisions").json()
+    assert body["amountAvailable"] is True

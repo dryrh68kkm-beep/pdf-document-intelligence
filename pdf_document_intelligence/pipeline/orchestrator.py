@@ -30,6 +30,7 @@ from pdf_document_intelligence.catalog.apply import apply_catalog_to_row
 from pdf_document_intelligence.catalog.loader import get_default_catalog
 from pdf_document_intelligence.config.settings import Settings
 from pdf_document_intelligence.confidence.engine import score_document
+from pdf_document_intelligence.extract.document_date import extract_document_date
 from pdf_document_intelligence.extract.text import extract_document_text
 from pdf_document_intelligence.loader.preflight import PreflightError, run_preflight
 from pdf_document_intelligence.models.document import DocumentResult, ExtractedTable, TableRow, ValidationSummary
@@ -96,6 +97,12 @@ def process_document(
             else f"{len(doc_text.pages)} pages; text layer reliable throughout",
         )
 
+    document_date = extract_document_date(doc_text)
+    if document_date:
+        log.record("document_date", f"{document_date.label}: {document_date.value.isoformat()} (page {document_date.page})")
+    else:
+        log.record("document_date", "no explicitly labelled document date found")
+
     with log.step("template_detection", "matching header signature against registered templates"):
         template_id = detect_template(doc_text)
         log.record("template_detection", f"detected: {template_id}")
@@ -125,6 +132,10 @@ def process_document(
             fields=[],
             validation=validation,
             processing_log=log.entries,
+            document_date=document_date.value if document_date else None,
+            document_date_raw=document_date.raw_value if document_date else None,
+            document_date_label=document_date.label if document_date else None,
+            document_date_page=document_date.page if document_date else None,
         )
 
     if template_id == BIGC_TEMPLATE_ID:
@@ -283,4 +294,8 @@ def process_document(
         fields=[],
         validation=validation,
         processing_log=log.entries,
+        document_date=document_date.value if document_date else None,
+        document_date_raw=document_date.raw_value if document_date else None,
+        document_date_label=document_date.label if document_date else None,
+        document_date_page=document_date.page if document_date else None,
     )
