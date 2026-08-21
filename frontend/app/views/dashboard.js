@@ -19,6 +19,11 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
 
+function fmtDocumentDate(iso) {
+  if (!iso) return "ไม่พบวันที่ในเอกสาร";
+  return new Date(iso + "T00:00:00").toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+}
+
 function statusLabel(status) {
   return { complete: "ประมวลผลสำเร็จ", processing: "กำลังประมวลผล", error: "ผิดพลาด" }[status] || status;
 }
@@ -86,33 +91,40 @@ function divisionChart(divisions, hasAmountData) {
 }
 
 export function renderDashboard(container, store) {
-  const { documents, currentDocumentId, divisionSummary } = store.state;
-  const doc = documents.find((d) => d.id === currentDocumentId);
+  const { documents, currentDocumentId, divisionSummary, dashboardDateFilter } = store.state;
+  const visibleDocuments = dashboardDateFilter
+    ? documents.filter((item) => item.documentDate === dashboardDateFilter)
+    : documents;
+  const doc = visibleDocuments.find((item) => item.id === currentDocumentId);
 
   if (!doc) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="icon">📦</div>
-        <div class="title">ยังไม่มีเอกสาร</div>
-        <div>เพิ่ม PDF เพื่อเริ่มวิเคราะห์</div>
-        <button class="btn btn-primary" style="margin-top:14px;" id="emptyAddBtn">＋ Add Files</button>
-      </div>`;
-    container.querySelector("#emptyAddBtn").addEventListener("click", () => document.getElementById("fileInput").click());
+    const noDocuments = documents.length === 0;
+    container.innerHTML = noDocuments
+      ? `<div class="empty-state"><div class="icon">📦</div><div class="title">ยังไม่มีเอกสาร</div><div>เพิ่ม PDF เพื่อเริ่มวิเคราะห์</div><button class="btn btn-primary" style="margin-top:14px;" id="emptyAddBtn">＋ Add Files</button></div>`
+      : `<div class="empty-state"><div class="icon">📅</div><div class="title">ไม่พบเอกสารสำหรับวันที่เลือก</div><div>ระบบกรองจากวันที่ที่อ่านได้ใน PDF เท่านั้น</div><button class="btn" style="margin-top:14px;" id="clearDateFilterBtn">ล้างตัวกรองวันที่</button></div>`;
+    if (noDocuments) {
+      container.querySelector("#emptyAddBtn").addEventListener("click", () => document.getElementById("fileInput").click());
+    } else {
+      container.querySelector("#clearDateFilterBtn").addEventListener("click", () => store.setDashboardDateFilter(""));
+    }
     return;
   }
 
-  const documentOptions = documents
+  const documentOptions = visibleDocuments
     .map((item) => `<option value="${item.id}"${item.id === currentDocumentId ? " selected" : ""}>${item.filename}</option>`)
     .join("");
 
   const header = `
     <div class="doc-header">
       <div class="doc-header-info">
+        <label class="doc-selector-label" for="dashDocumentDateFilter">กรองจากวันที่ในเอกสาร</label>
+        <input class="doc-date-filter" id="dashDocumentDateFilter" type="date" value="${dashboardDateFilter}">
         <label class="doc-selector-label" for="dashDocumentSelect">เอกสารที่กำลังดู</label>
         <select class="doc-selector" id="dashDocumentSelect">${documentOptions}</select>
         <div class="doc-header-title">${doc.filename}</div>
         <div class="doc-header-meta">
-          <span>${fmtDate(doc.uploadedAt)}</span>
+          <span>วันที่เอกสาร: ${fmtDocumentDate(doc.documentDate)}</span>
+          ${doc.documentDateEvidence ? `<span>·</span><span>${doc.documentDateEvidence.label} หน้า ${doc.documentDateEvidence.page}</span>` : ""}
           <span>·</span>
           <span>${doc.pages ?? "—"} หน้า</span>
           <span>·</span>
@@ -133,6 +145,9 @@ export function renderDashboard(container, store) {
   container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
   container.querySelector("#dashDocumentSelect").addEventListener("change", (event) => {
     store.selectDashboardDocument(event.target.value);
+  });
+  container.querySelector("#dashDocumentDateFilter").addEventListener("change", (event) => {
+    store.setDashboardDateFilter(event.target.value);
   });
 
   if (doc.status !== "complete" || !divisionSummary) {
