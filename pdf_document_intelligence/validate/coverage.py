@@ -29,7 +29,6 @@ def _row_pages(tables: Iterable[ExtractedTable]) -> set[int]:
         for row in table.rows:
             for field in row.fields.values():
                 pages.add(field.bbox.page)
-                break
     return pages
 
 
