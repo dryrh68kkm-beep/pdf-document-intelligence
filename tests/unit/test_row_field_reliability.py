@@ -58,15 +58,22 @@ def _field(name: str, value: str) -> FieldValue:
     )
 
 
+def _catalog_entry(name: str) -> CatalogEntry:
+    return CatalogEntry(
+        barcode="8850000000001",
+        name=name,
+        structure="",
+        root_code="",
+    )
+
+
 def test_catalog_name_mismatch_is_preserved_for_review():
     row = TableRow(
         row_index=1,
         fields={"barcode": _field("barcode", "8850000000001"), "name": _field("name", "SOURCE NAME")},
         confidence_band="HIGH",
     )
-    catalog = {
-        "8850000000001": CatalogEntry(barcode="8850000000001", name="MASTER NAME")
-    }
+    catalog = {"8850000000001": _catalog_entry("MASTER NAME")}
     updated = apply_catalog_to_row(row, catalog)
     name = updated.fields["name"]
     assert name.value == "MASTER NAME"
@@ -82,9 +89,7 @@ def test_catalog_exact_name_match_does_not_require_review():
         fields={"barcode": _field("barcode", "8850000000001"), "name": _field("name", "MASTER NAME")},
         confidence_band="HIGH",
     )
-    catalog = {
-        "8850000000001": CatalogEntry(barcode="8850000000001", name="MASTER NAME")
-    }
+    catalog = {"8850000000001": _catalog_entry("MASTER NAME")}
     updated = apply_catalog_to_row(row, catalog)
     name = updated.fields["name"]
     assert name.review_required is False
