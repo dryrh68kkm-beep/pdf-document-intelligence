@@ -8,3 +8,11 @@ dist/
 .env
 *.xlsx
 !tests/**/*.xlsx
+
+# Never commit source/company PDFs. Integration tests generate synthetic PDFs
+# at runtime under pytest temporary directories instead.
+*.pdf
+
+# Real-document golden fixtures and derived expected data are prohibited.
+tests/golden/samples/
+tests/golden/expected/
