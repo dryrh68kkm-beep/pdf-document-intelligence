@@ -9,10 +9,18 @@ of what extraction actually saw.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from pdf_document_intelligence.catalog.classify import classify_product
 from pdf_document_intelligence.catalog.loader import CatalogEntry
 from pdf_document_intelligence.models.document import TableRow
 from pdf_document_intelligence.tables.fields import compute_confidence_band
+
+
+def _normalized_name(text: object) -> str:
+    value = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> TableRow:
@@ -26,13 +34,28 @@ def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> Tab
 
     if entry and name_field:
         classification_name = entry.name
+        extracted_name = _normalized_name(name_field.value)
+        master_name = _normalized_name(entry.name)
+        flags = ["CATALOG_MATCH"]
+        review_required = False
+        confidence = 1.0
+
+        # Exact barcode is authoritative for the selected value, but a
+        # materially different source name is useful evidence of a possible
+        # column shift, stale master entry, or wrong barcode read. Preserve the
+        # source text in raw_value and surface the discrepancy for review.
+        if extracted_name and master_name and extracted_name != master_name:
+            flags.append("CATALOG_NAME_MISMATCH")
+            review_required = True
+            confidence = 0.9
+
         fields["name"] = name_field.model_copy(
             update={
                 "value": entry.name,
                 "source": "master_catalog",
-                "confidence": 1.0,
-                "review_required": False,
-                "validation_flags": ["CATALOG_MATCH"],
+                "confidence": confidence,
+                "review_required": review_required,
+                "validation_flags": flags,
             }
         )
 
