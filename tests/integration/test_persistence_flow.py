@@ -1,16 +1,10 @@
-"""End-to-end flow through the real FastAPI app + a real PDF (spec item 35):
-upload -> process -> dashboard -> edit review -> save -> dashboard changes
--> restart -> data remains. Also covers local-master learning (item 36) and
-health/backup endpoints.
+"""End-to-end persistence flow using runtime-generated synthetic PDFs only.
 
-Uses the golden BigC sample already used by test_golden_regression.py, so
-this is the one integration test that pays the real OCR cost end-to-end
-through the HTTP layer, not just the pipeline function.
+No real user/company PDF or derived business data is stored in this test.
 """
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -18,8 +12,7 @@ from pdf_document_intelligence.api.app import app
 from pdf_document_intelligence.api.store import store
 from pdf_document_intelligence.db.connection import get_connection
 from pdf_document_intelligence.db.paths import get_db_path
-
-SAMPLE = Path(__file__).parent.parent / "golden" / "samples" / "PL92924_112520819.R211252100.pdf"
+from tests.synthetic_pdf import make_bigc_pdf
 
 
 def _wait_complete(client: TestClient, doc_id: str, timeout=120):
@@ -32,12 +25,14 @@ def _wait_complete(client: TestClient, doc_id: str, timeout=120):
     raise TimeoutError("document did not finish processing in time")
 
 
-def test_upload_edit_restart_flow():
+def test_upload_edit_restart_flow(tmp_path):
     store.reset_for_tests()
     client = TestClient(app)
+    sample = make_bigc_pdf(tmp_path / "synthetic_bigc.pdf")
 
-    with SAMPLE.open("rb") as f:
-        res = client.post("/api/documents", files={"file": ("sample.pdf", f, "application/pdf")})
+    with sample.open("rb") as f:
+        res = client.post("/api/documents", files={"file": ("synthetic_bigc.pdf", f, "application/pdf")})
+    assert res.status_code == 200
     doc_id = res.json()["id"]
 
     doc = _wait_complete(client, doc_id)
@@ -48,12 +43,6 @@ def test_upload_edit_restart_flow():
     before_row_count = state["rowCount"]
 
     products = client.get("/api/products").json()
-    # Dashboard grand totals intentionally exclude suspected non-products.
-    # Selecting products[0] made this test flaky because DB ordering among
-    # equal row_index values is not a semantic guarantee: some runs picked a
-    # non-product row whose SKU quantity is excluded from the baseline total.
-    # Edit a row that is actually included in grandTotals so +50 has a stable,
-    # meaningful expectation.
     target = next(
         p for p in products
         if not p["suspectedNonProduct"] and p["fields"]["sku_qty"]["value"] is not None
@@ -63,7 +52,7 @@ def test_upload_edit_restart_flow():
 
     patch_res = client.patch(
         f"/api/products/{row_id}",
-        json={"field": "sku_qty", "value": old_sku_qty + 50, "reason": "ตรวจจาก PDF ต้นฉบับ"},
+        json={"field": "sku_qty", "value": old_sku_qty + 50, "reason": "synthetic fixture verification"},
     )
     assert patch_res.status_code == 200
 
@@ -74,8 +63,6 @@ def test_upload_edit_restart_flow():
     assert len(history) == 1
     assert history[0]["field"] == "sku_qty"
 
-    # --- simulate an application restart: drop the live connection, reopen
-    # the same on-disk file, and confirm the API still sees everything.
     get_connection().close()
     import pdf_document_intelligence.db.connection as connection_module
 
@@ -93,28 +80,25 @@ def test_upload_edit_restart_flow():
     history_after_restart = client.get(f"/api/products/{row_id}/history").json()
     assert len(history_after_restart) == 1
 
-    # Duplicate detection must also survive the restart.
-    with SAMPLE.open("rb") as f:
-        dup_res = client.post("/api/documents", files={"file": ("sample.pdf", f, "application/pdf")})
+    with sample.open("rb") as f:
+        dup_res = client.post("/api/documents", files={"file": ("synthetic_bigc.pdf", f, "application/pdf")})
     assert dup_res.status_code == 409
 
 
 def test_local_master_learning_flow():
-    """Unknown barcode -> review -> confirm name -> save to Local Master
-    -> next document with the same barcode resolves automatically (item 36)."""
     store.reset_for_tests()
     client = TestClient(app)
 
     add_res = client.post(
         "/api/master/local",
-        json={"barcode": "8850000012345", "productName": "สินค้าที่ผู้ใช้ยืนยันเอง", "department": "BAKERY"},
+        json={"barcode": "9990000012345", "productName": "SYNTHETIC CONFIRMED ITEM", "department": "SYNTHETIC"},
     )
     assert add_res.status_code == 200
     assert add_res.json()["created"] is True
 
     dup_res = client.post(
         "/api/master/local",
-        json={"barcode": "8850000012345", "productName": "ชื่ออื่น", "department": "BAKERY"},
+        json={"barcode": "9990000012345", "productName": "OTHER SYNTHETIC NAME", "department": "SYNTHETIC"},
     )
     assert dup_res.json()["created"] is False
 
@@ -132,7 +116,7 @@ def test_health_endpoint_reports_real_state():
     assert isinstance(health["ocr"]["available"], bool)
 
 
-def test_backup_and_restore_roundtrip(tmp_path):
+def test_backup_and_restore_roundtrip():
     store.reset_for_tests()
     client = TestClient(app)
     client.post("/api/master/local", json={"barcode": "111", "productName": "x", "department": "A"})
@@ -148,4 +132,4 @@ def test_backup_and_restore_roundtrip(tmp_path):
         "/api/restore", files={"file": ("backup.zip", backup_bytes, "application/zip")}
     )
     assert restore_res.status_code == 200
-    assert client.get("/api/master/local").json()["count"] == 1  # back to pre-second-add state
+    assert client.get("/api/master/local").json()["count"] == 1
