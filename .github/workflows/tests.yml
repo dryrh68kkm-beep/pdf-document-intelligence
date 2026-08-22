@@ -21,16 +21,11 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[ocr,api,dev]"
 
-      # tests/unit and tests/integration/test_api.py deliberately avoid
-      # invoking real OCR (test_api.py's own docstring: "these just confirm
-      # the FastAPI app boots, routes correctly... not extraction
-      # correctness") - no tesseract binary needed for this job, so it
-      # stays fast and gives PRs a quick pass/fail signal.
       - name: Run unit + API tests
         run: python -m pytest tests/unit tests/integration/test_api.py tests/integration/test_divisions_api.py -q
 
-  golden-regression:
-    name: Golden regression + full persistence flow (real OCR)
+  synthetic-regression:
+    name: Synthetic Big C + BPDC + persistence + real OCR
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,17 +36,13 @@ jobs:
           cache: "pip"
           cache-dependency-path: pyproject.toml
 
-      - name: Install Tesseract OCR (Thai + English)
+      - name: Install Tesseract OCR and test fonts (Thai + English)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-tha
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-tha fonts-noto-core fontconfig
 
       - name: Install dependencies
         run: pip install -e ".[ocr,api,dev]"
 
-      # Separated from fast-tests (spec requirement: don't let the real-OCR
-      # golden regression suite make every PR wait on it as a single
-      # sequential job) - runs in parallel with fast-tests instead, at the
-      # cost of the apt-get + full OCR pipeline time (~4-5 minutes).
-      - name: Run golden regression + real-OCR integration tests
-        run: python -m pytest tests/integration/test_persistence_flow.py tests/integration/test_golden_regression.py tests/integration/test_golden_regression_bpdc.py -q
+      - name: Run synthetic regression + persistence + real OCR
+        run: python -m pytest tests/integration/test_persistence_flow.py tests/integration/test_synthetic_regression.py -q
