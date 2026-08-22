@@ -48,13 +48,22 @@ def test_upload_edit_restart_flow():
     before_row_count = state["rowCount"]
 
     products = client.get("/api/products").json()
-    target = products[0]
+    # Dashboard grand totals intentionally exclude suspected non-products.
+    # Selecting products[0] made this test flaky because DB ordering among
+    # equal row_index values is not a semantic guarantee: some runs picked a
+    # non-product row whose SKU quantity is excluded from the baseline total.
+    # Edit a row that is actually included in grandTotals so +50 has a stable,
+    # meaningful expectation.
+    target = next(
+        p for p in products
+        if not p["suspectedNonProduct"] and p["fields"]["sku_qty"]["value"] is not None
+    )
     row_id = target["rowId"]
     old_sku_qty = target["fields"]["sku_qty"]["value"]
 
     patch_res = client.patch(
         f"/api/products/{row_id}",
-        json={"field": "sku_qty", "value": (old_sku_qty or 0) + 50, "reason": "ตรวจจาก PDF ต้นฉบับ"},
+        json={"field": "sku_qty", "value": old_sku_qty + 50, "reason": "ตรวจจาก PDF ต้นฉบับ"},
     )
     assert patch_res.status_code == 200
 
