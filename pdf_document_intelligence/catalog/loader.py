@@ -1,23 +1,22 @@
 """Master product catalog: barcode -> authoritative product name.
 
-This is the highest-confidence source of truth available for the `name`
-field — better than OCR, because it's an exact lookup against real master
-data instead of pixel-reading a possibly-defective PDF. Per the
-evidence-first principle, a catalog match is treated as ground truth
-(confidence 1.0, not flagged for review); a barcode with no catalog entry
-falls back to whatever text-layer/OCR reading the pipeline already has —
-never guessed from the catalog (e.g. fuzzy-matching a similar name).
+Sensitive operational master data is intentionally NOT stored in this
+repository. Production users may point the app at an external local file via
+``PDF_INTELLIGENCE_MASTER_CATALOG``. If no external catalog is configured (or
+it is unavailable), the application keeps working with an empty catalog and
+falls back to PDF/OCR evidence; it must never guess product names.
 """
 from __future__ import annotations
 
 import csv
 import functools
+import os
 from pathlib import Path
 
+# Kept only as a backwards-compatible local development location. The path is
+# gitignored and must never contain tracked production/company data.
 DEFAULT_CATALOG_PATH = Path(__file__).parent.parent.parent / "data" / "master_catalog.csv"
-# The unified master file (also the Division rollup's source - see
-# templates/department_groups.py) is stored UTF-8 in this repo, converted
-# once from the source export's iso8859_11 (Thai) encoding on ingestion.
+CATALOG_ENV = "PDF_INTELLIGENCE_MASTER_CATALOG"
 CATALOG_ENCODING = "utf-8"
 
 
@@ -31,8 +30,24 @@ class CatalogEntry:
         self.root_code = root_code
 
 
+def _configured_path(path: Path | None = None) -> Path:
+    if path is not None:
+        return path
+    configured = os.getenv(CATALOG_ENV, "").strip()
+    return Path(configured).expanduser() if configured else DEFAULT_CATALOG_PATH
+
+
 def load_catalog(path: Path | None = None) -> dict[str, CatalogEntry]:
-    path = path or DEFAULT_CATALOG_PATH
+    """Load an external catalog when available.
+
+    Missing master data is a supported, safe state: return an empty mapping so
+    callers fall back to OCR/PDF evidence and human review rather than failing
+    startup or silently inventing values.
+    """
+    path = _configured_path(path)
+    if not path.is_file():
+        return {}
+
     catalog: dict[str, CatalogEntry] = {}
     with path.open("r", encoding=CATALOG_ENCODING, errors="replace", newline="") as f:
         reader = csv.DictReader(f)
@@ -52,6 +67,4 @@ def load_catalog(path: Path | None = None) -> dict[str, CatalogEntry]:
 
 @functools.lru_cache(maxsize=1)
 def get_default_catalog() -> dict[str, CatalogEntry]:
-    """Cached singleton: the catalog is ~35k rows and doesn't change during
-    a process lifetime, so load it once."""
     return load_catalog()
