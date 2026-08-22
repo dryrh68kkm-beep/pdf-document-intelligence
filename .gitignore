@@ -8,3 +8,17 @@ dist/
 .env
 *.xlsx
 !tests/**/*.xlsx
+
+# Sensitive document/data protection
+*.pdf
+*.PDF
+/uploads/
+/data/*.csv
+/data/*.xlsx
+/data/*.xls
+/data/*.json
+/tests/golden/samples/*.pdf
+/tests/golden/expected/*.json
+
+# Only synthetic/redacted fixtures may be committed under tests/fixtures/
+!tests/fixtures/**
