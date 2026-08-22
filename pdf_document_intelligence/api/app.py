@@ -23,48 +23,51 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from pdf_document_intelligence.api.aggregate import router as aggregate_router
-from pdf_document_intelligence.api.divisions import router as divisions_router
-from pdf_document_intelligence.api.health import router as health_router
-from pdf_document_intelligence.api.review import router as review_router
-from pdf_document_intelligence.api.rows import prepare_flat_rows
-from pdf_document_intelligence.api.serialize import document_detail_json, document_summary_json
+from pdf_document_intelligence.api import review as review_api
+from pdf_document_intelligence.api.aggregate import build_dashboard_state
+from pdf_document_intelligence.api.divisions import build_division_departments, build_division_summary
+from pdf_document_intelligence.api.health import check_health
+from pdf_document_intelligence.api.serialize import _row_stats, document_detail_json, document_summary_json, product_row_json
 from pdf_document_intelligence.api.store import store
-from pdf_document_intelligence.catalog.apply import apply_catalog
-from pdf_document_intelligence.config.settings import settings
-from pdf_document_intelligence.export.excel import export_document_excel
+from pdf_document_intelligence.config.settings import Settings
+from pdf_document_intelligence.db import backup as backup_module
+from pdf_document_intelligence.export.excel import export_many_to_excel
 from pdf_document_intelligence.pipeline.orchestrator import process_document
 
 app = FastAPI(title="PDF Document Intelligence")
-app.include_router(health_router)
-app.include_router(aggregate_router)
-app.include_router(divisions_router)
-app.include_router(review_router)
 _executor = ThreadPoolExecutor(max_workers=2)
+_settings = Settings()
+
+FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend" / "app"
+
+
+def _run_processing(doc_id: str, pdf_bytes: bytes) -> None:
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(pdf_bytes)
+        tmp_path = Path(tmp.name)
+    try:
+        result = process_document(
+            tmp_path,
+            settings=_settings,
+            on_progress=lambda stage, current, total: store.set_progress(doc_id, stage, current, total),
+        )
+        store.set_complete(doc_id, result)
+    except Exception as exc:  # noqa: BLE001 - a single bad PDF must not take the API down
+        store.set_error(doc_id, str(exc))
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _doc_products(doc_id: str) -> list[dict]:
     return store.repo.list_product_rows(document_id=doc_id)
 
 
-def _run_processing(doc_id: str, pdf_bytes: bytes) -> None:
-    def progress(stage: str, current: int, total: int) -> None:
-        store.set_progress(doc_id, stage, current, total)
-
-    try:
-        result = process_document(pdf_bytes, progress_callback=progress)
-        apply_catalog(result)
-        store.set_complete(doc_id, result)
-    except Exception as exc:  # background worker boundary: persist the error
-        store.set_error(doc_id, str(exc))
-
-
 def _reprocess_existing(existing: dict, pdf_bytes: bytes) -> dict:
-    """Force-processing reuses the existing document identity.
+    """Reprocess an already-active document without creating a duplicate row.
 
-    SHA-256 is globally unique among active documents, so force means
-    "reprocess the existing record with fresh extraction results", not
-    "create a second active copy that would double-count dashboard/export
+    The active-document SHA-256 unique index remains the final data-integrity
+    guard.  A forced duplicate upload means "reprocess this exact document",
+    not "create a second active copy that would double-count dashboard/export
     totals".
     """
     doc_id = existing["id"]
@@ -98,11 +101,10 @@ async def upload_document(file: UploadFile, force: bool = False):
     try:
         doc = store.create(file.filename, pdf_bytes)
     except sqlite3.DatabaseError as exc:
-        # Two concurrent uploads can both pass find_by_hash before either
-        # insert commits. Depending on sqlite/Python timing, the unique-index
-        # violation may surface as IntegrityError or its DatabaseError base.
-        # Convert only this known constraint race to the normal duplicate 409;
-        # all unrelated database failures must still propagate.
+        # Two concurrent uploads of the same file can both pass the
+        # find_by_hash check before either commits. Depending on sqlite/Python
+        # timing, the unique-index violation may surface as IntegrityError or
+        # its DatabaseError base class. Only normalize this known constraint.
         if "UNIQUE constraint failed: documents.sha256" not in str(exc):
             raise
         existing = store.find_by_hash(sha256)
@@ -124,119 +126,194 @@ def list_documents():
     result = []
     for d in docs:
         rows = _doc_products(d["id"]) if d["status"] == "complete" else []
-        result.append(document_summary_json(d, rows))
+        stats = _row_stats(rows) if d["status"] == "complete" else None
+        result.append(document_summary_json(d, stats))
     return result
 
 
 @app.get("/api/documents/{doc_id}")
 def get_document(doc_id: str):
     doc = store.get(doc_id)
-    if not doc or doc.get("deletedAt") or doc.get("deleted_at"):
-        raise HTTPException(404, "Document not found")
+    if not doc:
+        raise HTTPException(404, "not found")
     return document_detail_json(doc, _doc_products(doc_id))
 
 
-@app.delete("/api/documents/{doc_id}")
-def delete_document(doc_id: str):
-    if not store.remove(doc_id):
-        raise HTTPException(404, "Document not found")
-    return {"ok": True}
+@app.get("/api/analytics/documents/{doc_id}/divisions")
+def get_document_divisions(doc_id: str):
+    return build_division_summary(store.repo, doc_id)
+
+
+@app.get("/api/analytics/documents/{doc_id}/divisions/{division_code}/departments")
+def get_document_division_departments(doc_id: str, division_code: str):
+    return build_division_departments(store.repo, doc_id, division_code)
+
+
+@app.get("/api/documents/{doc_id}/pdf")
+def get_document_pdf(doc_id: str):
+    doc = store.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "not found")
+    pdf_bytes = store.get_pdf_bytes(doc_id)
+    if pdf_bytes is None:
+        raise HTTPException(404, "pdf file missing on disk")
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf")
 
 
 @app.post("/api/documents/{doc_id}/reprocess")
 def reprocess_document(doc_id: str):
     doc = store.get(doc_id)
-    if not doc or doc.get("deleted_at"):
-        raise HTTPException(404, "Document not found")
+    if not doc:
+        raise HTTPException(404, "not found")
     pdf_bytes = store.get_pdf_bytes(doc_id)
     if pdf_bytes is None:
-        raise HTTPException(409, "Original PDF is not available")
-    return _reprocess_existing(doc, pdf_bytes)
+        raise HTTPException(404, "pdf file missing on disk")
+    store.mark_reprocessing(doc_id)
+    _executor.submit(_run_processing, doc_id, pdf_bytes)
+    return document_summary_json(store.get(doc_id))
 
 
-@app.get("/api/documents/{doc_id}/export")
-def export_document(doc_id: str):
-    doc = store.get(doc_id)
-    if not doc or doc.get("deleted_at"):
-        raise HTTPException(404, "Document not found")
-    rows = _doc_products(doc_id)
-    output = io.BytesIO()
-    export_document_excel(doc, rows, output)
-    output.seek(0)
-    filename = f"{Path(doc['filename']).stem}_review.xlsx"
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@app.get("/api/documents/{doc_id}/pdf")
-def get_pdf(doc_id: str):
-    doc = store.get(doc_id)
-    if not doc or doc.get("deleted_at"):
-        raise HTTPException(404, "Document not found")
-    pdf_bytes = store.get_pdf_bytes(doc_id)
-    if pdf_bytes is None:
-        raise HTTPException(404, "PDF not found")
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    tmp.write(pdf_bytes)
-    tmp.close()
-    return FileResponse(
-        tmp.name,
-        media_type="application/pdf",
-        filename=doc["filename"],
-        background=BackgroundTask(Path(tmp.name).unlink, missing_ok=True),
-    )
-
-
-@app.patch("/api/products/{row_id}")
-def patch_product(row_id: str, payload: dict = Body(...)):
-    field = payload.get("field")
-    if not isinstance(field, str) or not field:
-        raise HTTPException(400, "field is required")
-    if "value" not in payload:
-        raise HTTPException(400, "value is required")
-    try:
-        return store.repo.correct_product_field(
-            row_id,
-            field,
-            payload["value"],
-            reason=str(payload.get("reason") or "manual review"),
-            corrected_by=str(payload.get("correctedBy") or "user"),
-        )
-    except KeyError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+@app.delete("/api/documents/{doc_id}")
+def delete_document(doc_id: str):
+    if not store.remove(doc_id):
+        raise HTTPException(404, "not found")
+    return {"ok": True}
 
 
 @app.get("/api/products")
-def list_products(
-    documentId: str | None = Query(None),
-    department: str | None = Query(None),
-    q: str | None = Query(None),
-    limit: int = Query(500, ge=1, le=5000),
-    offset: int = Query(0, ge=0),
-):
-    return store.repo.list_product_rows(
-        document_id=documentId,
-        department=department,
-        q=q,
-        limit=limit,
-        offset=offset,
+def list_all_products():
+    docs = {d["id"]: d for d in store.list()}
+    rows = store.repo.list_product_rows()
+    return [product_row_json(r, docs[r["document_id"]]["filename"]) for r in rows if r["document_id"] in docs]
+
+
+@app.get("/api/products/{row_id}")
+def get_product(row_id: str):
+    row = store.repo.get_product_row(row_id)
+    if not row:
+        raise HTTPException(404, "not found")
+    doc = store.get(row["document_id"])
+    return product_row_json(row, doc["filename"] if doc else "")
+
+
+@app.patch("/api/products/{row_id}")
+def patch_product(row_id: str, body: dict = Body(...)):
+    field_name = body.get("field")
+    if not field_name:
+        raise HTTPException(400, "'field' is required")
+    result = review_api.apply_correction(
+        store.repo, row_id, field_name, body.get("value"), body.get("reason"), body.get("source", "LOCAL_USER"),
     )
-
-
-@app.get("/api/settings")
-def get_settings():
+    doc = store.get(result["row"]["document_id"])
     return {
-        "dataDir": str(settings.data_dir),
-        "ocrEnabled": settings.ocr_enabled,
+        "correctionId": result["correction_id"],
+        "row": product_row_json(result["row"], doc["filename"] if doc else ""),
     }
 
 
-# Static frontend is mounted last so /api routes take precedence.
-_FRONTEND = Path(__file__).parent.parent.parent / "frontend" / "app"
-if _FRONTEND.is_dir():
-    app.mount("/", StaticFiles(directory=_FRONTEND, html=True), name="frontend")
+@app.get("/api/products/{row_id}/history")
+def product_history(row_id: str):
+    if not store.repo.get_product_row(row_id):
+        raise HTTPException(404, "not found")
+    return [
+        {
+            "id": c["id"], "field": c["field_name"], "oldValue": c["old_value"],
+            "newValue": c["new_value"], "reason": c["reason"], "source": c["source"],
+            "undoOfId": c["undo_of_id"], "createdAt": c["created_at"],
+        }
+        for c in store.repo.list_corrections(row_id)
+    ]
+
+
+@app.post("/api/products/{row_id}/undo")
+def undo_product_correction(row_id: str, body: dict = Body(...)):
+    correction_id = body.get("correctionId")
+    if not correction_id:
+        raise HTTPException(400, "'correctionId' is required")
+    try:
+        return store.repo.undo_correction(correction_id, body.get("source", "LOCAL_USER"))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.get("/api/review")
+def list_review_items():
+    return build_dashboard_state(store.repo)["reviewItems"]
+
+
+@app.post("/api/review/{row_id}/confirm")
+def confirm_review(row_id: str, body: dict = Body(default={})):
+    return review_api.confirm_review_row(store.repo, row_id, body.get("source", "LOCAL_USER"))
+
+
+@app.get("/api/master/local")
+def list_local_master(search: str | None = Query(default=None)):
+    entries = store.repo.list_local_master(search)
+    return {"count": len(entries), "entries": entries}
+
+
+@app.post("/api/master/local")
+def add_local_master(body: dict = Body(...)):
+    barcode = body.get("barcode")
+    product_name = body.get("productName")
+    if not barcode or not product_name:
+        raise HTTPException(400, "'barcode' and 'productName' are required")
+    result = store.repo.add_local_master(
+        barcode=barcode, product_name=product_name, department=body.get("department"),
+        unit=body.get("unit"), article_code=body.get("articleCode"),
+        source_document_id=body.get("sourceDocumentId"),
+    )
+    return result
+
+
+@app.get("/api/master/official/count")
+def official_master_count():
+    from pdf_document_intelligence.catalog.loader import get_default_catalog
+
+    return {"count": len(get_default_catalog())}
+
+
+@app.get("/api/state")
+def get_dashboard_state():
+    return build_dashboard_state(store.repo)
+
+
+@app.get("/api/health")
+def health():
+    return check_health(store.repo)
+
+
+@app.post("/api/backup")
+def create_backup():
+    path = backup_module.create_backup()
+    return FileResponse(path, media_type="application/zip", filename=path.name)
+
+
+@app.post("/api/restore")
+async def restore_backup(file: UploadFile):
+    data = await file.read()
+    try:
+        return backup_module.restore_backup(data)
+    except backup_module.RestoreError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/export.xlsx")
+def export_excel():
+    doc_ids = [d["id"] for d in store.list() if d["status"] == "complete"]
+    if not doc_ids:
+        raise HTTPException(400, "No completed documents to export")
+    results = [document_detail_json(store.get(did), _doc_products(did)) for did in doc_ids]
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        out_path = Path(tmp.name)
+    export_many_to_excel(results, out_path)
+    return FileResponse(
+        out_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="pdf-document-intelligence-export.xlsx",
+        background=BackgroundTask(out_path.unlink, missing_ok=True),
+    )
+
+
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
