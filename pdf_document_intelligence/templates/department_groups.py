@@ -1,48 +1,44 @@
-"""Department -> Division rollup for Dashboard display only.
+"""Department -> Division rollup backed by the private master snapshot.
 
-Operational hierarchy/master data is not committed to this repository.
-Production can supply the same external CSV used by the product catalog via
-``PDF_INTELLIGENCE_MASTER_CATALOG``. Missing master data is safe: departments
-remain unmapped rather than being guessed or causing application startup to
-fail.
+The external master CSV is needed only for first import. Runtime reads the
+compiled snapshot from the app data directory and never depends on a tracked
+master file in the repository.
 """
 from __future__ import annotations
 
-import csv
 import functools
-import os
 import re
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).parent.parent.parent / "data" / "master_catalog.csv"
-CATALOG_ENV = "PDF_INTELLIGENCE_MASTER_CATALOG"
+from pdf_document_intelligence.catalog.snapshot import (
+    import_catalog_snapshot,
+    load_catalog_snapshot,
+)
+
 _LEADING_CODE_RE = re.compile(r"^\d+\s+")
-
-
-def _configured_path(path: Path | None = None) -> Path:
-    if path is not None:
-        return path
-    configured = os.getenv(CATALOG_ENV, "").strip()
-    return Path(configured).expanduser() if configured else DEFAULT_PATH
 
 
 def _strip_code(name: str) -> str:
     return _LEADING_CODE_RE.sub("", name).strip()
 
 
-def load_department_divisions(path: Path | None = None) -> dict[str, str]:
-    path = _configured_path(path)
-    if not path.is_file():
+def _hierarchy_from_snapshot(path: Path | None = None) -> dict[str, str]:
+    if path is not None:
+        import_catalog_snapshot(Path(path))
+    raw = load_catalog_snapshot().get("department_divisions", {})
+    if not isinstance(raw, dict):
         return {}
     mapping: dict[str, str] = {}
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            dept = _strip_code((row.get("DEPARTMENT_NAME") or "").strip())
-            division = _strip_code((row.get("DIVISION_NAME") or "").strip())
-            if dept and division:
-                mapping[dept] = division
+    for department, division in raw.items():
+        dept = _strip_code(str(department or "").strip())
+        div = _strip_code(str(division or "").strip())
+        if dept and div:
+            mapping[dept] = div
     return mapping
+
+
+def load_department_divisions(path: Path | None = None) -> dict[str, str]:
+    return _hierarchy_from_snapshot(path)
 
 
 @functools.lru_cache(maxsize=1)
@@ -61,33 +57,28 @@ def _split_code(name: str) -> tuple[str | None, str]:
     return match.group().strip(), name[match.end():].strip()
 
 
+def _raw_hierarchy(path: Path | None = None) -> dict[str, str]:
+    if path is not None:
+        import_catalog_snapshot(Path(path))
+    raw = load_catalog_snapshot().get("department_divisions", {})
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k).strip(): str(v).strip() for k, v in raw.items() if str(k).strip() and str(v).strip()}
+
+
 def load_divisions(path: Path | None = None) -> list[tuple[str, str]]:
-    path = _configured_path(path)
-    if not path.is_file():
-        return []
-    seen: dict[str, tuple[str, str]] = {}
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            raw = (row.get("DIVISION_NAME") or "").strip()
-            if not raw or raw in seen:
-                continue
+    seen: dict[str, tuple[str | None, str]] = {}
+    for raw in _raw_hierarchy(path).values():
+        if raw not in seen:
             seen[raw] = _split_code(raw)
     return list(seen.values())
 
 
-def load_department_to_division_code(path: Path | None = None) -> dict[str, tuple[str, str]]:
-    path = _configured_path(path)
-    if not path.is_file():
-        return {}
-    mapping: dict[str, tuple[str, str]] = {}
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            dept = _strip_code((row.get("DEPARTMENT_NAME") or "").strip())
-            division_raw = (row.get("DIVISION_NAME") or "").strip()
-            if not dept or not division_raw:
-                continue
+def load_department_to_division_code(path: Path | None = None) -> dict[str, tuple[str | None, str]]:
+    mapping: dict[str, tuple[str | None, str]] = {}
+    for department, division_raw in _raw_hierarchy(path).items():
+        dept = _strip_code(department)
+        if dept:
             mapping[dept] = _split_code(division_raw)
     return mapping
 
@@ -98,10 +89,10 @@ def get_default_divisions() -> list[tuple[str, str]]:
 
 
 @functools.lru_cache(maxsize=1)
-def get_default_department_to_division_code() -> dict[str, tuple[str, str]]:
+def get_default_department_to_division_code() -> dict[str, tuple[str | None, str]]:
     return load_department_to_division_code()
 
 
-def division_for_department(name: str) -> tuple[str, str] | None:
+def division_for_department(name: str) -> tuple[str | None, str] | None:
     bare = _strip_code((name or "").strip())
     return get_default_department_to_division_code().get(bare)
