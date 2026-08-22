@@ -11,6 +11,7 @@ logical table, closing it when a "Total" row is found.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 
 from pdf_document_intelligence.extract.text import DocumentText, PageText, Word
@@ -23,7 +24,6 @@ from pdf_document_intelligence.tables.geometry import (
     assign_row,
     cluster_rows,
     find_header_on_page,
-    find_total_row,
     parse_total,
 )
 from pdf_document_intelligence.templates.packing_list_bigc import (
@@ -48,14 +48,57 @@ class RawTable:
     total: ParsedTotal | None = None
 
 
+def _marker_text(text: str) -> str:
+    """Normalize presentation-only differences for structural labels."""
+    value = unicodedata.normalize("NFKC", text).casefold()
+    return "".join(ch for ch in value if ch.isalnum())
+
+
 def _find_department(page: PageText) -> str | None:
     words = sorted(page.words, key=lambda w: (w.top, w.x0))
+    department_key = _marker_text(DEPARTMENT_LABEL)
     for w in words:
-        if w.text == DEPARTMENT_LABEL:
+        marker = _marker_text(w.text)
+        if marker == department_key or marker.startswith(department_key):
             line = [x for x in words if abs(x.top - w.top) < 1.5 and x.x0 > w.x0]
             line.sort(key=lambda x: x.x0)
-            value_words = [x.text for x in line if x.text != ":"]
+            value_words = [x.text for x in line if _marker_text(x.text)]
             return " ".join(value_words).strip() or None
+    return None
+
+
+def _find_total_row(page: PageText) -> list[Word] | None:
+    """Find Total despite harmless case/punctuation differences.
+
+    ``parse_total`` deliberately expects the canonical literal label, so the
+    matching marker word is replaced only in this temporary row copy while
+    retaining its original geometry. No product data is normalized here.
+    """
+    total_key = _marker_text(TOTAL_LABEL)
+    words = sorted(page.words, key=lambda w: (w.top, w.x0))
+    for w in words:
+        marker = _marker_text(w.text)
+        if marker == total_key or marker.startswith(total_key):
+            row = [x for x in words if abs(x.top - w.top) < 1.5]
+            normalized: list[Word] = []
+            replaced = False
+            for x in row:
+                x_marker = _marker_text(x.text)
+                if not replaced and (x_marker == total_key or x_marker.startswith(total_key)):
+                    normalized.append(
+                        Word(
+                            text=TOTAL_LABEL,
+                            x0=x.x0,
+                            top=x.top,
+                            x1=x.x1,
+                            bottom=x.bottom,
+                            page=x.page,
+                        )
+                    )
+                    replaced = True
+                else:
+                    normalized.append(x)
+            return normalized
     return None
 
 
@@ -66,7 +109,7 @@ def reconstruct_tables(doc: DocumentText) -> list[RawTable]:
     for page in doc.pages:
         header = find_header_on_page(page, COLUMNS)
         if header is None:
-            continue  # page carries no data table (shouldn't happen for this template)
+            continue  # coverage validation records supported pages that unexpectedly lose their header
         header_bottom, boundaries = header
         department = _find_department(page) or (current.department if current else "UNKNOWN")
 
@@ -76,7 +119,7 @@ def reconstruct_tables(doc: DocumentText) -> list[RawTable]:
             current = RawTable(department=department, page_start=page.page_number, page_end=page.page_number)
         current.page_end = page.page_number
 
-        total_row_words = find_total_row(page.words, TOTAL_LABEL)
+        total_row_words = _find_total_row(page)
         top_max = min(w.top for w in total_row_words) if total_row_words else 10_000.0
 
         row_word_groups = cluster_rows(page.words, header_bottom + 1, top_max - 1)
