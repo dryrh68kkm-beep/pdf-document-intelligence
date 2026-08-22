@@ -37,24 +37,21 @@ def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> Tab
         extracted_name = _normalized_name(name_field.value)
         master_name = _normalized_name(entry.name)
         flags = ["CATALOG_MATCH"]
-        review_required = False
-        confidence = 1.0
 
-        # Exact barcode is authoritative for the selected value, but a
-        # materially different source name is useful evidence of a possible
-        # column shift, stale master entry, or wrong barcode read. Preserve the
-        # source text in raw_value and surface the discrepancy for review.
+        # Exact barcode lookup remains authoritative. A different source name
+        # is retained as audit evidence because Thai text layers/OCR can be
+        # imperfect, but it must not downgrade an exact catalog match into a
+        # manual-review item. Identifier/geometry validation is responsible
+        # for deciding whether the barcode itself is trustworthy.
         if extracted_name and master_name and extracted_name != master_name:
             flags.append("CATALOG_NAME_MISMATCH")
-            review_required = True
-            confidence = 0.9
 
         fields["name"] = name_field.model_copy(
             update={
                 "value": entry.name,
                 "source": "master_catalog",
-                "confidence": confidence,
-                "review_required": review_required,
+                "confidence": 1.0,
+                "review_required": False,
                 "validation_flags": flags,
             }
         )
