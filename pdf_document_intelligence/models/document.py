@@ -17,6 +17,7 @@ FieldType = Literal[
 FieldSource = Literal["pdf_text", "ocr", "cross_validated", "master_catalog"]
 ConfidenceBand = Literal["HIGH", "MEDIUM", "LOW"]
 DocumentStatus = Literal["AUTO_APPROVED", "REVIEW_RECOMMENDED", "MANUAL_REVIEW_REQUIRED"]
+QualityBand = Literal["VERIFIED", "GOOD", "NEED_REVIEW", "HIGH_RISK"]
 
 
 class BoundingBox(BaseModel):
@@ -91,6 +92,18 @@ class ValidationSummary(BaseModel):
     warnings: list[ValidationIssue] = Field(default_factory=list)
 
 
+class QualitySummary(BaseModel):
+    score: float = Field(ge=0.0, le=100.0)
+    band: QualityBand
+    breakdown: dict[str, float] = Field(default_factory=dict)
+    row_count: int = 0
+    verified_rows: int = 0
+    review_rows: int = 0
+    error_count: int = 0
+    warning_count: int = 0
+    master_matched_rows: int = 0
+
+
 class ProcessingLogEntry(BaseModel):
     step: str
     detail: str
@@ -112,6 +125,7 @@ class DocumentResult(BaseModel):
     tables: list[ExtractedTable] = Field(default_factory=list)
     fields: list[FieldValue] = Field(default_factory=list)
     validation: ValidationSummary
+    quality: QualitySummary | None = None
     processing_log: list[ProcessingLogEntry] = Field(default_factory=list)
     # Transaction date extracted from an explicit label in the PDF. It is never
     # inferred from upload time, filename, MFG, expiry, or lot fields.
