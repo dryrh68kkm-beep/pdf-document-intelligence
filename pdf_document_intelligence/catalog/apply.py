@@ -9,10 +9,18 @@ of what extraction actually saw.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from pdf_document_intelligence.catalog.classify import classify_product
 from pdf_document_intelligence.catalog.loader import CatalogEntry
 from pdf_document_intelligence.models.document import TableRow
 from pdf_document_intelligence.tables.fields import compute_confidence_band
+
+
+def _normalized_name(text: object) -> str:
+    value = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> TableRow:
@@ -26,13 +34,25 @@ def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> Tab
 
     if entry and name_field:
         classification_name = entry.name
+        extracted_name = _normalized_name(name_field.value)
+        master_name = _normalized_name(entry.name)
+        flags = ["CATALOG_MATCH"]
+
+        # Exact barcode lookup remains authoritative. A different source name
+        # is retained as audit evidence because Thai text layers/OCR can be
+        # imperfect, but it must not downgrade an exact catalog match into a
+        # manual-review item. Identifier/geometry validation is responsible
+        # for deciding whether the barcode itself is trustworthy.
+        if extracted_name and master_name and extracted_name != master_name:
+            flags.append("CATALOG_NAME_MISMATCH")
+
         fields["name"] = name_field.model_copy(
             update={
                 "value": entry.name,
                 "source": "master_catalog",
                 "confidence": 1.0,
                 "review_required": False,
-                "validation_flags": ["CATALOG_MATCH"],
+                "validation_flags": flags,
             }
         )
 
