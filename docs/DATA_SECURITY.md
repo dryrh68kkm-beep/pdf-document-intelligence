@@ -14,9 +14,13 @@ This repository contains source code only. Operational/company documents and mas
 
 Regression fixtures must be synthetic or irreversibly redacted. PDF fixtures are generated at test runtime inside temporary directories. Fictional identifiers, barcodes, quantities, names, stores, routes, and departments must be used.
 
-## Production data
+## Production master data
 
-External master data may be supplied locally using `PDF_INTELLIGENCE_MASTER_CATALOG`. Missing master data is a supported state: the application must fall back to PDF/OCR evidence and human review instead of guessing.
+The real master CSV is supplied from outside the repository only for the initial import, normally via `PDF_INTELLIGENCE_MASTER_CATALOG`. The application compiles only the fields it needs into `master_catalog.snapshot.json` under the private `PDF_INTELLIGENCE_DATA_DIR` and then reads that snapshot on subsequent runs. The source CSV may be removed after a successful import.
+
+An existing snapshot is never overwritten automatically. Refreshing master data must be an intentional import with overwrite enabled. If neither a snapshot nor an import source is available, the application continues without master enrichment and falls back to PDF/OCR evidence and human review instead of guessing.
+
+The private snapshot is runtime data and must never be committed to Git.
 
 ## Incident response
 
