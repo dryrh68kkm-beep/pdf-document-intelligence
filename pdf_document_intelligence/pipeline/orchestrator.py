@@ -44,6 +44,7 @@ from pdf_document_intelligence.templates.packing_list_bigc import TEMPLATE_VERSI
 from pdf_document_intelligence.templates.packing_list_bpdc import COLUMNS as BPDC_COLUMNS
 from pdf_document_intelligence.templates.packing_list_bpdc import TEMPLATE_ID as BPDC_TEMPLATE_ID
 from pdf_document_intelligence.templates.packing_list_bpdc import TEMPLATE_VERSION as BPDC_TEMPLATE_VERSION
+from pdf_document_intelligence.validate.coverage import validate_bigc_coverage, validate_bpdc_coverage
 from pdf_document_intelligence.validate.cross_validate import ThaiOcrCrossValidator
 from pdf_document_intelligence.validate.reconciliation import check_duplicate_rows, reconcile_table
 from pdf_document_intelligence.validate.reconciliation_bpdc import reconcile_pallet_block
@@ -109,8 +110,6 @@ def process_document(
 
     quality_by_page = {p.page_number: p.quality for p in doc_text.pages}
     extracted_tables: list[ExtractedTable] = []
-    validation_errors = []
-    validation_warnings = []
     template_version: str | None = None
 
     if template_id == UNKNOWN_TEMPLATE:
@@ -165,7 +164,7 @@ def process_document(
             log.record("field_parsing", f"{total_rows} rows parsed across {len(extracted_tables)} tables")
             progress("สร้างรายการสินค้า", total_rows, total_rows)
 
-        reconcile_stage_label = "department-level reconciliation + duplicate detection"
+        reconcile_stage_label = "coverage + department-level reconciliation + duplicate detection"
         block_rows_for_reconcile = list(zip(raw_tables, extracted_tables))
 
     else:  # BPDC_TEMPLATE_ID
@@ -212,7 +211,7 @@ def process_document(
             )
             progress("สร้างรายการสินค้า", total_rows, total_rows)
 
-        reconcile_stage_label = "pallet-block reconciliation + duplicate detection"
+        reconcile_stage_label = "coverage + pallet-block reconciliation + duplicate detection"
         block_rows_for_reconcile = block_rows
 
     ocr_engine_version = settings.ocr_engine_version
@@ -258,6 +257,24 @@ def process_document(
     with log.step("validation", reconcile_stage_label):
         errors = []
         warnings = []
+
+        if template_id == BIGC_TEMPLATE_ID:
+            coverage_issues = validate_bigc_coverage(
+                doc_text,
+                expected_page_count=preflight.page_count,
+                raw_tables=raw_tables,
+                extracted_tables=extracted_tables,
+            )
+        else:
+            coverage_issues = validate_bpdc_coverage(
+                doc_text,
+                expected_page_count=preflight.page_count,
+                pallet_blocks=pallet_blocks,
+                extracted_tables=extracted_tables,
+            )
+        for issue in coverage_issues:
+            (errors if issue.severity == "error" else warnings).append(issue)
+
         if template_id == BIGC_TEMPLATE_ID:
             for i, (raw, table) in enumerate(block_rows_for_reconcile, start=1):
                 progress(f"คำนวณยอด {table.name}", i, len(block_rows_for_reconcile))
@@ -273,7 +290,11 @@ def process_document(
                 (errors if issue.severity == "error" else warnings).append(issue)
         reconciled = not errors
         validation = ValidationSummary(reconciled=reconciled, errors=errors, warnings=warnings)
-        log.record("validation", f"reconciled={reconciled}; {len(errors)} errors, {len(warnings)} warnings")
+        coverage_codes = [issue.code for issue in coverage_issues]
+        log.record(
+            "validation",
+            f"reconciled={reconciled}; {len(errors)} errors, {len(warnings)} warnings; coverage={coverage_codes}",
+        )
 
     with log.step("confidence_scoring", "composite document confidence + status"):
         confidence, status = score_document(extracted_tables, validation, settings)
