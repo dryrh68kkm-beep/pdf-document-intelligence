@@ -9,7 +9,7 @@ from pdf_document_intelligence.extract.text import PageText, TextQuality
 from pdf_document_intelligence.models.document import BoundingBox, FieldValue, TableRow
 from pdf_document_intelligence.normalize.thai import normalize_thai_text
 from pdf_document_intelligence.normalize.types import TypeParseError, parse_integer, parse_number
-from pdf_document_intelligence.tables.geometry import Cell, RawRow
+from pdf_document_intelligence.tables.geometry import ARTICLE_RE, BARCODE_RE, Cell, RawRow
 from pdf_document_intelligence.templates.base import ColumnSpec
 from pdf_document_intelligence.templates.packing_list_bigc import COLUMNS as BIGC_COLUMNS
 
@@ -49,8 +49,6 @@ def _parse_field(
     confidence = 0.99 if raw_text else 0.5
 
     if not normalized and not required:
-        # A genuinely optional column (e.g. REMARKS) being blank is a real,
-        # confidently-observed value — not a missing-field defect.
         return FieldValue(
             name=canonical_name,
             raw_value=raw_text,
@@ -96,20 +94,24 @@ def _parse_field(
     else:
         value = normalized
 
-    # Thai text sourced from a page whose text layer we've already flagged
-    # unreliable (combining marks silently dropped, see extract/text.py) can
-    # never be auto-approved — this is "ไม่แน่ใจ = ห้ามเดา" made concrete.
+    # Identity fields have stable source-document formats. Validate them here
+    # after geometry assignment so a shifted/merged column cannot look like a
+    # healthy generic code merely because it is non-empty.
+    if normalized and canonical_name == "article" and ARTICLE_RE.fullmatch(normalized) is None:
+        confidence = min(confidence, 0.25)
+        review_required = True
+        validation_flags.append("INVALID_ARTICLE_FORMAT")
+    if normalized and canonical_name == "barcode" and BARCODE_RE.fullmatch(normalized) is None:
+        confidence = min(confidence, 0.25)
+        review_required = True
+        validation_flags.append("INVALID_BARCODE_FORMAT")
+
     if _has_thai(normalized) and not page_quality.reliable:
         confidence = min(confidence, 0.4)
         review_required = True
         if "TEXT_LAYER_UNRELIABLE" not in validation_flags:
             validation_flags.append("TEXT_LAYER_UNRELIABLE")
 
-    # This field's text was recovered by splitting a glued word (see
-    # geometry.split_glued_code_suffix) rather than extracted verbatim
-    # from its own column — the split is deterministic and validated, but
-    # still a correction, so it stays review_required like every other
-    # non-verbatim recovery path (OCR, catalog) in this pipeline.
     if overflow_split:
         confidence = min(confidence, 0.85)
         review_required = True
