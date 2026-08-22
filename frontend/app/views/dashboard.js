@@ -28,6 +28,24 @@ function statusLabel(status) {
   return { complete: "ประมวลผลสำเร็จ", processing: "กำลังประมวลผล", error: "ผิดพลาด" }[status] || status;
 }
 
+function qualityBandLabel(band) {
+  return {
+    VERIFIED: "เชื่อถือได้",
+    GOOD: "คุณภาพดี",
+    NEED_REVIEW: "ควรตรวจสอบ",
+    HIGH_RISK: "ความเสี่ยงสูง",
+  }[band] || "ยังไม่มีคะแนน";
+}
+
+function qualityBandClass(band) {
+  return {
+    VERIFIED: "ok",
+    GOOD: "ok",
+    NEED_REVIEW: "warn",
+    HIGH_RISK: "warn",
+  }[band] || "";
+}
+
 function kpiCard(value, label) {
   return `<div class="kpi-card"><div class="kpi-value">${value}</div><div class="kpi-label">${label}</div></div>`;
 }
@@ -175,12 +193,31 @@ export function renderDashboard(container, store) {
 
   const dq = divisionSummary.dataQuality;
   const rec = divisionSummary.reconciliation;
+  const qualityScore = doc.qualityScore;
+  const qualityBand = doc.qualityBand;
+  const qualityCounts = doc.qualityCounts || {};
+  const reviewCount = qualityCounts.needReview ?? dq.reviewRequired ?? 0;
+  const errorCount = qualityCounts.errors ?? rec.errors ?? 0;
+  const verifiedCount = qualityCounts.verified ?? dq.cleanRows ?? 0;
+  const qualityClass = qualityBandClass(qualityBand);
   const dqRow = (label, value) => `<div class="dq-row"><span>${label}</span><span class="mono">${fmtNum(value)}</span></div>`;
-  const dataQuality = `
+  const qualitySummary = `
     <div class="dq-panel">
-      <div class="section-title">Data Quality</div>
+      <div class="section-title">คุณภาพเอกสาร</div>
+      <div class="dq-row">
+        <span>สถานะ</span>
+        <span class="dept-card-badge ${qualityClass}">${qualityBandLabel(qualityBand)}</span>
+      </div>
+      <div class="dq-row">
+        <span>Quality Score</span>
+        <span class="mono">${qualityScore == null ? "—" : `${fmtNum(qualityScore)} / 100`}</span>
+      </div>
+      ${dqRow("รายการที่ยืนยันแล้ว", verifiedCount)}
+      ${dqRow("ต้องตรวจสอบ", reviewCount)}
+      ${dqRow("ข้อผิดพลาด", errorCount)}
+      ${reviewCount > 0 ? `<button class="btn btn-primary" id="openReviewQueueBtn" style="width:100%;margin-top:12px;">ดู ${fmtNum(reviewCount)} รายการที่ต้องตรวจ</button>` : `<div class="dq-unmapped" style="margin-top:12px;">ไม่พบรายการที่ต้องตรวจสอบ</div>`}
+      <div class="section-title" style="margin-top:18px;">รายละเอียดแหล่งข้อมูล</div>
       ${dqRow("Clean rows", dq.cleanRows)}
-      ${dqRow("Review required", dq.reviewRequired)}
       ${dqRow("Corrected", dq.corrected)}
       ${dqRow("Resolved from Master", dq.resolvedFromMaster)}
       ${dqRow("Resolved from OCR", dq.resolvedFromOcr)}
@@ -203,9 +240,14 @@ export function renderDashboard(container, store) {
       <div class="section-title">สรุปตามฝ่าย</div>
       <div class="division-grid">${divisionCards}</div>
     </div>
-    <aside class="dashboard-aside">${dataQuality}</aside>
+    <aside class="dashboard-aside">${qualitySummary}</aside>
   `;
   container.appendChild(body);
+
+  const reviewButton = body.querySelector("#openReviewQueueBtn");
+  if (reviewButton) {
+    reviewButton.addEventListener("click", () => store.navigate("review"));
+  }
 
   body.querySelectorAll(".division-card").forEach((el) => {
     el.addEventListener("click", () => store.openDivision(el.dataset.division));
