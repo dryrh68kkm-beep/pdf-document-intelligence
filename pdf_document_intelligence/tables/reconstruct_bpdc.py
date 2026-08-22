@@ -17,6 +17,7 @@ order_no which only forward-fill within one DN's own continuation lines.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 
 from pdf_document_intelligence.extract.text import DocumentText, Word
@@ -41,12 +42,13 @@ from pdf_document_intelligence.templates.packing_list_bpdc import (
 )
 
 _PLAIN_COLUMNS = ("dn_no", "do_no", "order_no", "line", "department", "weight_qty", "pu_qty", "sku_qty", "remarks")
-# Everything above this Y position on every page is fixed page boilerplate
-# (Consignee/address block, "Packing List" title, Route/Transport Note) -
-# verified against the sample: boilerplate's last line sits at top≈129,
-# every marker/data row starts at top≈142.9 or later, on every page
-# including continuation pages that repeat the same boilerplate at top.
 _CONTENT_TOP_MIN = 135.0
+
+
+def _marker_text(text: str) -> str:
+    """Normalize marker presentation differences without changing data."""
+    value = unicodedata.normalize("NFKC", text).casefold()
+    return "".join(ch for ch in value if ch.isalnum())
 
 
 @dataclass
@@ -61,43 +63,44 @@ class PalletBlock:
 
 def _line_kind(row: list[Word]) -> str:
     row = sorted(row, key=lambda w: w.x0)
-    texts = [w.text for w in row]
-    if texts[:1] == [PALLET_LABEL]:
+    normalized = [_marker_text(w.text) for w in row]
+    pallet_key = _marker_text(PALLET_LABEL)
+    total_key = _marker_text(TOTAL_LABEL)
+    # PDF exporters may emit "Pallet", "Pallet no." or "PALLET NO" as one
+    # word/run. Detection is already tolerant; reconstruction must be too.
+    if normalized and (normalized[0] == pallet_key or normalized[0].startswith(pallet_key)):
         return "pallet"
-    # Reuse the same tolerant full-header matcher as template detection.
-    # This avoids detecting a BPDC variant successfully and then silently
-    # ignoring its header during reconstruction because of case/punctuation
-    # or merged-word differences such as "Order no".
     if find_header_boundaries(row, COLUMNS) is not None:
         return "header"
-    if TOTAL_LABEL in texts:
+    if any(text == total_key or text.startswith(total_key) for text in normalized):
         return "total"
     return "data"
 
 
 def _parse_pallet_line(row: list[Word]) -> tuple[str, str | None]:
     row = sorted(row, key=lambda w: w.x0)
-    lot_idx = next((i for i, w in enumerate(row) if w.text == LOT_LABEL), None)
-    # Pallet id: the value between "Pallet no. :" and the "Lot" label (or
-    # end of line if no Lot label found).
-    pallet_words = [w for w in row if w.x0 > 71 and (lot_idx is None or w.x0 < row[lot_idx].x0)]
-    pallet_id = "".join(w.text for w in pallet_words).strip()
+    normalized = [_marker_text(w.text) for w in row]
+    lot_key = _marker_text(LOT_LABEL)
+    lot_idx = next((i for i, text in enumerate(normalized) if text == lot_key or text.startswith(lot_key)), None)
+
+    pallet_part = row[1:lot_idx] if lot_idx is not None else row[1:]
+    ignored = {"", "no", "pallet", "palletno"}
+    pallet_words = [w.text for w in pallet_part if _marker_text(w.text) not in ignored and w.text != ":"]
+    pallet_id = "".join(pallet_words).strip()
+
     lot_no = None
     if lot_idx is not None:
-        lot_words = [w for w in row[lot_idx:] if w.text not in (LOT_LABEL, "no.", ":")]
-        lot_no = " ".join(w.text for w in lot_words).strip() or None
+        lot_words = []
+        for w in row[lot_idx + 1 :]:
+            marker = _marker_text(w.text)
+            if marker in {"", "no", "lot", "lotno"} or w.text == ":":
+                continue
+            lot_words.append(w.text)
+        lot_no = " ".join(lot_words).strip() or None
     return pallet_id, lot_no
 
 
 def _split_department_article_overflow(raw_row: RawRow) -> None:
-    """When "Department" is long enough to overflow its printed column
-    width, its glyphs can visually overlap the Article code's - observed
-    directly in the sample (e.g. "STATIONERY & EDUTAINMEN1T02313106-00-001")
-    and traced at the character level: it's two separate text runs at
-    near-identical X positions, not a single mangled word. Only applies
-    when the article cell for this row came out empty (i.e. its own words
-    genuinely got swallowed into the department cell) - never overwrites a
-    cleanly-extracted article."""
     dept_cell = raw_row.cells.get("department")
     article_cell = raw_row.cells.get("article")
     if not dept_cell or not dept_cell.text or article_cell is None or article_cell.text:
@@ -125,9 +128,6 @@ def reconstruct_tables(doc: DocumentText) -> list[PalletBlock]:
 
             if kind == "pallet":
                 if open_block is not None:
-                    # Malformed/unexpected: a new pallet line without a
-                    # preceding Total for the previous block. Close it
-                    # defensively rather than merge two pallets' rows.
                     blocks.append(open_block)
                 pallet_id, lot_no = _parse_pallet_line(row)
                 open_block = PalletBlock(pallet_no=pallet_id, lot_no=lot_no, page_start=page.page_number, page_end=page.page_number)
@@ -141,15 +141,26 @@ def reconstruct_tables(doc: DocumentText) -> list[PalletBlock]:
 
             if kind == "total":
                 if open_block is not None and boundaries is not None:
-                    open_block.total = parse_total(row, page.page_number, boundaries, TOTAL_LABEL)
+                    # parse_total needs a literal Total token. Normalize only
+                    # that marker word/run while preserving its geometry.
+                    total_row: list[Word] = []
+                    normalized_once = False
+                    total_key = _marker_text(TOTAL_LABEL)
+                    for w in row:
+                        marker = _marker_text(w.text)
+                        if not normalized_once and (marker == total_key or marker.startswith(total_key)):
+                            total_row.append(Word(text=TOTAL_LABEL, x0=w.x0, top=w.top, x1=w.x1, bottom=w.bottom, page=w.page))
+                            normalized_once = True
+                        else:
+                            total_row.append(w)
+                    open_block.total = parse_total(total_row, page.page_number, boundaries, TOTAL_LABEL)
                     open_block.page_end = page.page_number
                     blocks.append(open_block)
                 open_block = None
                 continue
 
-            # data row
             if open_block is None or boundaries is None:
-                continue  # stray content before the first block; ignore
+                continue
             row_top = min(w.top for w in row)
             raw_row = assign_row(row, page.page_number, row_top, boundaries, plain_columns=_PLAIN_COLUMNS)
             _split_department_article_overflow(raw_row)
