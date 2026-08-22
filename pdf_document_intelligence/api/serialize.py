@@ -38,19 +38,30 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
     if doc["status"] == "complete" and doc.get("meta_json"):
         meta = json.loads(doc["meta_json"])
         stats = row_stats or {}
+        quality = meta.get("quality") or {}
         base.update(
             {
                 "pages": doc["page_count"],
                 "confidence": round(meta["confidence"], 2) if meta.get("confidence") is not None else None,
                 "status_document": meta.get("statusDocument"),
                 "reconciled": meta.get("reconciled"),
+                "qualityScore": quality.get("score"),
+                "qualityBand": quality.get("band"),
+                "qualityBreakdown": quality.get("breakdown", {}),
+                "qualityCounts": {
+                    "rows": quality.get("row_count", 0),
+                    "verified": quality.get("verified_rows", 0),
+                    "needReview": quality.get("review_rows", 0),
+                    "errors": quality.get("error_count", 0),
+                    "warnings": quality.get("warning_count", 0),
+                    "masterMatched": quality.get("master_matched_rows", 0),
+                },
                 "errors": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "error"),
                 "warnings": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "warning"),
                 "rowCount": stats.get("rowCount", 0),
                 "departmentCount": stats.get("departmentCount", 0),
                 "reviewCount": stats.get("reviewCount", 0),
                 "totalAmount": stats.get("totalAmount"),
-                # Date inside the PDF, not the record's upload timestamp.
                 "documentDate": meta.get("documentDate"),
                 "documentDateEvidence": meta.get("documentDateEvidence"),
             }
