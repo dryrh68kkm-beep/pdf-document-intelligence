@@ -43,5 +43,6 @@ def test_no_golden_expected_data_dumps_are_tracked():
 def test_gitignore_blocks_sensitive_runtime_inputs():
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "*.pdf" in ignore
-    assert "data/*.csv" in ignore
-    assert "tests/golden/samples/" in ignore
+    assert "/data/*.csv" in ignore
+    assert "/tests/golden/samples/*.pdf" in ignore
+    assert "/tests/golden/expected/*.json" in ignore
