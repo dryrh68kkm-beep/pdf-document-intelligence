@@ -40,8 +40,9 @@ def make_bigc_pdf(path: Path) -> Path:
             "10.00", "2", "4", "",
         ],
     )
-    # Total label plus declared numeric totals used by reconciliation.
+    # Real layouts declare the number of detail rows immediately after Total.
     page.insert_text((900, 220), "Total", fontsize=8)
+    page.insert_text((980, 220), "1", fontsize=8)
     _write_row(page, 220, xs, ["", "", "", "", "", "", "", "", "", "10.00", "2", "4", ""])
     doc.save(path)
     doc.close()
@@ -72,6 +73,7 @@ def make_bpdc_pdf(path: Path) -> Path:
         ],
     )
     page.insert_text((960, 255), "Total", fontsize=8)
+    page.insert_text((1020, 255), "1", fontsize=8)
     _write_row(page, 255, xs, ["", "", "", "", "", "", "", "", "12.50", "3", "6", ""])
     doc.save(path)
     doc.close()

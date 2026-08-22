@@ -1,12 +1,10 @@
-"""Unit tests for the Department -> Division rollup (display-only - see
-templates/department_groups.py for why this is backed by a real supplied
-master hierarchy rather than a guessed pattern match)."""
+"""Unit tests for Department -> Division rollup using only synthetic test data."""
 from __future__ import annotations
 
 from pdf_document_intelligence.templates.department_groups import major_department_for
 
 
-def test_known_departments_map_to_their_real_division():
+def test_known_departments_map_from_synthetic_hierarchy():
     cases = {
         "BEVERAGE": "DRY FOOD",
         "SWEETED GROCE.1": "DRY FOOD",
@@ -24,22 +22,17 @@ def test_known_departments_map_to_their_real_division():
 
 
 def test_unknown_department_is_its_own_major():
-    """A department name the supplied master hierarchy doesn't cover must
-    never be guessed into a division - it stays its own group."""
-    assert major_department_for("SOME NEW DEPARTMENT NOT IN MASTER DATA") == "SOME NEW DEPARTMENT NOT IN MASTER DATA"
+    assert major_department_for("SOME NEW DEPARTMENT NOT IN TEST HIERARCHY") == "SOME NEW DEPARTMENT NOT IN TEST HIERARCHY"
 
 
-def test_all_bpdc_sample_departments_are_covered():
-    """Every department name the real BPDC sample actually produces
-    (tests/golden/expected/BPDC_91101_190826.json) must resolve to a real
-    division, not fall back to itself - regression guard against the
-    master data file drifting out of sync with what extraction produces."""
-    import json
-    from pathlib import Path
-
-    expected = json.loads(
-        (Path(__file__).parent.parent / "golden" / "expected" / "BPDC_91101_190826.json").read_text(encoding="utf-8")
-    )
-    for dept in expected["departments"]:
-        name = dept["name"]
-        assert major_department_for(name) != name, f"{name!r} has no division mapping in department_divisions.csv"
+def test_synthetic_hierarchy_covers_supported_test_departments():
+    for name in (
+        "BEVERAGE",
+        "HBA",
+        "HOUSEWARE",
+        "FACE & COSMETICS",
+        "BUTCHERY",
+        "SMALL APPLIANCE",
+        "PRESCRIPTION",
+    ):
+        assert major_department_for(name) != name

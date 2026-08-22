@@ -100,10 +100,13 @@ async def upload_document(file: UploadFile, force: bool = False):
 
     try:
         doc = store.create(file.filename, pdf_bytes)
-    except sqlite3.IntegrityError:
+    except sqlite3.DatabaseError as exc:
         # Two concurrent uploads of the same file can both pass the
-        # find_by_hash check before either commits. The unique active-SHA
-        # index is intentionally kept as a final integrity guard.
+        # find_by_hash check before either commits. Depending on sqlite/Python
+        # timing, the unique-index violation may surface as IntegrityError or
+        # its DatabaseError base class. Only normalize this known constraint.
+        if "UNIQUE constraint failed: documents.sha256" not in str(exc):
+            raise
         existing = store.find_by_hash(sha256)
         if existing:
             if force:

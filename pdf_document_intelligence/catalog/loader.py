@@ -1,23 +1,19 @@
-"""Master product catalog: barcode -> authoritative product name.
+"""Master product catalog backed by a private one-time local snapshot.
 
-Sensitive operational master data is intentionally NOT stored in this
-repository. Production users may point the app at an external local file via
-``PDF_INTELLIGENCE_MASTER_CATALOG``. If no external catalog is configured (or
-it is unavailable), the application keeps working with an empty catalog and
-falls back to PDF/OCR evidence; it must never guess product names.
+Production supplies the external CSV only for the initial import. Selected
+fields are compiled into PDF_INTELLIGENCE_DATA_DIR and all later reads use the
+snapshot, so the source master file does not need to remain beside the app and
+is never committed to the repository.
 """
 from __future__ import annotations
 
-import csv
 import functools
-import os
 from pathlib import Path
 
-# Kept only as a backwards-compatible local development location. The path is
-# gitignored and must never contain tracked production/company data.
-DEFAULT_CATALOG_PATH = Path(__file__).parent.parent.parent / "data" / "master_catalog.csv"
-CATALOG_ENV = "PDF_INTELLIGENCE_MASTER_CATALOG"
-CATALOG_ENCODING = "utf-8"
+from pdf_document_intelligence.catalog.snapshot import (
+    import_catalog_snapshot,
+    load_catalog_snapshot,
+)
 
 
 class CatalogEntry:
@@ -30,39 +26,34 @@ class CatalogEntry:
         self.root_code = root_code
 
 
-def _configured_path(path: Path | None = None) -> Path:
-    if path is not None:
-        return path
-    configured = os.getenv(CATALOG_ENV, "").strip()
-    return Path(configured).expanduser() if configured else DEFAULT_CATALOG_PATH
+def _catalog_from_snapshot() -> dict[str, CatalogEntry]:
+    payload = load_catalog_snapshot()
+    catalog: dict[str, CatalogEntry] = {}
+    for row in payload.get("products", []):
+        if not isinstance(row, dict):
+            continue
+        barcode = str(row.get("barcode") or "").strip()
+        name = str(row.get("name") or "").strip()
+        if not barcode or not name:
+            continue
+        catalog[barcode] = CatalogEntry(
+            barcode=barcode,
+            name=name,
+            structure=str(row.get("structure") or "").strip(),
+            root_code=str(row.get("root_code") or "").strip(),
+        )
+    return catalog
 
 
 def load_catalog(path: Path | None = None) -> dict[str, CatalogEntry]:
-    """Load an external catalog when available.
+    """Load catalog data from the internal snapshot.
 
-    Missing master data is a supported, safe state: return an empty mapping so
-    callers fall back to OCR/PDF evidence and human review rather than failing
-    startup or silently inventing values.
+    Passing ``path`` performs a one-time import from that external source when
+    the private snapshot does not yet exist. Existing snapshots are preserved.
     """
-    path = _configured_path(path)
-    if not path.is_file():
-        return {}
-
-    catalog: dict[str, CatalogEntry] = {}
-    with path.open("r", encoding=CATALOG_ENCODING, errors="replace", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            barcode = (row.get("BARCODE") or "").strip()
-            name = (row.get("ART_SV_NAME") or "").strip()
-            if not barcode or not name:
-                continue
-            catalog[barcode] = CatalogEntry(
-                barcode=barcode,
-                name=name,
-                structure=(row.get("SUBCLASS_NAME") or "").strip(),
-                root_code=(row.get("ART_NO") or "").strip(),
-            )
-    return catalog
+    if path is not None:
+        import_catalog_snapshot(Path(path))
+    return _catalog_from_snapshot()
 
 
 @functools.lru_cache(maxsize=1)
