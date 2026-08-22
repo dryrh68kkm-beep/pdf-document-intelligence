@@ -16,6 +16,7 @@ from pdf_document_intelligence.api.rows import prepare_flat_rows
 from pdf_document_intelligence.db.paths import get_pdf_path
 from pdf_document_intelligence.db.repository import Repository, get_repository, new_id
 from pdf_document_intelligence.models.document import DocumentResult
+from pdf_document_intelligence.quality.score import score_quality
 
 
 class DocumentStore:
@@ -55,10 +56,12 @@ class DocumentStore:
         self._repo.update_progress(doc_id, stage, current, total)
 
     def set_complete(self, doc_id: str, result: DocumentResult) -> dict:
+        quality = score_quality(result.tables, result.validation)
         meta = {
             "confidence": result.confidence,
             "statusDocument": result.status,
             "reconciled": result.validation.reconciled,
+            "quality": quality.model_dump(),
             "engineVersion": result.engine_version,
             "ocrEngineVersion": result.ocr_engine_version,
             "templateVersion": result.template_version,
@@ -92,12 +95,6 @@ class DocumentStore:
                 for i in [*result.validation.errors, *result.validation.warnings]
             ],
         }
-        # Prepared (local-master resolution + flatten) before the write so
-        # the actual DB write - marking the document complete and writing
-        # its rows - happens as a single atomic transaction (L2-003): the
-        # two used to be separate commits, leaving a real window where a
-        # killed process left the document stuck at status='complete' with
-        # zero/stale rows.
         flat_rows = prepare_flat_rows(doc_id, result, self._repo)
         return self._repo.complete_document_with_rows(doc_id, result.pages, meta, flat_rows)
 
