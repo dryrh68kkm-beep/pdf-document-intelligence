@@ -284,6 +284,18 @@ button { font-family: inherit; }
 .empty-state .icon { font-size: 40px; margin-bottom: 10px; }
 .empty-state .title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
 
+.processing-hourglass {
+  display: inline-block;
+  transform-origin: center;
+  animation: hourglass-turn 1.35s steps(2, end) infinite;
+}
+@keyframes hourglass-turn {
+  to { transform: rotate(180deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .processing-hourglass { animation: none; }
+}
+
 /* ---------- Toasts / duplicate dialog ---------- */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(10,14,20,0.45); display: none; align-items: center; justify-content: center; z-index: 60; }
 .modal-backdrop.open { display: flex; }
