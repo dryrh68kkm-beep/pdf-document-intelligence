@@ -1,6 +1,7 @@
 // Division -> Department drill-down (step 2 of the Dashboard hierarchy).
 // Clicking a department here hands off to the existing Products view
 // (deptFilter) so Product Detail/Evidence stays the one implementation.
+import { escapeHtml } from "../escape.js";
 
 function fmtNum(n) {
   return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
@@ -25,7 +26,7 @@ function deptRow(d, store, hasAmountData) {
   row.className = "dept-card";
   row.innerHTML = `
     <div class="dept-card-head">
-      <span class="dept-card-name">${d.name}</span>
+      <span class="dept-card-name">${escapeHtml(d.name)}</span>
       ${d.reviewCount > 0 ? `<span class="dept-card-badge warn">${d.reviewCount} ต้องตรวจสอบ</span>` : `<span class="dept-card-badge">✓</span>`}
     </div>
     <div class="dept-card-stat">${d.rowCount} รายการ${hasAmountData ? ` · ${fmtBaht(d.amount)}` : ""}</div>
@@ -61,7 +62,7 @@ export function renderDivisionDetail(container, store) {
   container.innerHTML = `
     <div class="back-link" id="backToDashboard">‹ กลับไปหน้า Dashboard</div>
     <div class="workspace-header">
-      <div class="workspace-title">${divisionDetail.divisionCode} ${divisionDetail.divisionName}</div>
+      <div class="workspace-title">${escapeHtml(divisionDetail.divisionCode)} ${escapeHtml(divisionDetail.divisionName)}</div>
       <div class="workspace-sub">${divisionDetail.departments.length} แผนก</div>
     </div>
     ${kpis}

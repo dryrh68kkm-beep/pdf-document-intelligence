@@ -21,6 +21,24 @@ from pdf_document_intelligence.templates.packing_list_bigc import COLUMNS
 
 _HEADER_FONT = Font(bold=True)
 
+_FORMULA_TRIGGER_CHARS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(value: object) -> object:
+    """Neutralizes Excel/CSV formula injection (OWASP): every string value
+    written here ultimately comes from an untrusted source - PDF/OCR text
+    or an imported master-catalog CSV - so a product name of e.g.
+    '=HYPERLINK(...)' must not become a live formula for whoever opens the
+    exported file. A leading apostrophe forces Excel to treat the cell as
+    text; it is not shown in the displayed value."""
+    if isinstance(value, str) and value.startswith(_FORMULA_TRIGGER_CHARS):
+        return "'" + value
+    return value
+
+
+def _safe_row(row: list[object]) -> list[object]:
+    return [_safe_cell(v) for v in row]
+
 
 def _write_header(ws: Worksheet, headers: list[str]) -> None:
     ws.append(headers)
@@ -49,7 +67,7 @@ def _write_data_sheet(ws: Worksheet, docs: list[dict], multi: bool = False) -> N
             values.append("YES" if row_corrected else "")
             values.append("YES" if product["suspectedNonProduct"] else "")
             values.append(", ".join(product.get("nonProductReasons", [])))
-            ws.append(values)
+            ws.append(_safe_row(values))
     offset = 2 + (1 if multi else 0)
     code_col_indices = [i + offset for i, c in enumerate(COLUMNS) if c.field_type == "code"]
     for col_idx in code_col_indices:
@@ -64,7 +82,7 @@ def _write_issues_sheet(ws: Worksheet, docs: list[dict], multi: bool = False) ->
         for issue in doc.get("validationIssues", []):
             row = [doc["filename"]] if multi else []
             row += [issue["severity"], issue["code"], issue["table"], issue["rowIndex"], issue["field"], issue["message"]]
-            ws.append(row)
+            ws.append(_safe_row(row))
 
 
 def _write_summary_sheet(ws: Worksheet, docs: list[dict]) -> None:
@@ -83,14 +101,14 @@ def _write_summary_sheet(ws: Worksheet, docs: list[dict]) -> None:
         rows_needing_review = sum(1 for p in products if p["reviewRequired"])
         issues = doc.get("validationIssues", [])
         ws.append(
-            [
+            _safe_row([
                 doc["filename"], doc.get("pages"), total_rows, low_conf_rows, rows_needing_review,
                 sum(1 for i in issues if i["severity"] == "error"),
                 sum(1 for i in issues if i["severity"] == "warning"),
                 "PASSED" if doc.get("reconciled") else "FAILED",
                 doc.get("confidence"), doc.get("status_document"),
                 doc.get("engineVersion"), doc.get("templateVersion"),
-            ]
+            ])
         )
 
 
@@ -101,7 +119,7 @@ def _write_audit_sheet(ws: Worksheet, docs: list[dict], multi: bool = False) -> 
         for entry in doc.get("processingLog", []):
             row = [doc["filename"]] if multi else []
             row += [entry["step"], entry["detail"], entry.get("timestamp"), entry.get("durationMs")]
-            ws.append(row)
+            ws.append(_safe_row(row))
 
 
 def export_to_excel(doc: dict, output_path: Path) -> Path:

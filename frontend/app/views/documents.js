@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
+import { escapeHtml } from "../escape.js";
 
 let searchQuery = "";
 let statusFilter = "all";
@@ -90,7 +91,7 @@ export function renderDocuments(container, store) {
       </div>
     </div>
     <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-      <input class="search-input" id="docSearch" type="search" placeholder="ค้นหาชื่อไฟล์ / วันที่ / ประเภท" value="${searchQuery}">
+      <input class="search-input" id="docSearch" type="search" placeholder="ค้นหาชื่อไฟล์ / วันที่ / ประเภท" value="${escapeHtml(searchQuery)}">
       <select class="filter-select" id="docStatusFilter">
         <option value="all"${statusFilter === "all" ? " selected" : ""}>ทุกสถานะ</option>
         <option value="complete"${statusFilter === "complete" ? " selected" : ""}>พร้อมใช้งาน</option>
@@ -184,9 +185,9 @@ export function renderDocuments(container, store) {
       <td>
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="status-dot ${doc.status}"></span>
-          <span class="doc-name">${doc.filename}</span>
+          <span class="doc-name">${escapeHtml(doc.filename)}</span>
         </div>
-        ${doc.status === "error" ? `<div class="doc-meta">${doc.error || "unknown error"}</div>` : doc.status === "processing" ? `<div class="doc-meta">${doc.progress?.stage || "กำลังประมวลผล"} ${doc.progress?.total ? `(${doc.progress.current}/${doc.progress.total})` : ""}</div>` : ""}
+        ${doc.status === "error" ? `<div class="doc-meta">${escapeHtml(doc.error) || "unknown error"}</div>` : doc.status === "processing" ? `<div class="doc-meta">${escapeHtml(doc.progress?.stage) || "กำลังประมวลผล"} ${doc.progress?.total ? `(${doc.progress.current}/${doc.progress.total})` : ""}</div>` : ""}
       </td>
       <td><span class="type-tag ${typeTagClass(doc.documentType)}">${DOCUMENT_TYPE_LABEL[doc.documentType] || "ไม่ทราบ"}</span></td>
       <td>${fmtDate(doc.documentDate)}</td>

@@ -1,6 +1,7 @@
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { icons } from "../icons.js";
+import { escapeHtml } from "../escape.js";
 
 // Conservative classification (see pdf_document_intelligence/catalog/classify.py):
 // only flags on signals specific enough that a false positive on a real
@@ -25,7 +26,7 @@ let sortDir = 1;
 
 function fmt(v) {
   if (v === null || v === undefined || v === "") return "—";
-  return v;
+  return escapeHtml(v);
 }
 
 function sortIcon(key) {

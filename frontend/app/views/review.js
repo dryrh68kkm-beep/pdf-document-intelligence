@@ -1,6 +1,7 @@
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { icons } from "../icons.js";
+import { escapeHtml } from "../escape.js";
 
 const REASON_LABELS = {
   INVALID_IDENTIFIER: "รหัสสินค้าไม่ถูกต้อง",
@@ -105,7 +106,7 @@ function reasonText(product) {
 
 function fmt(v) {
   if (v === null || v === undefined || v === "") return "—";
-  return v;
+  return escapeHtml(v);
 }
 
 function fmtPct(f) {
@@ -175,12 +176,12 @@ export function renderReview(container, store) {
     const issueFields = issues.length ? [...new Set(issues.map((x) => x.field))].join(", ") : primaryFieldName;
     reasonHost.innerHTML = `
       <div class="review-detail-grid">
-        <div><span class="dp-label">สินค้า</span><div class="dp-value">${row.fields?.name?.value ?? "—"}</div></div>
-        <div><span class="dp-label">Article</span><div class="dp-value mono">${row.fields?.article?.value ?? "—"}</div></div>
-        <div><span class="dp-label">Barcode</span><div class="dp-value mono">${row.fields?.barcode?.value ?? "—"}</div></div>
-        <div><span class="dp-label">Field ที่มีปัญหา</span><div class="dp-value">${issueFields}</div></div>
-        <div><span class="dp-label">ค่า OCR อ่านได้</span><div class="dp-value">${fv?.ocrRaw ?? "—"}</div></div>
-        <div><span class="dp-label">ค่าปัจจุบัน (Master/PDF)</span><div class="dp-value">${fv?.value ?? "—"}</div></div>
+        <div><span class="dp-label">สินค้า</span><div class="dp-value">${escapeHtml(row.fields?.name?.value) || "—"}</div></div>
+        <div><span class="dp-label">Article</span><div class="dp-value mono">${escapeHtml(row.fields?.article?.value) || "—"}</div></div>
+        <div><span class="dp-label">Barcode</span><div class="dp-value mono">${escapeHtml(row.fields?.barcode?.value) || "—"}</div></div>
+        <div><span class="dp-label">Field ที่มีปัญหา</span><div class="dp-value">${escapeHtml(issueFields)}</div></div>
+        <div><span class="dp-label">ค่า OCR อ่านได้</span><div class="dp-value">${escapeHtml(fv?.ocrRaw) || "—"}</div></div>
+        <div><span class="dp-label">ค่าปัจจุบัน (Master/PDF)</span><div class="dp-value">${escapeHtml(fv?.value) || "—"}</div></div>
         <div><span class="dp-label">ความมั่นใจ</span><div class="dp-value mono">${fv?.ocrConfidence ?? fv?.confidence ? Math.round((fv.ocrConfidence ?? fv.confidence) * 100) + "%" : "—"}</div></div>
         <div><span class="dp-label">หน้า PDF</span><div class="dp-value mono">${row.page ?? "—"}</div></div>
       </div>

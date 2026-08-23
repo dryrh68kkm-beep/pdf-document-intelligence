@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { escapeHtml } from "../escape.js";
 
 const FLAG_LABEL = {
   TEXT_LAYER_UNRELIABLE: "PDF ต้นฉบับ: font ที่ฝังมาไม่มี glyph ของสระบน/ล่างและวรรณยุกต์ไทย — ใช้ OCR อ่านจากภาพแทน",
@@ -46,9 +47,9 @@ function fieldBlock(name, fv, editable) {
   let valueHtml;
   if (inEdit) {
     const val = pendingEdits[name] !== undefined ? pendingEdits[name] : (fv.value ?? "");
-    valueHtml = `<input class="dp-edit-input" data-field="${name}" type="text" value="${String(val).replace(/"/g, "&quot;")}" />`;
+    valueHtml = `<input class="dp-edit-input" data-field="${name}" type="text" value="${escapeHtml(val)}" />`;
   } else {
-    valueHtml = `<div class="dp-value${isThai ? " thai" : ""}">${fv.value ?? "—"}${fv.corrected ? ' <span class="dp-corrected-badge">แก้ไขแล้ว</span>' : ""}</div>`;
+    valueHtml = `<div class="dp-value${isThai ? " thai" : ""}">${fv.value == null ? "—" : escapeHtml(fv.value)}${fv.corrected ? ' <span class="dp-corrected-badge">แก้ไขแล้ว</span>' : ""}</div>`;
   }
 
   let html = `
@@ -66,18 +67,18 @@ function fieldBlock(name, fv, editable) {
         <div class="dp-evidence-compare">
           <div class="dp-evidence-row dp-evidence-current">
             <span class="dp-evidence-tag">ค่าปัจจุบัน (ใช้จริง)</span>
-            <span class="dp-evidence-val${isThai ? " thai" : ""}">${fv.value ?? "—"}</span>
+            <span class="dp-evidence-val${isThai ? " thai" : ""}">${fv.value == null ? "—" : escapeHtml(fv.value)}</span>
             ${confidencePct != null ? `<span class="dp-evidence-conf">${confidencePct}% มั่นใจ</span>` : ""}
           </div>
           ${fv.ocrRaw ? `
           <div class="dp-evidence-row${mismatch ? " dp-evidence-mismatch" : ""}">
             <span class="dp-evidence-tag">OCR อ่านได้</span>
-            <span class="dp-evidence-val thai">${fv.ocrRaw}</span>
+            <span class="dp-evidence-val thai">${escapeHtml(fv.ocrRaw)}</span>
             ${fv.ocrConfidence != null ? `<span class="dp-evidence-conf">${Math.round(fv.ocrConfidence * 100)}%</span>` : ""}
           </div>` : ""}
           <div class="dp-evidence-row">
             <span class="dp-evidence-tag">Raw PDF text</span>
-            <span class="dp-evidence-val${isThai ? " thai" : ""}">${fv.raw || "—"}</span>
+            <span class="dp-evidence-val${isThai ? " thai" : ""}">${escapeHtml(fv.raw) || "—"}</span>
           </div>
         </div>
         <ul class="dp-reasons">${(fv.flags || [])
@@ -108,8 +109,8 @@ function renderHistory(container, rowId) {
         return `
           <div class="dp-audit-entry">
             <div class="dp-audit-time">${time}</div>
-            <div class="dp-audit-change"><b>${label}</b>: ${h.oldValue ?? "—"} → ${h.newValue ?? "—"}${isUndo ? " (ย้อนกลับ)" : ""}</div>
-            ${h.reason && h.reason !== "undo" ? `<div class="dp-audit-reason">เหตุผล: ${h.reason}</div>` : ""}
+            <div class="dp-audit-change"><b>${escapeHtml(label)}</b>: ${h.oldValue == null ? "—" : escapeHtml(h.oldValue)} → ${h.newValue == null ? "—" : escapeHtml(h.newValue)}${isUndo ? " (ย้อนกลับ)" : ""}</div>
+            ${h.reason && h.reason !== "undo" ? `<div class="dp-audit-reason">เหตุผล: ${escapeHtml(h.reason)}</div>` : ""}
             ${!isUndo ? `<button class="dp-undo-btn" data-correction-id="${h.id}">ย้อนกลับ</button>` : ""}
           </div>`;
       })
@@ -136,11 +137,11 @@ export function renderProductDetail(container, product, store) {
     <div class="side-panel-head">
       <div>
         <div class="side-panel-title">รายละเอียดสินค้า</div>
-        <div class="workspace-sub">${product.department} · ${product.docFilename} · หน้า ${product.page}</div>
+        <div class="workspace-sub">${escapeHtml(product.department)} · ${escapeHtml(product.docFilename)} · หน้า ${product.page}</div>
       </div>
       <button class="close" id="dpClose" aria-label="ปิด" type="button">✕</button>
     </div>
-    ${product.suspectedNonProduct ? `<div class="dp-badge">🎁 สงสัยว่าไม่ใช่สินค้า: ${(product.nonProductReasons || []).join(", ")}</div>` : ""}
+    ${product.suspectedNonProduct ? `<div class="dp-badge">🎁 สงสัยว่าไม่ใช่สินค้า: ${escapeHtml((product.nonProductReasons || []).join(", "))}</div>` : ""}
     <div class="dp-edit-toolbar">
       ${editing ? "" : `<button class="btn" id="dpEditToggle" type="button">แก้ไข</button>`}
       ${!editing && product.reviewRequired ? `<button class="btn btn-primary" id="dpMarkResolved" type="button">✓ ยืนยันว่าถูกต้อง (Mark Resolved)</button>` : ""}
@@ -170,7 +171,7 @@ export function renderProductDetail(container, product, store) {
           <option value="">— เลือกเหตุผล —</option>
           ${REASON_PRESETS.map((r) => `<option value="${r}" ${pendingReason === r ? "selected" : ""}>${r}</option>`).join("")}
         </select>
-        <textarea class="dp-reason-text" id="dpReasonText" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)">${pendingReason && !REASON_PRESETS.includes(pendingReason) ? pendingReason : ""}</textarea>
+        <textarea class="dp-reason-text" id="dpReasonText" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)">${pendingReason && !REASON_PRESETS.includes(pendingReason) ? escapeHtml(pendingReason) : ""}</textarea>
       </div>
       <div class="dp-save-bar">
         <button class="btn" id="dpCancelEdit" type="button">ยกเลิก</button>
