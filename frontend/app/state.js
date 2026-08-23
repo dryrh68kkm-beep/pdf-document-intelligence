@@ -99,6 +99,11 @@ class Store {
       dashboardOverview: null,
       divisionSummary: null,
       divisionDetail: null,
+      // The redesigned Dashboard shows one document date's products at a
+      // time (see views/dashboard.js) - null means "not chosen yet",
+      // defaulted in _doRefreshAll() to the most recent date with a
+      // completed document, without clobbering an explicit user choice.
+      dashboardSelectedDate: null,
     };
     this._listeners = [];
     this._divisionCache = new Map();
@@ -188,11 +193,23 @@ class Store {
       ? previousDocumentId
       : visibleDocuments[0]?.id ?? null;
 
+    // Default the Dashboard's selected date to the most recent document
+    // date with a completed document, but only the first time - once the
+    // user has navigated (or a date was already picked), a background
+    // refresh must not silently jump them back to "today".
+    const dashboardSelectedDate = this.state.dashboardSelectedDate
+      ?? [...documents]
+        .filter((doc) => doc.status === "complete" && doc.documentDate)
+        .map((doc) => doc.documentDate)
+        .sort()
+        .at(-1)
+      ?? null;
+
     // Keep existing per-document Division summaries instead of clearing the
     // whole cache on every refresh. Deleted/reprocessing IDs are removed; an
     // edited document is invalidated explicitly before refreshAll().
     this._pruneDivisionCache(documents);
-    this.set({ documents, dashboard, products, currentDocumentId, dashboardOverview: null });
+    this.set({ documents, dashboard, products, currentDocumentId, dashboardSelectedDate, dashboardOverview: null });
     // Combined into a single set() instead of two independent ones (each of
     // refreshDivisions()/refreshDashboardOverview() used to call this.set()
     // on its own, so whichever Promise settled first fired a full re-render
@@ -281,6 +298,12 @@ class Store {
 
   openPanel(panel) { this.set({ panel }); }
   closePanel() { this.set({ panel: null }); }
+
+  // Purely local - the Dashboard's day navigator pages through dates over
+  // the already-loaded documents/products, no fetch needed.
+  setDashboardSelectedDate(dateStr) {
+    this.set({ dashboardSelectedDate: dateStr });
+  }
 
   navigate(view, extra = {}) {
     this.set({ view, panel: null, ...extra });

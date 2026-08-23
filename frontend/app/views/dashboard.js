@@ -1,35 +1,16 @@
 import { icons } from "../icons.js";
 import { escapeHtml } from "../escape.js";
+import { renderDataTable } from "../components/dataTable.js";
+import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 
-// Executive Overview / Dashboard: everything on this page is token-driven
-// (styles.css) and reads only data the backend already computes -
-// aggregate.py's build_dashboard_state() and divisions.py's
-// build_division_summary(), both of which are the single source of truth
-// the app already relies on elsewhere. No new backend call is introduced
-// here. The processing/error/animated quality-banner states (qualityBanner
-// below) are unchanged from the prior redesign pass - only the layout
-// around them changed.
-
-const DIVISION_VARS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6"];
-
-const QUALITY_BAND = {
-  VERIFIED: { label: "เชื่อถือได้", tone: "ok" },
-  GOOD: { label: "คุณภาพดี", tone: "ok" },
-  NEED_REVIEW: { label: "ต้องตรวจสอบ", tone: "warn" },
-  HIGH_RISK: { label: "เสี่ยงสูง", tone: "critical" },
-};
-
-const DOCUMENT_TYPE_LABEL = {
-  packing_list_bigc_cdc: "Big C",
-  packing_list_bpdc: "BPDC",
-  UNKNOWN_LAYOUT: "ไม่ทราบประเภท",
-};
-
-const DONUT_COLORS = ["var(--accent)", "var(--warning)", "var(--purple)", "var(--success)", "var(--text-faint)"];
-
-function divisionColor(index) {
-  return `var(${DIVISION_VARS[index % DIVISION_VARS.length]})`;
-}
+// Dashboard redesign (user request): the page's job is to answer, the
+// instant it opens, "today's products -> which department -> how many ->
+// how much" for one document date at a time (navigable day by day), not to
+// be a general-purpose status board. Per-document quality/coverage detail
+// still exists - it just lives on Documents/Review where it's actionable,
+// collapsed here into one slim status strip. Everything below reads only
+// store.state.products/documents, already loaded by refreshAll() - no new
+// backend call.
 
 function fmtNum(value) {
   return (value ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
@@ -39,119 +20,119 @@ function fmtBaht(value) {
   return (value ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtDate(value) {
-  if (!value) return "ไม่พบวันที่เอกสาร";
-  return new Date(`${value}T00:00:00`).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+function fmtQty(value) {
+  if (value == null) return "—";
+  return value % 1 === 0 ? String(value) : value.toFixed(2);
 }
 
-function documentTypeLabel(documentType) {
-  return DOCUMENT_TYPE_LABEL[documentType] || "ไม่ทราบประเภท";
+function fmtDateLabel(dateStr) {
+  if (!dateStr) return "—";
+  return new Date(`${dateStr}T00:00:00`).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
 
-// Unchanged since PR #42 - processing / error / scored / unscored states,
-// including the animated hourglass and pulsing status dot.
-function qualityBanner(doc) {
-  if (!doc || doc.status === "processing") {
-    const stage = doc?.progress?.stage || "กำลังเริ่มประมวลผล";
-    const progressText = doc?.progress?.total ? ` (${fmtNum(doc.progress.current)}/${fmtNum(doc.progress.total)})` : "";
-    return `<div class="quality-banner quality-band-processing">
-      <div class="quality-banner-score processing-hourglass" role="status" aria-label="กำลังประมวลผล">⏳</div>
-      <div><div class="quality-banner-label">กำลังประมวลผลเอกสาร</div><div class="quality-banner-sub">${escapeHtml(stage)}${progressText}</div></div>
+function shiftIsoDate(dateStr, delta) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function kpiIconCard(value, label, icon, tone) {
+  return `
+    <div class="kpi-icon-card">
+      <div class="kpi-icon-badge tone-${tone}">${icon}</div>
+      <div class="kpi-value">${value}</div>
+      <div class="kpi-label">${label}</div>
+    </div>`;
+}
+
+// Slim status strip replacing the old per-document coverage/quality panels -
+// just enough to notice something needs attention and jump to where it's
+// actually actionable (Documents/Review).
+function statusStrip(documents) {
+  const processing = documents.filter((d) => d.status === "processing");
+  if (processing.length) {
+    return `<div class="dash-status-strip tone-warn">
+      <span class="processing-hourglass" aria-hidden="true">⏳</span>
+      กำลังประมวลผล ${fmtNum(processing.length)} ไฟล์
+      <button type="button" class="dash-panel-link" data-strip-nav="documents">ดูที่ Documents →</button>
     </div>`;
   }
-  if (doc.status === "error") {
-    return `<div class="quality-banner quality-band-critical">
-      <div class="quality-banner-score">⚠️</div>
-      <div><div class="quality-banner-label">อ่านไฟล์ไม่สำเร็จ</div><div class="quality-banner-sub">${escapeHtml(doc.error || "")}</div></div>
+  const errored = documents.filter((d) => d.status === "error");
+  if (errored.length) {
+    return `<div class="dash-status-strip tone-critical">
+      ⚠️ อ่านไฟล์ไม่สำเร็จ ${fmtNum(errored.length)} ไฟล์
+      <button type="button" class="dash-panel-link" data-strip-nav="documents">ดูที่ Documents →</button>
     </div>`;
   }
-  if (doc.qualityScore == null) {
-    return `<div class="quality-banner quality-band-unknown">
-      <div class="quality-banner-score">—</div>
-      <div><div class="quality-banner-label">ยังไม่มีคะแนนคุณภาพ</div><div class="quality-banner-sub">เอกสารนี้ยังไม่มีข้อมูลคุณภาพ</div></div>
+  const reviewCount = documents.reduce((sum, d) => sum + (d.qualityCounts?.needReview ?? 0), 0);
+  if (reviewCount > 0) {
+    return `<div class="dash-status-strip tone-warn">
+      ต้องตรวจสอบทั้งหมด ${fmtNum(reviewCount)} รายการ
+      <button type="button" class="dash-panel-link" data-strip-nav="review">ดูที่ Review →</button>
     </div>`;
   }
-  const band = QUALITY_BAND[doc.qualityBand] || { label: doc.qualityBand || "—", tone: "warn" };
-  return `<div class="quality-banner quality-band-${band.tone}">
-    <div class="quality-banner-score">${doc.qualityScore}<span>/100</span></div>
-    <div>
-      <div class="quality-banner-label">${escapeHtml(band.label)}</div>
-      <div class="quality-banner-sub">${fmtNum(doc.qualityCounts?.verified ?? 0)} ยืนยันแล้ว · ${fmtNum(doc.qualityCounts?.needReview ?? 0)} ต้องตรวจสอบ · ${fmtNum(doc.qualityCounts?.errors ?? 0)} error</div>
-    </div>
-  </div>`;
+  return `<div class="dash-status-strip tone-ok">✓ ทุกเอกสารพร้อมใช้งาน ไม่มีรายการต้องตรวจสอบ</div>`;
 }
 
-function kpiCard(value, label, tone = "") {
-  return `<div class="kpi-card"><div class="kpi-value${tone ? " " + tone : ""}">${value}</div><div class="kpi-label">${label}</div></div>`;
-}
-
-function heroFact(icon, label, value) {
-  return `<div class="doc-hero-fact"><span class="doc-hero-fact-label">${icon} ${label}</span><span class="doc-hero-fact-value">${value}</span></div>`;
-}
-
-function heroKpi(value, label) {
-  return `<div class="doc-hero-kpi"><div class="doc-hero-kpi-value">${value}</div><div class="doc-hero-kpi-label">${label}</div></div>`;
-}
-
-function renderDonut(host, documents) {
-  const counts = new Map();
-  documents.forEach((d) => {
-    const label = documentTypeLabel(d.documentType);
-    counts.set(label, (counts.get(label) || 0) + 1);
-  });
-  const entries = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  const total = documents.length;
-
-  if (!total) {
-    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ยังไม่มีเอกสาร</div>`;
-    return;
+function departmentValueBars(rows, amountAvailable) {
+  if (!rows.length) {
+    return `<div class="workspace-sub" style="padding:6px 0;">ไม่มีสินค้าเข้าสำหรับวันที่นี้</div>`;
   }
-
-  let offset = 0;
-  const segments = entries
-    .map(([label, count], i) => {
-      const pct = (count / total) * 100;
-      const seg = `${DONUT_COLORS[i % DONUT_COLORS.length]} ${offset}% ${offset + pct}%`;
-      offset += pct;
-      return seg;
-    })
-    .join(", ");
-
-  host.innerHTML = `
-    <div class="donut-wrap">
-      <div style="width:120px;height:120px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
-        <div style="width:78px;height:78px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;">
-          <div class="mono" style="font-size:20px;font-weight:700;">${total}</div>
-          <div style="font-size:10.5px;color:var(--text-faint);">เอกสาร</div>
+  const totals = new Map();
+  for (const row of rows) {
+    const dept = row.department || "ไม่ระบุแผนก";
+    const amount = row.fields.amount?.value;
+    totals.set(dept, (totals.get(dept) || 0) + (amount ?? 0));
+  }
+  const entries = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  const max = Math.max(...entries.map(([, amount]) => amount), 1);
+  return entries
+    .map(
+      ([dept, amount]) => `
+      <div class="recon-summary-row dept-bar-row" data-dept="${escapeHtml(dept)}">
+        <div class="recon-summary-head">
+          <span class="recon-summary-name">${escapeHtml(dept)}</span>
+          <span class="recon-summary-frac">${amountAvailable ? fmtBaht(amount) + " ฿" : "—"}</span>
         </div>
-      </div>
-      <div class="donut-legend">
-        ${entries
-          .map(
-            ([label, count], i) => `
-          <div class="donut-legend-row">
-            <span class="donut-legend-dot" style="background:${DONUT_COLORS[i % DONUT_COLORS.length]};"></span>
-            <span class="donut-legend-name">${escapeHtml(label)}</span>
-            <span class="donut-legend-count">${count} · ${Math.round((count / total) * 100)}%</span>
-          </div>`
-          )
-          .join("")}
-      </div>
-    </div>
-  `;
+        <div class="recon-track"><div class="recon-fill" style="width:${amountAvailable ? Math.max(2, Math.round((amount / max) * 100)) : 0}%;"></div></div>
+      </div>`
+    )
+    .join("");
 }
+
+const COLUMNS = [
+  { key: "name", label: "ชื่อสินค้า", render: (r) => escapeHtml(r.fields.name?.value) || "—" },
+  {
+    key: "identifier",
+    label: "Article / Barcode",
+    render: (r) => `
+      <div class="mono" style="font-size:12px;">${escapeHtml(r.fields.article?.value) || "—"}</div>
+      <div class="mono" style="font-size:11px;color:var(--text-faint);">${escapeHtml(r.fields.barcode?.value) || "—"}</div>`,
+  },
+  { key: "dept", label: "แผนก", render: (r) => escapeHtml(r.department) || "—" },
+  { key: "qty", label: "จำนวน", align: "num", render: (r) => `<span class="mono">${fmtQty(r.fields.sku_qty?.value)}</span>` },
+  {
+    key: "unitPrice", label: "ราคาต่อหน่วย", align: "num",
+    render: (r) => `<span class="mono">${r.fields.unit_price?.value != null ? fmtBaht(r.fields.unit_price.value) : "—"}</span>`,
+  },
+  {
+    key: "amount", label: "มูลค่ารวม", align: "num",
+    render: (r) => `<span class="mono">${r.fields.amount?.value != null ? fmtBaht(r.fields.amount.value) : "—"}</span>`,
+  },
+];
+
+// Module-level pagination state (same pattern as products.js/review.js) -
+// reset to page 1 whenever the selected date actually changes.
+let page = 1;
+let pageSize = PAGE_SIZE_OPTIONS[0];
+let lastRenderedDate = null;
 
 export function renderDashboard(container, store) {
-  const {
-    documents,
-    currentDocumentId,
-    divisionSummary,
-    dashboard,
-    dashboardOverview,
-    dashboardDateFrom,
-    dashboardDateTo,
-    dashboardDivisionFilter,
-  } = store.state;
+  const { documents, products, panel, dashboardSelectedDate } = store.state;
 
   if (!documents.length) {
     container.innerHTML = `
@@ -165,220 +146,100 @@ export function renderDashboard(container, store) {
     return;
   }
 
-  const currentDoc = documents.find((d) => d.id === currentDocumentId) || documents[0];
-  const docOptions = documents
-    .map((d) => `<option value="${escapeHtml(d.id)}"${d.id === currentDoc?.id ? " selected" : ""}>${escapeHtml(d.filename)}</option>`)
-    .join("");
+  const selectedDate = dashboardSelectedDate || todayIso();
+  if (selectedDate !== lastRenderedDate) {
+    page = 1;
+    lastRenderedDate = selectedDate;
+  }
+
+  const docById = new Map(documents.map((d) => [d.id, d]));
+  const todaysRows = products.filter((p) => {
+    const doc = docById.get(p.docId);
+    return doc && doc.status === "complete" && doc.documentDate === selectedDate && !p.suspectedNonProduct;
+  });
+
+  const deptSet = new Set(todaysRows.map((p) => p.department).filter(Boolean));
+  const amounts = todaysRows.map((p) => p.fields.amount?.value).filter((v) => v != null);
+  const amountAvailable = amounts.length > 0;
+  const totalAmount = amounts.reduce((a, b) => a + b, 0);
 
   container.innerHTML = `
     <div class="workspace-header">
       <div class="workspace-title">Dashboard</div>
-      <div class="workspace-sub">ภาพรวมข้อมูลการประมวลผลเอกสาร</div>
+      <div class="workspace-sub">สรุปสินค้าที่เข้าประจำวัน</div>
     </div>
 
-    <label class="doc-selector-label" for="dashDocSelect">เอกสารปัจจุบัน</label>
-    <select class="doc-selector" id="dashDocSelect">${docOptions}</select>
+    <div id="dashStatusStrip"></div>
 
-    <div class="dash-filters" id="dashFilters">
-      <div class="dash-filter">
+    <div class="dash-date-nav">
+      <button type="button" class="icon-btn-sm" id="dashPrevDate" aria-label="วันก่อนหน้า">${icons.chevronLeft}</button>
+      <div class="dash-date-current">
         <span class="nav-icon" aria-hidden="true">${icons.calendar}</span>
-        <label for="dashDateFrom">จาก</label>
-        <input id="dashDateFrom" type="date" value="${escapeHtml(dashboardDateFrom)}">
-        <span>–</span>
-        <label for="dashDateTo">ถึง</label>
-        <input id="dashDateTo" type="date" value="${escapeHtml(dashboardDateTo)}">
+        <span class="dash-date-label">${fmtDateLabel(selectedDate)}</span>
       </div>
+      <button type="button" class="icon-btn-sm" id="dashNextDate" aria-label="วันถัดไป">${icons.chevronRight}</button>
+      <input type="date" id="dashDateJump" class="dash-date-jump" value="${escapeHtml(selectedDate)}" aria-label="เลือกวันที่" />
     </div>
 
-    <div id="dashHero"></div>
-
-    <div id="dashOverviewKpis"></div>
-
-    <div class="dash-3col">
-      <div class="dash-panel">
-        <div class="dash-panel-head"><span class="dash-panel-title">Data Quality</span></div>
-        <div id="dashQuality"></div>
-      </div>
-      <div class="dash-panel">
-        <div class="dash-panel-head">
-          <span class="dash-panel-title">Reconciliation Summary</span>
-          <span class="dash-panel-link" id="dashReconLink">ดูรายละเอียด →</span>
-        </div>
-        <div id="dashReconciliation"></div>
-      </div>
-      <div class="dash-panel">
-        <div class="dash-panel-head"><span class="dash-panel-title">Document Type</span></div>
-        <div id="dashDonut"></div>
-      </div>
+    <div class="kpi-icon-row">
+      ${kpiIconCard(fmtNum(todaysRows.length), "สินค้าวันนี้ (รายการ)", icons.box, "accent")}
+      ${kpiIconCard(amountAvailable ? fmtBaht(totalAmount) + " ฿" : "—", "มูลค่ารวมวันนี้", icons.trendingUp, "success")}
+      ${kpiIconCard(fmtNum(deptSet.size), "แผนกที่มีสินค้าเข้า", icons.building, "purple")}
     </div>
 
-    <div class="section-title">Division Overview</div>
-    <div id="dashDivisions"></div>
+    <div class="section-title">รายการสินค้าวันนี้</div>
+    <div id="dashProductsTable"></div>
+    <div id="dashProductsPagination"></div>
+
+    <div class="section-title">มูลค่าตามแผนกวันนี้</div>
+    <div class="dash-panel" id="dashDeptBars"></div>
   `;
 
-  container.querySelector("#dashDocSelect").addEventListener("change", (e) => {
-    store.selectDashboardDocument(e.target.value);
+  container.querySelector("#dashStatusStrip").innerHTML = statusStrip(documents);
+  container.querySelector('[data-strip-nav="documents"]')?.addEventListener("click", () => store.navigate("documents"));
+  container.querySelector('[data-strip-nav="review"]')?.addEventListener("click", () => store.navigate("review"));
+
+  container.querySelector("#dashPrevDate").addEventListener("click", () => {
+    store.setDashboardSelectedDate(shiftIsoDate(selectedDate, -1));
   });
-  container.querySelector("#dashReconLink")?.addEventListener("click", () => store.navigate("departments"));
+  container.querySelector("#dashNextDate").addEventListener("click", () => {
+    store.setDashboardSelectedDate(shiftIsoDate(selectedDate, 1));
+  });
+  container.querySelector("#dashDateJump").addEventListener("change", (e) => {
+    if (e.target.value) store.setDashboardSelectedDate(e.target.value);
+  });
 
-  const applyFilters = () => {
-    const dateFrom = container.querySelector("#dashDateFrom")?.value || "";
-    const dateTo = container.querySelector("#dashDateTo")?.value || "";
-    store.setDashboardOverviewFilters({ dateFrom, dateTo });
-  };
-  container.querySelector("#dashDateFrom")?.addEventListener("change", applyFilters);
-  container.querySelector("#dashDateTo")?.addEventListener("change", applyFilters);
+  const tableHost = container.querySelector("#dashProductsTable");
+  const paginationHost = container.querySelector("#dashProductsPagination");
+  const sortedRows = [...todaysRows].sort((a, b) => {
+    const av = a.fields.amount?.value;
+    const bv = b.fields.amount?.value;
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return bv - av;
+  });
 
-  // ---- Combined current-document hero card (icon + status + facts + KPIs) ----
-  const heroHost = container.querySelector("#dashHero");
-  if (currentDoc) {
-    const statusLabel = currentDoc.status === "complete" ? "พร้อมใช้งาน" : currentDoc.status === "error" ? "ผิดพลาด" : "กำลังประมวลผล";
-    const totals = divisionSummary?.documentTotals;
-    heroHost.innerHTML = `
-      <div class="doc-hero">
-        <div class="doc-hero-icon" aria-hidden="true">PDF</div>
-        <div class="doc-hero-main">
-          <div class="doc-hero-title">${escapeHtml(currentDoc.filename)}</div>
-          <div class="doc-hero-status">
-            <span class="status-pill status-${currentDoc.status}">${statusLabel}</span>
-            ${currentDoc.qualityScore != null ? `<span>Confidence ${currentDoc.qualityScore}%</span>` : ""}
-          </div>
-          ${qualityBanner(currentDoc)}
-          <div class="doc-hero-facts">
-            ${heroFact(icons.calendar, "วันที่เอกสาร", fmtDate(currentDoc.documentDate))}
-            ${heroFact(icons.file, "หน้าเอกสาร", currentDoc.pages ?? "—")}
-            ${heroFact(icons.tag, "ประเภทเอกสาร", escapeHtml(documentTypeLabel(currentDoc.documentType)))}
-            ${heroFact(icons.clock, "ต้องตรวจสอบ", fmtNum(currentDoc.qualityCounts?.needReview ?? 0))}
-            ${heroFact(icons.checkCircle, "สถานะ", statusLabel)}
-          </div>
-        </div>
-        ${totals
-          ? `<div class="doc-hero-kpis">
-              ${heroKpi(fmtNum(totals.rowCount), "รายการทั้งหมด")}
-              ${heroKpi(fmtNum(totals.weight), "น้ำหนักรวม (กก.)")}
-              ${heroKpi(fmtNum(totals.puQty), "PU รวม")}
-              ${heroKpi(fmtNum(totals.skuQty), "SKU รวม")}
-              ${heroKpi(dashboardOverview?.amountAvailable ? fmtBaht(totals.amount) : "—", "มูลค่ารวม (฿)")}
-            </div>`
-          : ""}
-      </div>
-    `;
-  }
-
-  // ---- KPI row (aggregate across the filtered date range) ----
-  const kpiHost = container.querySelector("#dashOverviewKpis");
-  if (!dashboardOverview) {
-    kpiHost.innerHTML = `<div class="empty-state" style="padding:30px 20px;"><div class="title">กำลังสรุปข้อมูล</div></div>`;
-  } else if (dashboardOverview.totals.documentCount === 0) {
-    kpiHost.innerHTML = `
-      <div class="empty-state" style="padding:30px 20px;">
-        <div class="title">ไม่พบเอกสารในช่วงที่เลือก</div>
-        <button class="btn" id="dashClearFilters" style="margin-top:10px;">ล้างตัวกรอง</button>
-      </div>`;
-    kpiHost.querySelector("#dashClearFilters")?.addEventListener("click", () => {
-      store.setDashboardOverviewFilters({ dateFrom: "", dateTo: "" });
+  function drawTable() {
+    const { pageRows, total } = paginate(sortedRows, page, pageSize);
+    renderDataTable(tableHost, pageRows, {
+      columns: COLUMNS,
+      getRowId: (row) => row.rowId,
+      selectedRowId: panel?.rowId,
+      onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
+      emptyMessage: "ไม่มีสินค้าเข้าสำหรับวันที่นี้",
     });
-  } else {
-    const totals = dashboardOverview.totals;
-    kpiHost.innerHTML = `
-      <div class="kpi-row">
-        ${kpiCard(fmtNum(totals.rowCount), "จำนวนรายการ (ตามช่วงเวลา)")}
-        ${kpiCard(fmtNum(totals.documentCount), "จำนวนเอกสาร")}
-        ${kpiCard(dashboardOverview.amountAvailable ? fmtBaht(totals.amount) : "—", "มูลค่ารวม (บาท)")}
-        ${kpiCard(fmtNum(dashboard?.reviewCount ?? 0), "ต้องตรวจสอบ (ทั้งหมด)", (dashboard?.reviewCount ?? 0) > 0 ? "warn" : "ok")}
-      </div>`;
-  }
-
-  // ---- Data Quality panel (current document) ----
-  const qualityHost = container.querySelector("#dashQuality");
-  const dq = divisionSummary?.dataQuality;
-  if (!dq) {
-    qualityHost.innerHTML = `<div class="workspace-sub">ไม่มีข้อมูลคุณภาพสำหรับเอกสารนี้</div>`;
-  } else {
-    qualityHost.innerHTML = `
-      <div class="dq-row"><span>รายการปกติ</span><span class="mono">${fmtNum(dq.cleanRows)}</span></div>
-      <div class="dq-row"><span>ต้องตรวจสอบ</span><span class="mono" style="color:var(--warning);">${fmtNum(dq.reviewRequired)}</span></div>
-      <div class="dq-row"><span>แก้ไขแล้ว</span><span class="mono">${fmtNum(dq.corrected)}</span></div>
-      <div class="dq-row"><span>อ้างอิงจาก Master</span><span class="mono" style="color:var(--accent);">${fmtNum(dq.resolvedFromMaster)}</span></div>
-      <div class="dq-row"><span>อ้างอิงจาก OCR/PDF</span><span class="mono">${fmtNum(dq.resolvedFromOcr)}</span></div>
-      <div class="dq-row"><span>ยังไม่สามารถระบุได้</span><span class="mono" style="color:var(--critical);">${fmtNum(dq.unresolved)}</span></div>
-      ${dq.unmappedDepartments?.length ? `<div class="dq-unmapped">แผนกที่ไม่พบใน Division: ${dq.unmappedDepartments.map(escapeHtml).join(", ")}</div>` : ""}
-      <div class="dash-panel-link" id="dashQualityLink" style="margin-top:8px;">ดูรายละเอียด →</div>
-    `;
-    qualityHost.querySelector("#dashQualityLink")?.addEventListener("click", () => store.navigate("review"));
-  }
-
-  // ---- Reconciliation Summary: each division's document coverage within
-  // the current date-range overview (real, already-computed data - not a
-  // fabricated pass/fail count, since the backend only computes
-  // reconciliation pass/fail per-document, not per-division). ----
-  const reconHost = container.querySelector("#dashReconciliation");
-  const overviewDivisions = dashboardOverview?.divisions || [];
-  const overviewDocCount = dashboardOverview?.totals?.documentCount || 0;
-  if (!overviewDivisions.length) {
-    reconHost.innerHTML = `<div class="workspace-sub">ยังไม่มีข้อมูล Division ในช่วงที่เลือก</div>`;
-  } else {
-    reconHost.innerHTML = overviewDivisions
-      .map((d) => {
-        const num = d.documentCount;
-        const den = overviewDocCount;
-        const pct = den > 0 ? Math.round((num / den) * 100) : null;
-        return `
-          <div class="recon-summary-row">
-            <div class="recon-summary-head">
-              <span class="recon-summary-name">${escapeHtml(d.divisionCode)} ${escapeHtml(d.divisionName)}</span>
-              <span class="recon-summary-frac">${den > 0 ? `${num}/${den}` : "—"}</span>
-            </div>
-            <div class="recon-track"><div class="recon-fill" style="width:${pct ?? 0}%;${pct == null ? "background:var(--surface-alt);" : ""}"></div></div>
-            <div class="recon-pct">${pct == null ? "—" : pct + "%"}</div>
-          </div>`;
-      })
-      .join("");
-  }
-
-  // ---- Document Type donut ----
-  renderDonut(container.querySelector("#dashDonut"), documents);
-
-  // ---- Division Overview ----
-  const divisionsHost = container.querySelector("#dashDivisions");
-  const divisions = dashboardDivisionFilter === "all"
-    ? (dashboardOverview?.divisions || [])
-    : (dashboardOverview?.divisions || []).filter((d) => d.divisionCode === dashboardDivisionFilter);
-  if (!divisions.length) {
-    divisionsHost.innerHTML = `<div class="empty-state" style="padding:24px;"><div class="title">ไม่มีข้อมูล Division ในช่วงที่เลือก</div></div>`;
-  } else {
-    const grid = document.createElement("div");
-    grid.className = "division-grid";
-    (dashboardOverview?.divisions || []).forEach((division, index) => {
-      if (dashboardDivisionFilter !== "all" && division.divisionCode !== dashboardDivisionFilter) return;
-      const card = document.createElement("div");
-      card.className = "division-card";
-      card.style.setProperty("--division-accent", divisionColor(index));
-      card.innerHTML = `
-        <div class="division-card-head">
-          <span class="division-card-code">${escapeHtml(division.divisionCode)}</span>
-          <span class="division-card-name">${escapeHtml(division.divisionName)}</span>
-        </div>
-        <div class="division-card-amount">${dashboardOverview.amountAvailable ? fmtBaht(division.amount) + " ฿" : "—"}</div>
-        <div class="division-card-stats">
-          <div class="division-stat"><span class="division-stat-value">${fmtNum(division.rowCount)}</span><span class="division-stat-label">รายการ</span></div>
-          <div class="division-stat"><span class="division-stat-value">${fmtNum(division.documentCount)}</span><span class="division-stat-label">เอกสาร</span></div>
-        </div>
-        <div class="division-card-foot">
-          <span>คลิกเพื่อกรองภาพรวม</span>
-          <button type="button" class="dash-panel-link division-card-departments-link">แผนกในฝ่ายนี้ →</button>
-        </div>
-      `;
-      card.addEventListener("click", () => {
-        store.setDashboardOverviewFilters({ division: dashboardDivisionFilter === division.divisionCode ? "all" : division.divisionCode });
-      });
-      card.querySelector(".division-card-departments-link")?.addEventListener("click", (e) => {
-        e.stopPropagation();
-        store.openDivision(division.divisionCode);
-      });
-      grid.appendChild(card);
+    renderPaginationBar(paginationHost, {
+      page, pageSize, total,
+      onPageChange: (p) => { page = p; drawTable(); },
+      onPageSizeChange: (size) => { pageSize = size; page = 1; drawTable(); },
     });
-    divisionsHost.innerHTML = "";
-    divisionsHost.appendChild(grid);
   }
+  drawTable();
+
+  const deptBarsHost = container.querySelector("#dashDeptBars");
+  deptBarsHost.innerHTML = departmentValueBars(todaysRows, amountAvailable);
+  deptBarsHost.querySelectorAll(".dept-bar-row").forEach((row) => {
+    row.addEventListener("click", () => store.navigate("products", { deptFilter: row.dataset.dept }));
+  });
 }
