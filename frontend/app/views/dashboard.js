@@ -104,6 +104,67 @@ function departmentValueBars(rows, amountAvailable) {
     .join("");
 }
 
+const PIE_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
+const PIE_TOP_N = 6;
+
+// Which department has the most product coming in today, by total
+// quantity (sku_qty) - a pie chart, distinct from the value-based bar
+// ranking below it. Top 6 departments get their own slice; the rest are
+// folded into "อื่นๆ" so the chart stays readable regardless of how many
+// departments appear on a given day.
+function renderDepartmentPie(host, rows) {
+  if (!rows.length) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูล</div>`;
+    return;
+  }
+  const totals = new Map();
+  for (const row of rows) {
+    const dept = row.department || "ไม่ระบุแผนก";
+    const qty = row.fields.sku_qty?.value;
+    totals.set(dept, (totals.get(dept) || 0) + (typeof qty === "number" ? qty : 0));
+  }
+  let entries = [...totals.entries()].sort((a, b) => b[1] - a[1]);
+  if (entries.length > PIE_TOP_N) {
+    const head = entries.slice(0, PIE_TOP_N);
+    const otherTotal = entries.slice(PIE_TOP_N).reduce((sum, [, qty]) => sum + qty, 0);
+    entries = [...head, ["อื่นๆ", otherTotal]];
+  }
+  const total = entries.reduce((sum, [, qty]) => sum + qty, 0) || 1;
+
+  let offset = 0;
+  const segments = entries
+    .map(([, qty], i) => {
+      const pct = (qty / total) * 100;
+      const seg = `var(${PIE_COLORS[i % PIE_COLORS.length]}) ${offset}% ${offset + pct}%`;
+      offset += pct;
+      return seg;
+    })
+    .join(", ");
+
+  host.innerHTML = `
+    <div class="donut-wrap">
+      <div style="width:130px;height:130px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
+        <div style="width:84px;height:84px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+          <div class="mono" style="font-size:18px;font-weight:700;">${fmtNum(total)}</div>
+          <div style="font-size:10px;color:var(--text-faint);">หน่วยรวม</div>
+        </div>
+      </div>
+      <div class="donut-legend">
+        ${entries
+          .map(
+            ([dept, qty], i) => `
+          <div class="donut-legend-row">
+            <span class="donut-legend-dot" style="background:var(${PIE_COLORS[i % PIE_COLORS.length]});"></span>
+            <span class="donut-legend-name">${escapeHtml(dept)}</span>
+            <span class="donut-legend-count">${fmtNum(qty)} · ${Math.round((qty / total) * 100)}%</span>
+          </div>`
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
 const COLUMNS = [
   { key: "name", label: "ชื่อสินค้า", render: (r) => escapeHtml(r.fields.name?.value) || "—" },
   {
@@ -203,8 +264,17 @@ export function renderDashboard(container, store) {
     <div id="dashProductsTable"></div>
     <div id="dashProductsPagination"></div>
 
-    <div class="section-title">มูลค่าตามแผนกวันนี้</div>
-    <div class="dash-panel" id="dashDeptBars"></div>
+    <div class="section-title">สินค้าตามแผนกวันนี้</div>
+    <div class="dash-dept-grid">
+      <div class="dash-panel">
+        <div class="dash-panel-head"><span class="dash-panel-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</span></div>
+        <div id="dashDeptPie"></div>
+      </div>
+      <div class="dash-panel">
+        <div class="dash-panel-head"><span class="dash-panel-title">มูลค่าตามแผนก</span></div>
+        <div id="dashDeptBars"></div>
+      </div>
+    </div>
   `;
 
   container.querySelector("#dashStatusStrip").innerHTML = statusStrip(documents);
@@ -248,6 +318,8 @@ export function renderDashboard(container, store) {
     });
   }
   drawTable();
+
+  renderDepartmentPie(container.querySelector("#dashDeptPie"), todaysRows);
 
   const deptBarsHost = container.querySelector("#dashDeptBars");
   deptBarsHost.innerHTML = departmentValueBars(todaysRows, amountAvailable);

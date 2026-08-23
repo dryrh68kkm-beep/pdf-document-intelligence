@@ -32,7 +32,10 @@ def test_dashboard_surfaces_the_three_daily_kpis():
 def test_dashboard_surfaces_todays_product_table_and_department_breakdown():
     source = DASHBOARD.read_text(encoding="utf-8")
     assert "รายการสินค้าวันนี้" in source
-    assert "มูลค่าตามแผนกวันนี้" in source
+    assert "สินค้าตามแผนกวันนี้" in source
+    # A pie chart of which department has the most product by quantity,
+    # alongside the existing value-ranked bars (user request).
+    assert "renderDepartmentPie" in source
     # The table's columns (user request: drop unit price, keep only the
     # summarized total value): name, article/barcode, department,
     # quantity, amount.
