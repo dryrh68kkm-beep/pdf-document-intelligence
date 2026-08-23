@@ -3,6 +3,7 @@ import { store } from "./state.js";
 import { icons } from "./icons.js";
 import { renderSidebar } from "./components/sidebar.js";
 import { renderProductDetail, detailPanelIsDirty, detailPanelReset, setDirtyChangeListener } from "./components/detailPanel.js";
+import { escapeHtml } from "./escape.js";
 
 const VIEWS = {
   dashboard: () => import("./views/dashboard.js").then((m) => m.renderDashboard),
@@ -101,7 +102,7 @@ function renderBottomBar() {
     .map((d) => {
       const pct = d.progress.total ? Math.round((d.progress.current / d.progress.total) * 100) : 5;
       return `<div class="processing-item">
-        <span>${d.filename}: ${d.progress.stage}</span>
+        <span>${escapeHtml(d.filename)}: ${escapeHtml(d.progress.stage)}</span>
         <div class="mini-progress"><div style="width:${pct}%"></div></div>
       </div>`;
     })
@@ -130,7 +131,7 @@ function setUploadBusy(busy) {
 function showUploadError(error) {
   modalBox.innerHTML = `
     <h3>เพิ่มไฟล์ไม่สำเร็จ</h3>
-    <p>${String(error?.message || error)}</p>
+    <p>${escapeHtml(String(error?.message || error))}</p>
     <div class="modal-actions">
       <button class="btn btn-primary" id="uploadErrorOk">ตกลง</button>
     </div>
@@ -178,7 +179,7 @@ async function reprocessDuplicate(file) {
 function showDuplicateDialog(file, existing) {
   modalBox.innerHTML = `
     <h3>ไฟล์นี้มีอยู่ในระบบแล้ว</h3>
-    <p>${existing.filename} — ต้องการประมวลผลเอกสารเดิมอีกครั้งหรือไม่? ข้อมูลที่ผู้ใช้แก้ไขและประวัติการแก้ไขจะยังคงอยู่</p>
+    <p>${escapeHtml(existing.filename)} — ต้องการประมวลผลเอกสารเดิมอีกครั้งหรือไม่? ข้อมูลที่ผู้ใช้แก้ไขและประวัติการแก้ไขจะยังคงอยู่</p>
     <div class="modal-actions">
       <button class="btn" id="dupCancel">ยกเลิก</button>
       <button class="btn btn-primary" id="dupAdd">ประมวลผลอีกครั้ง</button>
@@ -199,8 +200,8 @@ document.addEventListener("show-error", () => {
   const cfg = store.state.errorDialog;
   if (!cfg) return;
   modalBox.innerHTML = `
-    <h3>${cfg.title}</h3>
-    <p>${cfg.message}</p>
+    <h3>${escapeHtml(cfg.title)}</h3>
+    <p>${escapeHtml(cfg.message)}</p>
     <div class="modal-actions">
       ${cfg.onRetry ? `<button class="btn" id="errorCancel">ปิด</button><button class="btn btn-primary" id="errorRetry">ลองใหม่</button>` : `<button class="btn btn-primary" id="errorCancel">ตกลง</button>`}
     </div>
@@ -217,8 +218,8 @@ document.addEventListener("show-confirm", () => {
   const cfg = store.state.confirmDialog;
   if (!cfg) return;
   modalBox.innerHTML = `
-    <h3>${cfg.title}</h3>
-    <p>${cfg.message}</p>
+    <h3>${escapeHtml(cfg.title)}</h3>
+    <p>${escapeHtml(cfg.message)}</p>
     <div class="modal-actions">
       <button class="btn" id="confirmCancel">ยกเลิก</button>
       <button class="btn btn-primary" id="confirmOk">ยืนยัน</button>
@@ -319,7 +320,7 @@ function showInitError(error) {
     <div class="empty-state" style="padding:80px 20px;">
       <div class="icon">⚠</div>
       <div class="title">โหลดข้อมูลไม่สำเร็จ</div>
-      <div>${String(error?.message || error)}</div>
+      <div>${escapeHtml(String(error?.message || error))}</div>
       <button class="btn btn-primary" id="initRetryBtn" style="margin-top:14px;">ลองใหม่</button>
     </div>`;
   document.getElementById("initRetryBtn")?.addEventListener("click", init);

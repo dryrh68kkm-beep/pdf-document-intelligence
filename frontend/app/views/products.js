@@ -1,6 +1,7 @@
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { icons } from "../icons.js";
+import { escapeHtml } from "../escape.js";
 
 const RESOLUTION_LABEL = {
   OFFICIAL_MASTER: "Official Master",
@@ -61,7 +62,7 @@ function applyExtraFilters(rows) {
 function fmt(v) {
   if (v === null || v === undefined || v === "") return "—";
   if (typeof v === "number") return v % 1 === 0 ? String(v) : v.toFixed(2);
-  return v;
+  return escapeHtml(v);
 }
 
 function rowConfidence(f) {
@@ -113,14 +114,14 @@ export function renderProducts(container, store) {
   container.innerHTML = `
     ${deptFilter ? `<div class="back-link" id="clearDept">‹ ทุกแผนก</div>` : ""}
     <div class="workspace-header">
-      <div class="workspace-title">${deptFilter || "Products"}</div>
+      <div class="workspace-title">${escapeHtml(deptFilter) || "Products"}</div>
       <div class="workspace-sub">รายการสินค้า</div>
     </div>
     <div class="filter-chip-bar">
-      <input id="productFilter" class="search-input" type="text" placeholder="ค้นหาในตารางนี้..." value="${searchQuery || ""}" />
+      <input id="productFilter" class="search-input" type="text" placeholder="ค้นหาในตารางนี้..." value="${escapeHtml(searchQuery || "")}" />
       <select id="productDeptSelect" class="filter-chip">
         <option value=""${!deptFilter ? " selected" : ""}>ทุกแผนก</option>
-        ${departments.map((d) => `<option value="${d}"${deptFilter === d ? " selected" : ""}>${d}</option>`).join("")}
+        ${departments.map((d) => `<option value="${escapeHtml(d)}"${deptFilter === d ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}
       </select>
       <select id="productResolutionSelect" class="filter-chip">
         <option value="all"${resolutionFilter === "all" ? " selected" : ""}>ทุกสถานะที่มา</option>

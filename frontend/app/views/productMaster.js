@@ -2,6 +2,7 @@ import { api } from "../api.js";
 import { icons } from "../icons.js";
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
+import { escapeHtml } from "../escape.js";
 
 // Official Master (read-only, ground truth - only a row *count* is exposed
 // by the backend via /api/master/snapshot/status, never the full row set)
@@ -24,11 +25,11 @@ function fmtDate(iso) {
 }
 
 const COLUMNS = [
-  { key: "barcode", label: "BARCODE", render: (e) => `<span class="mono">${e.barcode}</span>` },
-  { key: "article", label: "ARTICLE", render: (e) => `<span class="mono">${e.article_code || "—"}</span>` },
-  { key: "name", label: "ชื่อสินค้า", render: (e) => e.product_name },
-  { key: "dept", label: "แผนก", render: (e) => e.department || "—" },
-  { key: "unit", label: "PU", render: (e) => e.unit || "—" },
+  { key: "barcode", label: "BARCODE", render: (e) => `<span class="mono">${escapeHtml(e.barcode)}</span>` },
+  { key: "article", label: "ARTICLE", render: (e) => `<span class="mono">${escapeHtml(e.article_code) || "—"}</span>` },
+  { key: "name", label: "ชื่อสินค้า", render: (e) => escapeHtml(e.product_name) },
+  { key: "dept", label: "แผนก", render: (e) => escapeHtml(e.department) || "—" },
+  { key: "unit", label: "PU", render: (e) => escapeHtml(e.unit) || "—" },
   { key: "updated", label: "อัปเดตล่าสุด", render: (e) => `<span class="mono">${new Date(e.updated_at).toLocaleDateString("th-TH")}</span>` },
   {
     key: "actions",
@@ -214,7 +215,7 @@ export async function renderProductMaster(container, store) {
       <input id="pmSearch" class="search-input" type="text" placeholder="ค้นหา Barcode / Article / ชื่อสินค้า... (เฉพาะ Local Verified)" autocomplete="off" />
       <select id="pmDeptSelect" class="filter-chip">
         <option value=""${!deptFilter ? " selected" : ""}>ทุกแผนก</option>
-        ${departments.map((d) => `<option value="${d}"${deptFilter === d ? " selected" : ""}>${d}</option>`).join("")}
+        ${departments.map((d) => `<option value="${escapeHtml(d)}"${deptFilter === d ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}
       </select>
     </div>
     <div class="workspace-sub" style="margin-bottom:8px;">Local Verified Master — สินค้าที่ผู้ใช้ยืนยันเองจาก Review (บันทึกถาวร ใช้แก้ปัญหา Unknown Barcode ในเอกสารถัดไปโดยอัตโนมัติ)</div>

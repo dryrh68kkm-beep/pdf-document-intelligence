@@ -1,3 +1,5 @@
+import { escapeHtml } from "../escape.js";
+
 function fmtNum(n) {
   return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 }
@@ -18,7 +20,7 @@ function deptCard(d, store) {
   card.className = "dept-card";
   card.innerHTML = `
     <div class="dept-card-head">
-      <span class="dept-card-name">${d.name}</span>
+      <span class="dept-card-name">${escapeHtml(d.name)}</span>
       ${d.reviewCount > 0 ? `<span class="dept-card-badge warn">${d.reviewCount} ต้องตรวจสอบ</span>` : `<span class="dept-card-badge">✓</span>`}
     </div>
     <div class="dept-card-stat">${d.skuCount} SKU · ${d.rowCount} รายการ</div>
@@ -51,7 +53,7 @@ export function renderDepartments(container, store) {
       <div class="workspace-sub">${allDepartments.length} แผนก</div>
     </div>
     <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
-      <input class="search-input" id="deptSearch" type="search" placeholder="ค้นหาแผนก..." value="${searchQuery}">
+      <input class="search-input" id="deptSearch" type="search" placeholder="ค้นหาแผนก..." value="${escapeHtml(searchQuery)}">
       <span class="sort-controls" style="margin-left:0;">
         เรียงตาม:
         ${Object.entries(SORT_LABELS)
@@ -119,7 +121,7 @@ export function renderDepartments(container, store) {
     group.className = "dept-group";
     group.innerHTML = `
       <div class="dept-group-head">
-        <span class="dept-group-name">${major}</span>
+        <span class="dept-group-name">${escapeHtml(major)}</span>
         <span class="dept-group-stat">${skuCount} SKU · ${rowCount} รายการ${reviewCount > 0 ? ` · ${reviewCount} ต้องตรวจสอบ` : ""}</span>
       </div>
     `;

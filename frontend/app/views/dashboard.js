@@ -1,4 +1,5 @@
 import { icons } from "../icons.js";
+import { escapeHtml } from "../escape.js";
 
 // Executive Overview / Dashboard: everything on this page is token-driven
 // (styles.css) and reads only data the backend already computes -
@@ -36,15 +37,6 @@ function fmtNum(value) {
 
 function fmtBaht(value) {
   return (value ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 function fmtDate(value) {
