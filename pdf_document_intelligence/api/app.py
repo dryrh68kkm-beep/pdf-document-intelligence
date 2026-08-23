@@ -273,6 +273,27 @@ def official_master_count():
     return {"count": len(get_default_catalog())}
 
 
+@app.get("/api/master/official/lookup")
+def official_master_lookup(barcode: str = Query(..., min_length=1)):
+    """A single-barcode existence check against the Official Master, so a
+    user can confirm a specific product really imported (the Product Master
+    page's search box only searches the small Local Verified list - there is
+    still no per-row listing endpoint for the ~35k-row Official Master, this
+    is an O(1) dict lookup only, not a new browsing surface)."""
+    from pdf_document_intelligence.catalog.loader import get_default_catalog
+
+    entry = get_default_catalog().get(barcode.strip())
+    if entry is None:
+        return {"found": False}
+    return {
+        "found": True,
+        "barcode": entry.barcode,
+        "name": entry.name,
+        "structure": entry.structure or None,
+        "articleCode": entry.root_code or None,
+    }
+
+
 _MAX_MASTER_IMPORT_BYTES = 50 * 1024 * 1024  # 50MB
 
 

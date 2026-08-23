@@ -9,9 +9,10 @@ import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/
 // fully loaded via GET /api/master/local - editable only by adding new
 // entries, never overwriting Official). Spec P3 items 18-19. The table on
 // this page paginates the already-loaded Local Verified list; the Official
-// Master's ~35k rows are surfaced only as the KPI count the backend already
-// computes, since there is no per-row Official Master endpoint to page
-// through client-side (see final report: intentionally not adding one).
+// Master's ~50k rows are surfaced as the KPI count plus a single-barcode
+// lookup (GET /api/master/official/lookup) so a user can confirm a specific
+// product really imported - there is still no per-row listing/browsing
+// endpoint for the full Official Master (intentionally not adding one).
 
 let deptFilter = "";
 let page = 1;
@@ -92,6 +93,45 @@ function renderImportControl(container, store) {
   });
 }
 
+function renderLookupControl(container) {
+  container.innerHTML = `
+    <div class="workspace-sub" style="margin-bottom:6px;">ตรวจสอบ Barcode ใน Official Master — ยืนยันว่าไฟล์ที่นำเข้ามีสินค้านี้จริงหรือไม่</div>
+    <div class="filter-chip-bar">
+      <input id="pmOfficialLookup" class="search-input" type="text" placeholder="พิมพ์ Barcode เพื่อตรวจสอบใน Official Master..." autocomplete="off" />
+    </div>
+    <div id="pmOfficialLookupResult" class="dp-save-feedback"></div>
+  `;
+  const input = container.querySelector("#pmOfficialLookup");
+  const result = container.querySelector("#pmOfficialLookupResult");
+  let debounce = null;
+  input.addEventListener("input", (e) => {
+    clearTimeout(debounce);
+    const barcode = e.target.value.trim();
+    if (!barcode) {
+      result.textContent = "";
+      result.className = "dp-save-feedback";
+      return;
+    }
+    debounce = setTimeout(async () => {
+      result.textContent = "กำลังตรวจสอบ...";
+      result.className = "dp-save-feedback";
+      try {
+        const res = await api.officialMasterLookup(barcode);
+        if (res.found) {
+          result.textContent = `✓ พบใน Official Master: ${res.name}${res.articleCode ? ` (Article: ${res.articleCode})` : ""}`;
+          result.className = "dp-save-feedback ok";
+        } else {
+          result.textContent = `✗ ไม่พบ Barcode "${barcode}" ใน Official Master`;
+          result.className = "dp-save-feedback error";
+        }
+      } catch (err) {
+        result.textContent = `ตรวจสอบไม่สำเร็จ: ${String(err.message || err)}`;
+        result.className = "dp-save-feedback error";
+      }
+    }, 300);
+  });
+}
+
 function kpiIconCard(value, label, icon, tone) {
   return `
     <div class="kpi-icon-card">
@@ -169,8 +209,9 @@ export async function renderProductMaster(container, store) {
       ${kpiIconCard(fmtDate(snapshotStatus.lastUpdated), "อัปเดตล่าสุด (Official)", icons.trendingUp, "neutral")}
     </div>
     <div id="pmImportHost" style="margin-bottom:16px;"></div>
+    <div id="pmOfficialLookupHost" style="margin-bottom:16px;"></div>
     <div class="filter-chip-bar">
-      <input id="pmSearch" class="search-input" type="text" placeholder="ค้นหา Barcode / Article / ชื่อสินค้า..." autocomplete="off" />
+      <input id="pmSearch" class="search-input" type="text" placeholder="ค้นหา Barcode / Article / ชื่อสินค้า... (เฉพาะ Local Verified)" autocomplete="off" />
       <select id="pmDeptSelect" class="filter-chip">
         <option value=""${!deptFilter ? " selected" : ""}>ทุกแผนก</option>
         ${departments.map((d) => `<option value="${d}"${deptFilter === d ? " selected" : ""}>${d}</option>`).join("")}
@@ -183,6 +224,7 @@ export async function renderProductMaster(container, store) {
   `;
 
   renderImportControl(container.querySelector("#pmImportHost"), store);
+  renderLookupControl(container.querySelector("#pmOfficialLookupHost"));
 
   if (localMaster.count > 0) {
     renderTable(container, localMaster.entries);
