@@ -20,6 +20,13 @@ _LABELS = (
     ("วันที่เอกสาร", r"วันที่\s*(?:เอกสาร|ส่งสินค้า|จัดส่ง)"),
     ("วันที่", r"วัน\s*ที่"),
     ("Date", r"\bdate\b"),
+    # BPDC packing lists carry no explicit "Document Date" label at all - the
+    # only date on the page is a print timestamp printed directly under the
+    # report title on every page ("Packing List\n19/08/2026 04:57"). Kept as
+    # the lowest-priority label (only used when nothing more explicit
+    # matches) and anchored to the literal title text so it never fires on
+    # an unrelated bare date elsewhere in the document.
+    ("Packing List", r"packing\s*list"),
 )
 _EXCLUDED_CONTEXT = re.compile(
     r"\b(?:mfg|manufactur(?:e|ing)|exp(?:iry|iration)?|best\s*before|lot)\b|"
