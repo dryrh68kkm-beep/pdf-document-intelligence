@@ -102,6 +102,8 @@ class Store {
     };
     this._listeners = [];
     this._divisionCache = new Map();
+    this._refreshAllInFlight = null;
+    this._refreshAllQueued = false;
   }
 
   subscribe(fn) {
@@ -146,7 +148,31 @@ class Store {
     return documents;
   }
 
+  // Several independent triggers can call refreshAll() around the same
+  // moment (the topbar refresh button, an upload finishing, a background
+  // poll noticing a document completed) - with no guard, two overlapping
+  // calls each run their own Promise.all/set(), and whichever's fetch
+  // happens to resolve LAST wins even if it was the one that *started*
+  // first, silently reverting the UI to older data. Concurrent callers
+  // instead share the in-flight run; a call that arrives after fetching has
+  // already started queues exactly one more run so the caller's own
+  // "refresh now" intent is still honored once the current run finishes.
   async refreshAll() {
+    if (this._refreshAllInFlight) {
+      this._refreshAllQueued = true;
+      return this._refreshAllInFlight;
+    }
+    this._refreshAllInFlight = (async () => {
+      do {
+        this._refreshAllQueued = false;
+        await this._doRefreshAll();
+      } while (this._refreshAllQueued);
+      this._refreshAllInFlight = null;
+    })();
+    return this._refreshAllInFlight;
+  }
+
+  async _doRefreshAll() {
     const [documents, dashboard, rawProducts] = await Promise.all([
       api.listDocuments(),
       api.dashboardState(),
@@ -167,7 +193,17 @@ class Store {
     // edited document is invalidated explicitly before refreshAll().
     this._pruneDivisionCache(documents);
     this.set({ documents, dashboard, products, currentDocumentId, dashboardOverview: null });
-    await Promise.all([this.refreshDivisions(), this.refreshDashboardOverview()]);
+    // Combined into a single set() instead of two independent ones (each of
+    // refreshDivisions()/refreshDashboardOverview() used to call this.set()
+    // on its own, so whichever Promise settled first fired a full re-render
+    // with a half-updated state, then the second settling fired another -
+    // two redundant full-view rebuilds for what is really one logical
+    // "background sections finished loading" update).
+    const [divisionSummary, dashboardOverview] = await Promise.all([
+      this._computeDivisionSummary(currentDocumentId, documents),
+      this._computeDashboardOverview(documents),
+    ]);
+    this.set({ divisionSummary, dashboardOverview });
   }
 
   async _getDivisionSummary(docId) {
@@ -182,16 +218,20 @@ class Store {
     }
   }
 
-  async refreshDashboardOverview() {
+  async _computeDashboardOverview(documents = this.state.documents) {
     const { dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter } = this.state;
-    const documents = this.state.documents.filter(
+    const inRange = documents.filter(
       (doc) => doc.status === "complete" && inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo),
     );
     const pairs = await Promise.all(
-      documents.map(async (document) => ({ document, summary: await this._getDivisionSummary(document.id) })),
+      inRange.map(async (document) => ({ document, summary: await this._getDivisionSummary(document.id) })),
     );
     const usable = pairs.filter((item) => item.summary);
-    this.set({ dashboardOverview: buildDashboardOverview(usable, dashboardDivisionFilter) });
+    return buildDashboardOverview(usable, dashboardDivisionFilter);
+  }
+
+  async refreshDashboardOverview() {
+    this.set({ dashboardOverview: await this._computeDashboardOverview() });
   }
 
   async setDashboardOverviewFilters({ dateFrom, dateTo, division } = {}) {
@@ -205,14 +245,14 @@ class Store {
     await this.refreshDashboardOverview();
   }
 
+  async _computeDivisionSummary(currentDocumentId = this.state.currentDocumentId, documents = this.state.documents) {
+    const doc = documents.find((d) => d.id === currentDocumentId);
+    if (!doc || doc.status !== "complete") return null;
+    return this._getDivisionSummary(doc.id);
+  }
+
   async refreshDivisions() {
-    const doc = this.state.documents.find((d) => d.id === this.state.currentDocumentId);
-    if (!doc || doc.status !== "complete") {
-      this.set({ divisionSummary: null });
-      return;
-    }
-    const divisionSummary = await this._getDivisionSummary(doc.id);
-    this.set({ divisionSummary });
+    this.set({ divisionSummary: await this._computeDivisionSummary() });
   }
 
   async selectDashboardDocument(docId) {

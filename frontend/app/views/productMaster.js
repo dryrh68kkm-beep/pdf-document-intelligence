@@ -105,9 +105,19 @@ function renderLookupControl(container) {
   const input = container.querySelector("#pmOfficialLookup");
   const result = container.querySelector("#pmOfficialLookupResult");
   let debounce = null;
+  // Race guard: clearTimeout only cancels a still-*pending* timer, not a
+  // fetch already in flight. Typing a second barcode while the first
+  // lookup's request is still on the wire starts a second fetch that can
+  // resolve out of order - a slow response for an earlier barcode landing
+  // after a faster response for the current one would silently overwrite
+  // the correct, currently-displayed result with a stale one. requestId
+  // makes each keystroke's callback check it's still the latest before
+  // touching the DOM.
+  let requestId = 0;
   input.addEventListener("input", (e) => {
     clearTimeout(debounce);
     const barcode = e.target.value.trim();
+    const myRequestId = ++requestId;
     if (!barcode) {
       result.textContent = "";
       result.className = "dp-save-feedback";
@@ -118,6 +128,7 @@ function renderLookupControl(container) {
       result.className = "dp-save-feedback";
       try {
         const res = await api.officialMasterLookup(barcode);
+        if (myRequestId !== requestId) return;
         if (res.found) {
           result.textContent = `✓ พบใน Official Master: ${res.name}${res.articleCode ? ` (Article: ${res.articleCode})` : ""}`;
           result.className = "dp-save-feedback ok";
@@ -126,6 +137,7 @@ function renderLookupControl(container) {
           result.className = "dp-save-feedback error";
         }
       } catch (err) {
+        if (myRequestId !== requestId) return;
         result.textContent = `ตรวจสอบไม่สำเร็จ: ${String(err.message || err)}`;
         result.className = "dp-save-feedback error";
       }
@@ -237,11 +249,16 @@ export async function renderProductMaster(container, store) {
     });
 
     let debounce = null;
+    let searchRequestId = 0;
     container.querySelector("#pmSearch").addEventListener("input", (e) => {
       clearTimeout(debounce);
       const val = e.target.value;
+      const myRequestId = ++searchRequestId;
       debounce = setTimeout(async () => {
         const res = await api.listLocalMaster(val);
+        // A slower, earlier keystroke's response landing after a faster,
+        // later one would otherwise repaint the table with stale results.
+        if (myRequestId !== searchRequestId) return;
         page = 1;
         renderTable(container, res.entries);
       }, 200);

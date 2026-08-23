@@ -12,6 +12,20 @@ const RESOLUTION_LABEL = {
 };
 
 let debounceTimer = null;
+
+// Real bug (found during an audit): this view used to read the search box's
+// value straight from store.state.searchQuery on every render. Any
+// unrelated store.set() elsewhere in the app - a background document
+// finishing OCR, a poll-triggered refreshAll() - fires the same
+// store.subscribe(render) full re-render, which used to reset this input
+// back to the (stale) store value and silently erase whatever the user was
+// mid-typing. localSearchText is the box's actual current text, kept in
+// sync on every keystroke; it's only overwritten from the store when the
+// store's searchQuery itself changed (an explicit navigation from the
+// global search box), tracked via lastSyncedStoreQuery.
+let localSearchText = "";
+let lastSyncedStoreQuery = null;
+
 let cachedProductsRef = null;
 let cachedDeptFilter = null;
 let cachedBaseRows = [];
@@ -105,11 +119,22 @@ const COLUMNS = [
 export function renderProducts(container, store) {
   const { products, deptFilter, panel, searchQuery } = store.state;
 
+  if (searchQuery !== lastSyncedStoreQuery) {
+    localSearchText = searchQuery || "";
+    lastSyncedStoreQuery = searchQuery;
+  }
+
   const departments = [...new Set(products.map((p) => p.department).filter(Boolean))].sort();
   const resolutionOptions = Object.keys(RESOLUTION_LABEL)
     .filter((key) => products.some((p) => p.resolutionStatus === key))
     .map((key) => `<option value="${key}"${resolutionFilter === key ? " selected" : ""}>${RESOLUTION_LABEL[key]}</option>`)
     .join("");
+
+  // An unrelated background render (see localSearchText above) rebuilds
+  // this whole container - preserve cursor position too, not just the
+  // text, so a re-render mid-keystroke doesn't kick focus out of the box.
+  const hadFocus = container.querySelector("#productFilter") === document.activeElement;
+  const selectionStart = hadFocus ? container.querySelector("#productFilter").selectionStart : null;
 
   container.innerHTML = `
     ${deptFilter ? `<div class="back-link" id="clearDept">‹ ทุกแผนก</div>` : ""}
@@ -118,7 +143,7 @@ export function renderProducts(container, store) {
       <div class="workspace-sub">รายการสินค้า</div>
     </div>
     <div class="filter-chip-bar">
-      <input id="productFilter" class="search-input" type="text" placeholder="ค้นหาในตารางนี้..." value="${escapeHtml(searchQuery || "")}" />
+      <input id="productFilter" class="search-input" type="text" placeholder="ค้นหาในตารางนี้..." value="${escapeHtml(localSearchText)}" />
       <select id="productDeptSelect" class="filter-chip">
         <option value=""${!deptFilter ? " selected" : ""}>ทุกแผนก</option>
         ${departments.map((d) => `<option value="${escapeHtml(d)}"${deptFilter === d ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}
@@ -166,11 +191,18 @@ export function renderProducts(container, store) {
     });
   }
 
-  draw(searchQuery || "");
+  draw(localSearchText);
+
+  if (hadFocus) {
+    const filterInput = container.querySelector("#productFilter");
+    filterInput.focus();
+    filterInput.setSelectionRange(selectionStart, selectionStart);
+  }
 
   container.querySelector("#productFilter").addEventListener("input", (e) => {
     clearTimeout(debounceTimer);
     const val = e.target.value;
+    localSearchText = val;
     debounceTimer = setTimeout(() => { page = 1; draw(val); }, 200);
   });
   container.querySelector("#productDeptSelect").addEventListener("change", (e) => {
