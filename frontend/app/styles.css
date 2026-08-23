@@ -188,17 +188,23 @@ button { font-family: inherit; }
 
 /* ---------- Data table (virtualized) ---------- */
 .table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; box-shadow: var(--shadow); }
-.table-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.table-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .table-toolbar input { flex: 1; max-width: 320px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-alt); font-size: 12.5px; color: var(--text); }
+.table-toolbar select {
+  padding: 6px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-alt);
+  color: var(--text); font-size: 12.5px; font-family: inherit;
+}
 .table-toolbar .count-label { font-size: 12px; color: var(--text-faint); margin-left: auto; }
 
-.vtable-head, .vrow { display: grid; grid-template-columns: var(--vt-cols, 100px 1fr 70px 70px 90px 90px 90px 90px); gap: 0; }
+.vtable-scroll { overflow-x: auto; }
+.vtable-head, .vrow { display: grid; grid-template-columns: var(--vt-cols, 100px 1fr 70px 70px 90px 90px 90px 90px); gap: 0; min-width: 860px; }
 .vtable-head > div, .vrow > div { padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vtable-head > div.num, .vrow > div.num { text-align: right; }
 .vtable-head {
   background: var(--surface-alt); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
   color: var(--text-faint); font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0;
 }
-.vtable-body { overflow-y: auto; position: relative; }
+.vtable-body { overflow-y: auto; overflow-x: hidden; position: relative; }
 .vrow { border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px; align-items: center; position: absolute; left: 0; right: 0; }
 .vrow:hover { background: var(--surface-alt); }
 .vrow.selected { background: var(--accent-soft); }
