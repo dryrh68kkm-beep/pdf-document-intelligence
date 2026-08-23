@@ -39,4 +39,12 @@ with _TEST_CATALOG.open("w", encoding="utf-8", newline="") as f:
     writer.writeheader()
     for department, division in _rows:
         writer.writerow({"DEPARTMENT_NAME": department, "DIVISION_NAME": division})
+
 os.environ["PDF_INTELLIGENCE_MASTER_CATALOG"] = str(_TEST_CATALOG)
+
+# Compile the complete synthetic hierarchy before any application/test module
+# can create a smaller first-write-wins snapshot. This keeps the suite
+# deterministic while preserving production's one-time-import semantics.
+from pdf_document_intelligence.catalog.snapshot import import_catalog_snapshot
+
+import_catalog_snapshot(_TEST_CATALOG, overwrite=True)
