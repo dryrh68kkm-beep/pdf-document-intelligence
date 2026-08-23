@@ -189,18 +189,33 @@ export function renderDocuments(container, store) {
     tr.querySelector('[data-action="review"]')?.addEventListener("click", () => {
       store.selectDashboardDocument(doc.id).then(() => store.navigate("review"));
     });
-    tr.querySelector('[data-action="reprocess"]')?.addEventListener("click", async () => {
-      await api.reprocessDocument(doc.id);
-      await store.refreshAll();
-    });
+    const doReprocess = async () => {
+      try {
+        await api.reprocessDocument(doc.id);
+        await store.refreshAll();
+      } catch (error) {
+        store.set({
+          errorDialog: { title: "ประมวลผลใหม่ไม่สำเร็จ", message: String(error?.message || error), onRetry: doReprocess },
+        });
+        document.dispatchEvent(new CustomEvent("show-error"));
+      }
+    };
+    tr.querySelector('[data-action="reprocess"]')?.addEventListener("click", doReprocess);
     tr.querySelector('[data-action="remove"]').addEventListener("click", () => {
       store.set({
         confirmDialog: {
           title: `ลบ ${doc.filename}?`,
           message: "ข้อมูลของไฟล์นี้จะถูกลบออกจาก Dashboard และคำนวณยอดใหม่ทันที",
           onConfirm: async () => {
-            await api.deleteDocument(doc.id);
-            await store.refreshAll();
+            try {
+              await api.deleteDocument(doc.id);
+              await store.refreshAll();
+            } catch (error) {
+              store.set({
+                errorDialog: { title: "ลบไม่สำเร็จ", message: String(error?.message || error) },
+              });
+              document.dispatchEvent(new CustomEvent("show-error"));
+            }
           },
         },
       });

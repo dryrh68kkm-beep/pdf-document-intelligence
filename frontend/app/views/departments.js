@@ -2,6 +2,17 @@ function fmtNum(n) {
   return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 }
 
+let searchQuery = "";
+let currentSort = "sku";
+
+const SORTS = {
+  sku: (a, b) => b.skuCount - a.skuCount,
+  rows: (a, b) => b.rowCount - a.rowCount,
+  review: (a, b) => b.reviewCount - a.reviewCount,
+  name: (a, b) => a.name.localeCompare(b.name),
+};
+const SORT_LABELS = { sku: "SKU", rows: "รายการ", review: "ต้องตรวจสอบ", name: "ชื่อ" };
+
 function deptCard(d, store) {
   const card = document.createElement("div");
   card.className = "dept-card";
@@ -17,6 +28,11 @@ function deptCard(d, store) {
   return card;
 }
 
+function matchesSearch(d, q) {
+  if (!q) return true;
+  return `${d.name} ${d.majorDepartment || ""}`.toLowerCase().includes(q);
+}
+
 // Groups department cards by `majorDepartment` (see
 // templates/department_groups.py — a fixed, user-supplied mapping, never
 // an inferred pattern). A major group with only one member is its own
@@ -27,11 +43,54 @@ function deptCard(d, store) {
 // primary heading and each sub-department secondary underneath it.
 export function renderDepartments(container, store) {
   const { dashboard } = store.state;
-  container.innerHTML = `<div class="workspace-header"><div class="workspace-title">Departments</div><div class="workspace-sub">${dashboard?.departmentCount ?? 0} แผนก</div></div><div id="deptRoot"></div>`;
+  const allDepartments = dashboard?.departments || [];
+
+  container.innerHTML = `
+    <div class="workspace-header">
+      <div class="workspace-title">Departments</div>
+      <div class="workspace-sub">${allDepartments.length} แผนก</div>
+    </div>
+    <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+      <input class="search-input" id="deptSearch" type="search" placeholder="ค้นหาแผนก..." value="${searchQuery}">
+      <span class="sort-controls" style="margin-left:0;">
+        เรียงตาม:
+        ${Object.entries(SORT_LABELS)
+          .map(([key, label]) => `<button class="sort-btn${key === currentSort ? " active" : ""}" data-sort="${key}">${label}</button>`)
+          .join("")}
+      </span>
+    </div>
+    <div id="deptRoot"></div>
+  `;
+
+  container.querySelector("#deptSearch").addEventListener("input", (e) => {
+    searchQuery = e.target.value;
+    renderDepartments(container, store);
+    const input = container.querySelector("#deptSearch");
+    input?.focus();
+    input?.setSelectionRange(searchQuery.length, searchQuery.length);
+  });
+  container.querySelectorAll(".sort-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentSort = btn.dataset.sort;
+      renderDepartments(container, store);
+    });
+  });
+
   const root = container.querySelector("#deptRoot");
+  const q = searchQuery.trim().toLowerCase();
+  const visible = allDepartments.filter((d) => matchesSearch(d, q));
+
+  if (!allDepartments.length) {
+    root.innerHTML = `<div class="empty-state"><div class="icon">🏷️</div><div class="title">ยังไม่มีข้อมูลแผนก</div><div>เพิ่ม PDF เพื่อเริ่มวิเคราะห์</div></div>`;
+    return;
+  }
+  if (!visible.length) {
+    root.innerHTML = `<div class="empty-state"><div class="icon">🔎</div><div class="title">ไม่พบแผนกที่ตรงกับคำค้นหา</div></div>`;
+    return;
+  }
 
   const groups = new Map();
-  for (const d of dashboard?.departments || []) {
+  for (const d of visible) {
     const major = d.majorDepartment || d.name;
     if (!groups.has(major)) groups.set(major, []);
     groups.get(major).push(d);
@@ -66,7 +125,7 @@ export function renderDepartments(container, store) {
     `;
     const subgrid = document.createElement("div");
     subgrid.className = "dept-subgrid";
-    members.forEach((m) => subgrid.appendChild(deptCard(m, store)));
+    [...members].sort(SORTS[currentSort]).forEach((m) => subgrid.appendChild(deptCard(m, store)));
     group.appendChild(subgrid);
     root.appendChild(group);
   }
@@ -74,7 +133,7 @@ export function renderDepartments(container, store) {
   if (ungrouped.length) {
     const grid = document.createElement("div");
     grid.className = "dept-grid";
-    ungrouped.forEach((d) => grid.appendChild(deptCard(d, store)));
+    [...ungrouped].sort(SORTS[currentSort]).forEach((d) => grid.appendChild(deptCard(d, store)));
     root.appendChild(grid);
   }
 }
