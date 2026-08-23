@@ -91,6 +91,21 @@ def _thai_valid_ratio(text: str) -> float:
     return valid / len(combining_positions)
 
 
+def field_has_thai_encoding_defect(text: str, min_valid_ratio: float) -> bool:
+    """Field-level counterpart to `_thai_valid_ratio`, for text that is too
+    short to move a whole page's average (a garbled product name sits next
+    to hundreds of clean digits/headers on the same page, so the page-level
+    score alone can stay "reliable" while individual name cells are not -
+    see cross_validate.py's ThaiOcrCrossValidator, which calls this per
+    field before trusting a page-reliable field's raw PDF text). Requires at
+    least 2 combining marks in the text before judging - a single mark is
+    too little signal for a short field like a product name."""
+    combining_positions = [i for i, c in enumerate(text) if c in _THAI_COMBINING]
+    if len(combining_positions) < 2:
+        return False
+    return _thai_valid_ratio(text) < min_valid_ratio
+
+
 def _thai_combining_density(text: str) -> float | None:
     """Fraction of Thai-block characters that are combining vowels/tone
     marks. Real Thai prose reliably carries a substantial share of these

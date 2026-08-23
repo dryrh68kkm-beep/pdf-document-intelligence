@@ -3,10 +3,14 @@
 
 Applies only to string-typed fields that (a) contain Thai text and (b)
 were sourced from a page whose text layer TextExtractor already flagged
-unreliable — never runs OCR on fields that don't need it, and never
-touches code/numeric fields regardless of page quality (those come from
-ASCII digits, which this specific defect does not corrupt, verified
-against the golden sample).
+unreliable, OR whose own text independently shows the same reordering
+defect even though the page's aggregate score passed (a garbled product
+name sitting next to hundreds of clean digits/headers on the same page
+can leave the page-level average "reliable" - see
+extract.text.field_has_thai_encoding_defect) — never runs OCR on fields
+that don't need it, and never touches code/numeric fields regardless of
+page quality (those come from ASCII digits, which this specific defect
+does not corrupt, verified against the golden sample).
 
 Decision policy, all thresholds from Settings (never hard-coded):
 - OCR confidence >= ocr_confidence_high: use OCR text, not flagged for
@@ -28,7 +32,7 @@ from pathlib import Path
 
 from pdf_document_intelligence.config.settings import Settings
 from pdf_document_intelligence.extract.ocr import OCRResult, ocr_region, render_page
-from pdf_document_intelligence.extract.text import TextQuality
+from pdf_document_intelligence.extract.text import TextQuality, field_has_thai_encoding_defect
 from pdf_document_intelligence.models.document import FieldValue
 from pdf_document_intelligence.normalize.thai import normalize_thai_text
 
@@ -52,7 +56,9 @@ class ThaiOcrCrossValidator:
         candidate_text = str(field.value) if field.value is not None else field.raw_value
         if not _has_thai(candidate_text):
             return field
-        if page_quality.reliable:
+        if page_quality.reliable and not field_has_thai_encoding_defect(
+            candidate_text, self.settings.min_thai_valid_char_ratio
+        ):
             return field
         if field.bbox.width <= 0 or field.bbox.height <= 0:
             return field
