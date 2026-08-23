@@ -24,6 +24,7 @@ export const api = {
   dashboardState: () => fetch(`${BASE}/api/state`).then(json),
   exportUrl: () => `${BASE}/api/export.xlsx`,
 
+  getDepartmentDivisions: () => fetch(`${BASE}/api/departments/divisions`).then(json),
   getDivisions: (docId) => fetch(`${BASE}/api/analytics/documents/${docId}/divisions`).then(json),
   getDivisionDepartments: (docId, divisionCode) =>
     fetch(`${BASE}/api/analytics/documents/${docId}/divisions/${divisionCode}/departments`).then(json),

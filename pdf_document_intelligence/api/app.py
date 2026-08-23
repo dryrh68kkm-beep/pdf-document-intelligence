@@ -139,6 +139,22 @@ def get_document(doc_id: str):
     return document_detail_json(doc, _doc_products(doc_id))
 
 
+@app.get("/api/departments/divisions")
+def get_department_divisions():
+    """Flat department->division lookup from the master catalog, for views
+    (Dashboard's daily product table) that show Division above Department
+    per row without needing a document-scoped division summary. Read-only,
+    already-cached mapping - no new computation, just exposing
+    get_default_department_to_division_code() (used server-side by
+    templates/department_groups.py) to the frontend."""
+    from pdf_document_intelligence.templates.department_groups import get_default_department_to_division_code
+
+    return {
+        department: {"code": code, "name": name}
+        for department, (code, name) in get_default_department_to_division_code().items()
+    }
+
+
 @app.get("/api/analytics/documents/{doc_id}/divisions")
 def get_document_divisions(doc_id: str):
     return build_division_summary(store.repo, doc_id)
