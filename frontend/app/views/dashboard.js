@@ -125,10 +125,6 @@ const COLUMNS = [
   },
   { key: "qty", label: "จำนวน", align: "num", render: (r) => `<span class="mono">${fmtQty(r.fields.sku_qty?.value)}</span>` },
   {
-    key: "unitPrice", label: "ราคาต่อหน่วย", align: "num",
-    render: (r) => `<span class="mono">${r.fields.unit_price?.value != null ? fmtBaht(r.fields.unit_price.value) : "—"}</span>`,
-  },
-  {
     key: "amount", label: "มูลค่ารวม", align: "num",
     render: (r) => `<span class="mono">${r.fields.amount?.value != null ? fmtBaht(r.fields.amount.value) : "—"}</span>`,
   },

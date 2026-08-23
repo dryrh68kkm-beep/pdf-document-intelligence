@@ -33,10 +33,11 @@ def test_dashboard_surfaces_todays_product_table_and_department_breakdown():
     source = DASHBOARD.read_text(encoding="utf-8")
     assert "รายการสินค้าวันนี้" in source
     assert "มูลค่าตามแผนกวันนี้" in source
-    # The table's columns per the user's spec: name, article/barcode,
-    # department, quantity, unit price, amount.
+    # The table's columns (user request: drop unit price, keep only the
+    # summarized total value): name, article/barcode, department,
+    # quantity, amount.
     assert "sku_qty" in source
-    assert "unit_price" in source
+    assert "unit_price" not in source
     assert ".amount" in source
     # Clicking a row still opens the existing product detail/evidence panel
     # - not a second, duplicate detail implementation.
