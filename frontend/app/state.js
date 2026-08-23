@@ -99,6 +99,12 @@ class Store {
       dashboardOverview: null,
       divisionSummary: null,
       divisionDetail: null,
+      // Flat department->division map from the master catalog (see
+      // GET /api/departments/divisions) - lets any view show Division
+      // above Department per row without a document-scoped division
+      // summary fetch. Refreshed alongside everything else in
+      // _doRefreshAll(); empty until the first load completes.
+      departmentDivisions: {},
       // The redesigned Dashboard shows one document date's products at a
       // time (see views/dashboard.js) - null means "not chosen yet",
       // defaulted in _doRefreshAll() to the most recent date with a
@@ -178,10 +184,11 @@ class Store {
   }
 
   async _doRefreshAll() {
-    const [documents, dashboard, rawProducts] = await Promise.all([
+    const [documents, dashboard, rawProducts, departmentDivisions] = await Promise.all([
       api.listDocuments(),
       api.dashboardState(),
       api.allProducts(),
+      api.getDepartmentDivisions(),
     ]);
     const products = rawProducts.map((p) => ({ ...p, _search: buildSearchIndex(p) }));
     const previousDocumentId = this.state.currentDocumentId;
@@ -209,7 +216,7 @@ class Store {
     // whole cache on every refresh. Deleted/reprocessing IDs are removed; an
     // edited document is invalidated explicitly before refreshAll().
     this._pruneDivisionCache(documents);
-    this.set({ documents, dashboard, products, currentDocumentId, dashboardSelectedDate, dashboardOverview: null });
+    this.set({ documents, dashboard, products, currentDocumentId, dashboardSelectedDate, departmentDivisions, dashboardOverview: null });
     // Combined into a single set() instead of two independent ones (each of
     // refreshDivisions()/refreshDashboardOverview() used to call this.set()
     // on its own, so whichever Promise settled first fired a full re-render

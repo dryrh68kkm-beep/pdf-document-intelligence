@@ -113,7 +113,16 @@ const COLUMNS = [
       <div class="mono" style="font-size:12px;">${escapeHtml(r.fields.article?.value) || "—"}</div>
       <div class="mono" style="font-size:11px;color:var(--text-faint);">${escapeHtml(r.fields.barcode?.value) || "—"}</div>`,
   },
-  { key: "dept", label: "แผนก", render: (r) => escapeHtml(r.department) || "—" },
+  {
+    key: "dept",
+    label: "ฝ่าย / แผนก",
+    render: (r) => {
+      const division = departmentDivisionsRef[r.department]?.name;
+      return `
+        ${division ? `<div style="font-size:10.5px;color:var(--text-faint);">${escapeHtml(division)}</div>` : ""}
+        <div>${escapeHtml(r.department) || "—"}</div>`;
+    },
+  },
   { key: "qty", label: "จำนวน", align: "num", render: (r) => `<span class="mono">${fmtQty(r.fields.sku_qty?.value)}</span>` },
   {
     key: "unitPrice", label: "ราคาต่อหน่วย", align: "num",
@@ -131,8 +140,15 @@ let page = 1;
 let pageSize = PAGE_SIZE_OPTIONS[0];
 let lastRenderedDate = null;
 
+// COLUMNS is built once at module load, but the dept column's render()
+// needs the department->division map from store.state - kept as a
+// module-level ref (same pattern as page/pageSize) rather than rebuilding
+// COLUMNS on every render.
+let departmentDivisionsRef = {};
+
 export function renderDashboard(container, store) {
-  const { documents, products, panel, dashboardSelectedDate } = store.state;
+  const { documents, products, panel, dashboardSelectedDate, departmentDivisions } = store.state;
+  departmentDivisionsRef = departmentDivisions || {};
 
   if (!documents.length) {
     container.innerHTML = `
