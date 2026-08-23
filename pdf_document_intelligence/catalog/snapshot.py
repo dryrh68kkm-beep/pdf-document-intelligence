@@ -72,6 +72,7 @@ def _compile_source(source_path: Path) -> dict[str, Any]:
                         "name": name,
                         "structure": _clean(row.get("SUBCLASS_NAME")),
                         "root_code": _clean(row.get("ART_NO")),
+                        "unit_cost": _clean(row.get("CURRENT_COST")),
                     }
                 )
 
