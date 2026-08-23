@@ -23,7 +23,7 @@ def _normalized_name(text: object) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> TableRow:
+def apply_catalog_to_row(\n    row: TableRow, catalog: dict[str, CatalogEntry], *, classify: bool = True\n) -> TableRow:
     name_field = row.fields.get("name")
     barcode_field = row.fields.get("barcode")
     barcode = str(barcode_field.value) if barcode_field and barcode_field.value else None
