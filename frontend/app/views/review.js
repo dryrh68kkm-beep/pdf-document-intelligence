@@ -14,6 +14,7 @@ const REASON_LABELS = {
   OCR_CONFLICT: "OCR อ่านไม่ตรงกับข้อความ PDF",
   SOURCE_CONFLICT: "ข้อมูลจากแหล่งอ่านไม่ตรงกัน",
   MISSING_DEPARTMENT: "ไม่พบ Department",
+  CATALOG_CHECKED_NOT_FOUND: "ตรวจสอบกับ Official Master แล้ว - ไม่พบ Barcode",
 };
 
 const REASON_PRIORITY = {

@@ -63,3 +63,24 @@ def test_catalog_exact_name_match_does_not_require_review():
     name = updated.fields["name"]
     assert name.review_required is False
     assert name.validation_flags == ["CATALOG_MATCH"]
+
+
+def test_barcode_not_in_catalog_is_flagged_as_checked_not_just_untouched():
+    """User report: the review panel explained OCR/font quality issues but
+    never said whether the barcode had actually been looked up against the
+    Official Master at all, so a genuinely-checked-but-absent barcode looked
+    identical to one that was never checked. A lookup miss must leave a
+    visible trace on the field, not just leave it untouched."""
+    row = TableRow(row_index=1, fields={"barcode": _field("barcode", "9999999999999"), "name": _field("name", "SOME NAME")}, confidence_band="HIGH")
+    updated = apply_catalog_to_row(row, {"8850000000001": _catalog_entry("MASTER NAME")})
+    name = updated.fields["name"]
+    assert name.value == "SOME NAME"  # untouched - no match to apply
+    assert name.source == "pdf_text"
+    assert "CATALOG_CHECKED_NOT_FOUND" in name.validation_flags
+
+
+def test_no_barcode_at_all_is_not_flagged_as_checked():
+    row = TableRow(row_index=1, fields={"name": _field("name", "SOME NAME")}, confidence_band="HIGH")
+    updated = apply_catalog_to_row(row, {"8850000000001": _catalog_entry("MASTER NAME")})
+    name = updated.fields["name"]
+    assert "CATALOG_CHECKED_NOT_FOUND" not in name.validation_flags
