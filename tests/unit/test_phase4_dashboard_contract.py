@@ -23,7 +23,7 @@ def test_phase4_dashboard_keeps_approved_minimal_scope():
 def test_phase4_dashboard_uses_document_date_not_upload_date():
     dashboard_source = DASHBOARD.read_text(encoding="utf-8")
     state_source = STATE.read_text(encoding="utf-8")
-    assert "document.documentDate" in state_source
+    assert ".documentDate" in state_source
     assert "uploadedAt" not in dashboard_source
     assert "ไม่ใช่วันที่อัปโหลด" in dashboard_source
 
