@@ -26,11 +26,20 @@ const addFilesBtn = document.getElementById("addFilesBtn");
 let uploadInProgress = false;
 let pollInProgress = false;
 let pollFailureCount = 0;
+let renderRevision = 0;
 
 async function render() {
+  const revision = ++renderRevision;
+  const requestedView = store.state.view;
+  const isCurrent = () => revision === renderRevision && store.state.view === requestedView;
+
   renderSidebar(store);
-  const renderView = await VIEWS[store.state.view]();
-  renderView(workspaceEl, store);
+  const renderView = await VIEWS[requestedView]();
+  if (!isCurrent()) return;
+
+  await renderView(workspaceEl, store, { isCurrent });
+  if (!isCurrent()) return;
+
   renderSidePanel();
   renderBottomBar();
 }
@@ -64,11 +73,6 @@ function renderSidePanel() {
   }
 }
 
-// When a correction/undo saves, refresh all data (dashboard/products
-// recalculate from the DB, never patched in place) and re-open the panel
-// on the freshly-saved row so evidence + history reflect the save. Only the
-// edited document's existing Division summary is invalidated; historical
-// documents keep their cached summaries.
 document.addEventListener("product-saved", async (e) => {
   const changedDocId = store.state.panel?.data?.docId;
   store.invalidateDivisionSummary(changedDocId);
@@ -192,9 +196,6 @@ function showDuplicateDialog(file, existing) {
   });
 }
 
-// Generic retryable-error notification, reused by any view (Documents,
-// Product Master, ...) for an action that failed - always a clear message
-// with an explicit way to try again, never a silent console.error.
 document.addEventListener("show-error", () => {
   const cfg = store.state.errorDialog;
   if (!cfg) return;
@@ -264,10 +265,6 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = api.exportUrl();
 });
 
-// Filter icon-button: decorative on views without an inline filter bar,
-// focuses the first filter control already rendered by the active view
-// (department/status/etc. selects that already exist per-view) when one is
-// present - no new filtering behavior is introduced here.
 document.getElementById("topbarFilterBtn").innerHTML = icons.filter;
 document.getElementById("topbarFilterBtn").addEventListener("click", () => {
   workspaceEl.querySelector(".filter-chip-bar select, .filter-bar select")?.focus();
