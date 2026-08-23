@@ -9,13 +9,14 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><span aria-hidden="true">📦</span> PDF Document Intelligence</div>
     <div class="search-wrap">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
       <input id="globalSearch" type="text" placeholder="ค้นหา Barcode / ชื่อสินค้า / แผนก / ไฟล์..." autocomplete="off" />
     </div>
     <div class="topbar-actions">
-      <button class="btn" id="exportBtn">Export Excel</button>
+      <button class="icon-btn" id="topbarFilterBtn" type="button" aria-label="ตัวกรอง" title="ตัวกรอง"></button>
+      <button class="icon-btn" id="topbarRefreshBtn" type="button" aria-label="รีเฟรช" title="รีเฟรช"></button>
+      <button class="btn btn-primary btn-icon-label" id="exportBtn"><span aria-hidden="true" id="exportBtnIcon"></span>Export Excel</button>
     </div>
   </header>
 
