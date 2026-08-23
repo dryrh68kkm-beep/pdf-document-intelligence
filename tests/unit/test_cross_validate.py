@@ -50,6 +50,25 @@ def test_skips_zero_area_bbox():
     assert v.maybe_apply(field, UNRELIABLE) is field
 
 
+def test_runs_ocr_when_page_reliable_but_field_itself_shows_encoding_defect():
+    """Regression guard for the garbled-name bug: a corrupted PDF font can
+    scramble a handful of product-name cells (e.g. "เพอร์ริเย่ต์" becomes
+    "เพอรรรต่ นตนตแร") while the rest of the page (numbers, headers, other
+    names) stays clean enough that the page-level average is still scored
+    "reliable" - so OCR must still run when the *specific field's* own text
+    shows the reordering defect, not only when the whole page fails."""
+    v = ThaiOcrCrossValidator(pdf_path="unused.pdf", settings=Settings())
+    garbled = "เพอรรรต่ นตนตแร ่1500 มล.แพซค 6"
+    field = _field(raw_value=garbled, value=garbled, bbox=BoundingBox(x=0, y=0, width=10, height=10, page=1))
+    ocr_result = OCRResult(text="เพอร์ร่า น้าแร่ 1500 มล.แพ็ค 6", confidence=0.93)
+    with patch("pdf_document_intelligence.validate.cross_validate.render_page", return_value=None), \
+         patch("pdf_document_intelligence.validate.cross_validate.ocr_region", return_value=ocr_result):
+        updated = v.maybe_apply(field, RELIABLE)
+    assert updated.source == "ocr"
+    assert updated.value == "เพอร์ร่า น้าแร่ 1500 มล.แพ็ค 6"
+    assert updated.review_required is True
+
+
 def test_high_confidence_ocr_still_stays_review_required():
     """Regression guard (L1-002): a page already flagged text-layer-
     unreliable is why OCR runs at all - tesseract's own confidence score
