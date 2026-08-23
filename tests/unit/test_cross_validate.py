@@ -84,3 +84,15 @@ def test_high_confidence_ocr_still_stays_review_required():
         updated = v.maybe_apply(field, UNRELIABLE)
     assert updated.confidence == 0.99
     assert updated.review_required is True
+
+
+def test_skips_official_master_match_even_on_an_unreliable_page():
+    """Exact barcode resolution is authoritative; do not pay for OCR again."""
+    v = ThaiOcrCrossValidator(pdf_path="unused.pdf", settings=Settings())
+    field = _field(
+        value="สินค้าจาก Official Master",
+        source="master_catalog",
+        bbox=BoundingBox(x=0, y=0, width=10, height=10, page=1),
+    )
+    assert v.maybe_apply(field, UNRELIABLE) is field
+    assert v.ocr_calls == 0
