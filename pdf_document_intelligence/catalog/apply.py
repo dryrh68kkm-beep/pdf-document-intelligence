@@ -1,11 +1,7 @@
-"""Applies the master catalog to a parsed row: authoritative name lookup
-by barcode (overrides OCR/PDF-text `name` when found — higher confidence
-than either, since it's an exact match against real master data, not a
-pixel/glyph reading) plus the conservative non-product classification.
+"""Applies authoritative Master-catalog product names by barcode.
 
-`raw_value` and any `ocr_raw_value` on the field are left untouched even
-when overridden — the catalog match is additive evidence, not a deletion
-of what extraction actually saw.
+Catalog resolution preserves PDF/OCR evidence.  Callers may defer non-product
+classification until after OCR by setting classify=False.
 """
 from __future__ import annotations
 
@@ -23,7 +19,9 @@ def _normalized_name(text: object) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def apply_catalog_to_row(\n    row: TableRow, catalog: dict[str, CatalogEntry], *, classify: bool = True\n) -> TableRow:
+def apply_catalog_to_row(
+    row: TableRow, catalog: dict[str, CatalogEntry], *, classify: bool = True
+) -> TableRow:
     name_field = row.fields.get("name")
     barcode_field = row.fields.get("barcode")
     barcode = str(barcode_field.value) if barcode_field and barcode_field.value else None
@@ -37,15 +35,8 @@ def apply_catalog_to_row(\n    row: TableRow, catalog: dict[str, CatalogEntry], 
         extracted_name = _normalized_name(name_field.value)
         master_name = _normalized_name(entry.name)
         flags = ["CATALOG_MATCH"]
-
-        # Exact barcode lookup remains authoritative. A different source name
-        # is retained as audit evidence because Thai text layers/OCR can be
-        # imperfect, but it must not downgrade an exact catalog match into a
-        # manual-review item. Identifier/geometry validation is responsible
-        # for deciding whether the barcode itself is trustworthy.
         if extracted_name and master_name and extracted_name != master_name:
             flags.append("CATALOG_NAME_MISMATCH")
-
         fields["name"] = name_field.model_copy(
             update={
                 "value": entry.name,
@@ -56,18 +47,14 @@ def apply_catalog_to_row(\n    row: TableRow, catalog: dict[str, CatalogEntry], 
             }
         )
     elif barcode and name_field:
-        # No silent gap: record that a lookup was actually attempted and
-        # came back empty, so the UI can tell "checked against Official
-        # Master, genuinely not there" apart from "never checked" (user
-        # report: the review panel explained OCR/font issues but never
-        # said whether the barcode had been checked against the master
-        # file at all).
         fields["name"] = name_field.model_copy(
             update={"validation_flags": [*name_field.validation_flags, "CATALOG_CHECKED_NOT_FOUND"]}
         )
 
     if not classify:
-        return row.model_copy(update={"fields": fields, "confidence_band": compute_confidence_band(fields)})
+        return row.model_copy(
+            update={"fields": fields, "confidence_band": compute_confidence_band(fields)}
+        )
 
     classification = classify_product(classification_name)
     return row.model_copy(
