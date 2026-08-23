@@ -28,9 +28,21 @@ let uploadInProgress = false;
 let pollInProgress = false;
 let pollFailureCount = 0;
 
+// render() is async only because loading a view module the first time is a
+// dynamic import() - store.subscribe(render) fires it on every store.set(),
+// so two state changes close together (e.g. two unrelated background
+// refreshes) can leave two render() calls in flight at once. Without a
+// guard, whichever's import() happens to resolve LAST wins the DOM write,
+// even if it started first - a real, reproducible source of duplicate
+// full-view rebuilds. renderGeneration lets a render() call that's no
+// longer the latest bail out before writing the DOM, instead of racing the
+// newer one.
+let renderGeneration = 0;
 async function render() {
+  const myGeneration = ++renderGeneration;
   renderSidebar(store);
   const renderView = await VIEWS[store.state.view]();
+  if (myGeneration !== renderGeneration) return; // a newer render() already started - it owns the DOM now
   renderView(workspaceEl, store);
   renderSidePanel();
   renderBottomBar();
