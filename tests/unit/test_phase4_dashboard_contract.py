@@ -13,6 +13,12 @@ STYLES = ROOT / "frontend" / "app" / "styles.css"
 # structural/data contract - the same KPI numbers must still be surfaced,
 # sourced the same way (document date, not upload date) - rather than the
 # retired phase4-* markup.
+#
+# A later pass (user request: consolidate the Dashboard to one page) removed
+# the standalone "Department Overview" and "Recent Documents" sections -
+# departments are now reached by drilling into a Division card (still the
+# same divisionDetail.js/openDivision() flow), and recent documents already
+# live on the Documents page, so the Dashboard doesn't duplicate that list.
 
 
 def test_dashboard_surfaces_core_kpis():
@@ -21,10 +27,9 @@ def test_dashboard_surfaces_core_kpis():
     assert "จำนวนรายการ" in source
     assert "จำนวนเอกสาร" in source
     assert "Division Overview" in source
-    assert "Department Overview" in source
+    assert "openDivision" in source  # departments are reached via the division drill-down, not a flat section
     assert "Data Quality" in source
     assert "Reconciliation Summary" in source
-    assert "Recent Documents" in source
 
 
 def test_dashboard_surfaces_prominent_quality_score():
