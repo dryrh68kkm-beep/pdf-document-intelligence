@@ -214,9 +214,27 @@ def process_document(
         reconcile_stage_label = "coverage + pallet-block reconciliation + duplicate detection"
         block_rows_for_reconcile = block_rows
 
+    # Resolve exact barcode matches before OCR.  An Official Master name is
+    # authoritative, so it never needs expensive pixel OCR; this is especially
+    # important for large Thai documents where hundreds of rows may otherwise
+    # spawn Tesseract calls.  Classification stays after OCR so an unmatched
+    # row can still benefit from OCR-recovered text.
+    catalog = get_default_catalog() if enable_catalog else None
+    matched = 0
+    if catalog is not None:
+        with log.step("catalog_lookup", "Official Master barcode lookup before OCR"):
+            for table in extracted_tables:
+                table.rows = [apply_catalog_to_row(row, catalog, classify=False) for row in table.rows]
+            matched = sum(
+                row.fields["name"].source == "master_catalog"
+                for table in extracted_tables for row in table.rows
+            )
+            progress("ตรวจสอบ Official Master", matched, total_rows)
+            log.record("catalog_lookup", f"{matched}/{total_rows} rows matched catalog before OCR")
+
     ocr_engine_version = settings.ocr_engine_version
     if enable_ocr:
-        with log.step("ocr_cross_validation", "selective region-level OCR for Thai fields on unreliable pages"):
+        with log.step("ocr_cross_validation", "selective region-level OCR for unresolved Thai fields"):
             validator = ThaiOcrCrossValidator(path, settings)
             all_rows = [row for table in extracted_tables for row in table.rows]
             for i, row in enumerate(all_rows, start=1):
@@ -234,23 +252,19 @@ def process_document(
             if validator.ocr_calls:
                 ocr_engine_version = "tesseract-5.3.4 (tha+eng)"
 
-    if enable_catalog:
-        with log.step("catalog_lookup", "master catalog barcode lookup + non-product classification"):
-            catalog = get_default_catalog()
-            matched = 0
+    if catalog is not None:
+        with log.step("classification", "non-product classification after OCR/master resolution"):
             flagged = 0
             for table in extracted_tables:
                 new_rows = []
                 for row in table.rows:
                     updated_row = apply_catalog_to_row(row, catalog)
-                    if updated_row.fields["name"].source == "master_catalog":
-                        matched += 1
                     if updated_row.suspected_non_product:
                         flagged += 1
                     new_rows.append(updated_row)
                 table.rows = new_rows
             log.record(
-                "catalog_lookup",
+                "classification",
                 f"{matched}/{total_rows} rows matched catalog; {flagged} flagged as suspected non-product",
             )
 
