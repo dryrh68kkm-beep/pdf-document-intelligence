@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import uuid
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,11 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
+def _unique_suffix() -> str:
+    """Keep human-readable timestamps while avoiding same-second collisions."""
+    return uuid.uuid4().hex[:8]
+
+
 def create_backup() -> Path:
     conn = get_connection()
     version = current_version(conn)
@@ -32,29 +38,38 @@ def create_backup() -> Path:
     backups_dir = data_dir / "backups"
     backups_dir.mkdir(parents=True, exist_ok=True)
 
-    snapshot_path = backups_dir / f"_snapshot-{_timestamp()}.db"
-    dest_conn = sqlite3.connect(str(snapshot_path))
-    with dest_conn:
-        conn.backup(dest_conn)
-    dest_conn.close()
+    stamp = _timestamp()
+    suffix = _unique_suffix()
+    snapshot_path = backups_dir / f"_snapshot-{stamp}-{suffix}.db"
+    zip_path = backups_dir / f"backup-{stamp}-{suffix}.zip"
 
-    counts = {
-        "documents": conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0],
-        "productRows": conn.execute("SELECT COUNT(*) FROM product_rows").fetchone()[0],
-        "localMaster": conn.execute("SELECT COUNT(*) FROM local_product_master").fetchone()[0],
-    }
-    metadata = {
-        "schemaVersion": version,
-        "createdAt": datetime.now(timezone.utc).isoformat(),
-        "counts": counts,
-    }
+    dest_conn = None
+    try:
+        dest_conn = sqlite3.connect(str(snapshot_path))
+        with dest_conn:
+            conn.backup(dest_conn)
+        dest_conn.close()
+        dest_conn = None
 
-    zip_path = backups_dir / f"backup-{_timestamp()}.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(snapshot_path, "app.db")
-        zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
-    snapshot_path.unlink(missing_ok=True)
-    return zip_path
+        counts = {
+            "documents": conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0],
+            "productRows": conn.execute("SELECT COUNT(*) FROM product_rows").fetchone()[0],
+            "localMaster": conn.execute("SELECT COUNT(*) FROM local_product_master").fetchone()[0],
+        }
+        metadata = {
+            "schemaVersion": version,
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "counts": counts,
+        }
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(snapshot_path, "app.db")
+            zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
+        return zip_path
+    finally:
+        if dest_conn is not None:
+            dest_conn.close()
+        snapshot_path.unlink(missing_ok=True)
 
 
 class RestoreError(Exception):
@@ -71,31 +86,34 @@ def restore_backup(zip_bytes: bytes) -> dict:
         metadata = json.loads(zf.read("metadata.json")) if "metadata.json" in names else {}
         db_bytes = zf.read("app.db")
 
-    tmp_path = get_data_dir() / f"_restore-candidate-{_timestamp()}.db"
+    tmp_path = get_data_dir() / f"_restore-candidate-{_timestamp()}-{_unique_suffix()}.db"
     tmp_path.write_bytes(db_bytes)
     try:
-        candidate_conn = sqlite3.connect(str(tmp_path))
-        candidate_version = current_version(candidate_conn)
-        candidate_conn.close()
-    except sqlite3.Error as exc:
+        try:
+            candidate_conn = sqlite3.connect(str(tmp_path))
+            candidate_version = current_version(candidate_conn)
+            candidate_conn.close()
+        except sqlite3.Error as exc:
+            raise RestoreError(f"backup file is not a valid database: {exc}") from exc
+
+        if candidate_version > SCHEMA_VERSION:
+            raise RestoreError(
+                f"backup schema version {candidate_version} is newer than this app supports ({SCHEMA_VERSION})"
+            )
+
+        pre_restore_backup = create_backup()
+
+        from pdf_document_intelligence.db import connection as connection_module
+
+        with connection_module._lock:
+            if connection_module._conn is not None:
+                connection_module._conn.close()
+                connection_module._conn = None
+        shutil.move(str(tmp_path), str(get_db_path()))
+        get_connection()  # reopen + run any pending migrations on the restored DB
+
+        return {"restored": True, "preRestoreBackup": str(pre_restore_backup), "metadata": metadata}
+    finally:
+        # Validation failures, backup failures, and interrupted restores should
+        # never leave candidate DB files accumulating in the data directory.
         tmp_path.unlink(missing_ok=True)
-        raise RestoreError(f"backup file is not a valid database: {exc}") from exc
-
-    if candidate_version > SCHEMA_VERSION:
-        tmp_path.unlink(missing_ok=True)
-        raise RestoreError(
-            f"backup schema version {candidate_version} is newer than this app supports ({SCHEMA_VERSION})"
-        )
-
-    pre_restore_backup = create_backup()
-
-    from pdf_document_intelligence.db import connection as connection_module
-
-    with connection_module._lock:
-        if connection_module._conn is not None:
-            connection_module._conn.close()
-            connection_module._conn = None
-    shutil.move(str(tmp_path), str(get_db_path()))
-    get_connection()  # reopen + run any pending migrations on the restored DB
-
-    return {"restored": True, "preRestoreBackup": str(pre_restore_backup), "metadata": metadata}
