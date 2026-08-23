@@ -12,6 +12,75 @@ function buildSearchIndex(product) {
   return parts.filter(Boolean).join(" ").toLowerCase();
 }
 
+function inDocumentDateRange(documentDate, dateFrom, dateTo) {
+  if (!documentDate) return !dateFrom && !dateTo;
+  if (dateFrom && documentDate < dateFrom) return false;
+  if (dateTo && documentDate > dateTo) return false;
+  return true;
+}
+
+function buildDashboardOverview(items, divisionFilter) {
+  const divisionMap = new Map();
+  let amountAvailable = false;
+  let allRows = 0;
+  let allAmount = 0;
+
+  items.forEach(({ document, summary }) => {
+    amountAvailable = amountAvailable || Boolean(summary.amountAvailable);
+    allRows += summary.documentTotals?.rowCount ?? 0;
+    allAmount += summary.documentTotals?.amount ?? 0;
+
+    (summary.divisions || []).forEach((division) => {
+      if (!divisionMap.has(division.divisionCode)) {
+        divisionMap.set(division.divisionCode, {
+          divisionCode: division.divisionCode,
+          divisionName: division.divisionName,
+          rowCount: 0,
+          amount: 0,
+          documentIds: new Set(),
+        });
+      }
+      const bucket = divisionMap.get(division.divisionCode);
+      bucket.rowCount += division.rowCount ?? 0;
+      bucket.amount += division.amount ?? 0;
+      if ((division.rowCount ?? 0) > 0) bucket.documentIds.add(document.id);
+    });
+  });
+
+  const divisions = [...divisionMap.values()]
+    .map((division) => ({
+      divisionCode: division.divisionCode,
+      divisionName: division.divisionName,
+      rowCount: division.rowCount,
+      amount: Math.round((division.amount + Number.EPSILON) * 100) / 100,
+      documentCount: division.documentIds.size,
+    }))
+    .sort((a, b) => a.divisionCode.localeCompare(b.divisionCode));
+
+  const selected = divisionFilter && divisionFilter !== "all"
+    ? divisions.find((division) => division.divisionCode === divisionFilter) || null
+    : null;
+
+  const totals = selected
+    ? {
+        rowCount: selected.rowCount,
+        amount: selected.amount,
+        documentCount: selected.documentCount,
+      }
+    : {
+        rowCount: allRows,
+        amount: Math.round((allAmount + Number.EPSILON) * 100) / 100,
+        documentCount: items.length,
+      };
+
+  return {
+    totals,
+    divisions,
+    amountAvailable,
+    selectedDivision: selected?.divisionCode ?? "all",
+  };
+}
+
 class Store {
   constructor() {
     this.state = {
@@ -24,10 +93,15 @@ class Store {
       searchQuery: "",
       currentDocumentId: null,
       dashboardDateFilter: "",
+      dashboardDateFrom: "",
+      dashboardDateTo: "",
+      dashboardDivisionFilter: "all",
+      dashboardOverview: null,
       divisionSummary: null,
       divisionDetail: null,
     };
     this._listeners = [];
+    this._divisionCache = new Map();
   }
 
   subscribe(fn) {
@@ -63,9 +137,6 @@ class Store {
       api.allProducts(),
     ]);
     const products = rawProducts.map((p) => ({ ...p, _search: buildSearchIndex(p) }));
-    // "Current document" for the Dashboard's Division rollup: the most
-    // recently uploaded document (documents is already sorted newest
-    // first by the API) - the Dashboard shows one packing list at a time.
     const previousDocumentId = this.state.currentDocumentId;
     const dateFilter = this.state.dashboardDateFilter;
     const visibleDocuments = dateFilter
@@ -74,8 +145,45 @@ class Store {
     const currentDocumentId = visibleDocuments.some((doc) => doc.id === previousDocumentId)
       ? previousDocumentId
       : visibleDocuments[0]?.id ?? null;
-    this.set({ documents, dashboard, products, currentDocumentId });
-    await this.refreshDivisions();
+
+    this._divisionCache.clear();
+    this.set({ documents, dashboard, products, currentDocumentId, dashboardOverview: null });
+    await Promise.all([this.refreshDivisions(), this.refreshDashboardOverview()]);
+  }
+
+  async _getDivisionSummary(docId) {
+    if (this._divisionCache.has(docId)) return this._divisionCache.get(docId);
+    try {
+      const summary = await api.getDivisions(docId);
+      this._divisionCache.set(docId, summary);
+      return summary;
+    } catch {
+      this._divisionCache.set(docId, null);
+      return null;
+    }
+  }
+
+  async refreshDashboardOverview() {
+    const { dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter } = this.state;
+    const documents = this.state.documents.filter(
+      (doc) => doc.status === "complete" && inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo),
+    );
+    const pairs = await Promise.all(
+      documents.map(async (document) => ({ document, summary: await this._getDivisionSummary(document.id) })),
+    );
+    const usable = pairs.filter((item) => item.summary);
+    this.set({ dashboardOverview: buildDashboardOverview(usable, dashboardDivisionFilter) });
+  }
+
+  async setDashboardOverviewFilters({ dateFrom, dateTo, division } = {}) {
+    const patch = {
+      dashboardDateFrom: dateFrom ?? this.state.dashboardDateFrom,
+      dashboardDateTo: dateTo ?? this.state.dashboardDateTo,
+      dashboardDivisionFilter: division ?? this.state.dashboardDivisionFilter,
+      dashboardOverview: null,
+    };
+    this.set(patch);
+    await this.refreshDashboardOverview();
   }
 
   async refreshDivisions() {
@@ -84,12 +192,8 @@ class Store {
       this.set({ divisionSummary: null });
       return;
     }
-    try {
-      const divisionSummary = await api.getDivisions(doc.id);
-      this.set({ divisionSummary });
-    } catch {
-      this.set({ divisionSummary: null });
-    }
+    const divisionSummary = await this._getDivisionSummary(doc.id);
+    this.set({ divisionSummary });
   }
 
   async selectDashboardDocument(docId) {
