@@ -331,7 +331,27 @@ async def import_master_catalog(file: UploadFile):
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
 
+    _clear_catalog_caches()
     return _snapshot_status_payload()
+
+
+def _clear_catalog_caches() -> None:
+    """The catalog and department-hierarchy readers are lru_cache'd for the
+    life of the process (they're read on every extraction and would
+    otherwise mean re-parsing the multi-thousand-row snapshot per row) - a
+    runtime import must invalidate all of them or the running process keeps
+    matching against the catalog it had in memory before the upload."""
+    from pdf_document_intelligence.catalog.loader import get_default_catalog
+    from pdf_document_intelligence.templates.department_groups import (
+        get_default_department_divisions,
+        get_default_department_to_division_code,
+        get_default_divisions,
+    )
+
+    get_default_catalog.cache_clear()
+    get_default_department_divisions.cache_clear()
+    get_default_divisions.cache_clear()
+    get_default_department_to_division_code.cache_clear()
 
 
 @app.get("/api/state")
