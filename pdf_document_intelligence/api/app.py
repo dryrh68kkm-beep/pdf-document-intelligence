@@ -273,6 +273,87 @@ def official_master_count():
     return {"count": len(get_default_catalog())}
 
 
+_MAX_MASTER_IMPORT_BYTES = 50 * 1024 * 1024  # 50MB
+
+
+def _snapshot_status_payload() -> dict:
+    from datetime import datetime, timezone
+
+    from pdf_document_intelligence.catalog import snapshot as snapshot_module
+
+    path = snapshot_module.get_snapshot_path()
+    exists = path.is_file()
+    last_updated = None
+    product_count = 0
+    if exists:
+        last_updated = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+        try:
+            product_count = len(snapshot_module.load_catalog_snapshot().get("products", []))
+        except Exception:  # noqa: BLE001 - a corrupt snapshot must not break status reporting
+            product_count = 0
+    return {
+        "exists": exists,
+        "productCount": product_count,
+        "lastUpdated": last_updated,
+        "sourceConfigured": snapshot_module.configured_source_path() is not None,
+    }
+
+
+@app.get("/api/master/snapshot/status")
+def master_snapshot_status():
+    return _snapshot_status_payload()
+
+
+@app.post("/api/master/import")
+async def import_master_catalog(file: UploadFile):
+    from pdf_document_intelligence.catalog import snapshot as snapshot_module
+
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(400, "Only .csv files are accepted")
+    csv_bytes = await file.read()
+    if not csv_bytes:
+        raise HTTPException(400, "Empty file")
+    if len(csv_bytes) > _MAX_MASTER_IMPORT_BYTES:
+        raise HTTPException(400, "File too large (limit 50MB)")
+
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+            tmp.write(csv_bytes)
+            tmp_path = Path(tmp.name)
+        try:
+            snapshot_module.import_catalog_snapshot(tmp_path, overwrite=True)
+        except FileNotFoundError as exc:
+            raise HTTPException(400, "Could not read uploaded file") from exc
+        except (OSError, ValueError, UnicodeError) as exc:
+            raise HTTPException(400, f"Failed to import catalog: {exc}") from exc
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    _clear_catalog_caches()
+    return _snapshot_status_payload()
+
+
+def _clear_catalog_caches() -> None:
+    """The catalog and department-hierarchy readers are lru_cache'd for the
+    life of the process (they're read on every extraction and would
+    otherwise mean re-parsing the multi-thousand-row snapshot per row) - a
+    runtime import must invalidate all of them or the running process keeps
+    matching against the catalog it had in memory before the upload."""
+    from pdf_document_intelligence.catalog.loader import get_default_catalog
+    from pdf_document_intelligence.templates.department_groups import (
+        get_default_department_divisions,
+        get_default_department_to_division_code,
+        get_default_divisions,
+    )
+
+    get_default_catalog.cache_clear()
+    get_default_department_divisions.cache_clear()
+    get_default_divisions.cache_clear()
+    get_default_department_to_division_code.cache_clear()
+
+
 @app.get("/api/state")
 def get_dashboard_state():
     return build_dashboard_state(store.repo)

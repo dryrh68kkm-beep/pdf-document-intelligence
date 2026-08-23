@@ -42,6 +42,7 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
         base.update(
             {
                 "pages": doc["page_count"],
+                "documentType": meta.get("documentType"),
                 "confidence": round(meta["confidence"], 2) if meta.get("confidence") is not None else None,
                 "status_document": meta.get("statusDocument"),
                 "reconciled": meta.get("reconciled"),

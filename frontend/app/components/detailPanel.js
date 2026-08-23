@@ -57,11 +57,28 @@ function fieldBlock(name, fv, editable) {
       ${sourceNote}
     </div>`;
   if (fv.review || fv.source === "master_catalog" || fv.corrected) {
+    const mismatch = fv.ocrRaw && fv.raw && fv.ocrRaw !== fv.raw;
+    const confidencePct = fv.ocrConfidence != null ? Math.round(fv.ocrConfidence * 100) : (fv.confidence != null ? Math.round(fv.confidence * 100) : null);
     html += `
       <div class="dp-field">
         <div class="dp-label">หลักฐาน${fv.review ? "" : " (ยืนยันแล้ว ไม่ต้องตรวจสอบ)"}</div>
-        <div class="dp-value${isThai ? " thai" : ""}" style="margin-bottom:4px;">Raw PDF: ${fv.raw || "—"}</div>
-        ${fv.ocrRaw ? `<div class="dp-value thai" style="margin-bottom:4px;">OCR: ${fv.ocrRaw} (${Math.round((fv.ocrConfidence || 0) * 100)}%)</div>` : ""}
+        <div class="dp-evidence-compare">
+          <div class="dp-evidence-row dp-evidence-current">
+            <span class="dp-evidence-tag">ค่าปัจจุบัน (ใช้จริง)</span>
+            <span class="dp-evidence-val${isThai ? " thai" : ""}">${fv.value ?? "—"}</span>
+            ${confidencePct != null ? `<span class="dp-evidence-conf">${confidencePct}% มั่นใจ</span>` : ""}
+          </div>
+          ${fv.ocrRaw ? `
+          <div class="dp-evidence-row${mismatch ? " dp-evidence-mismatch" : ""}">
+            <span class="dp-evidence-tag">OCR อ่านได้</span>
+            <span class="dp-evidence-val thai">${fv.ocrRaw}</span>
+            ${fv.ocrConfidence != null ? `<span class="dp-evidence-conf">${Math.round(fv.ocrConfidence * 100)}%</span>` : ""}
+          </div>` : ""}
+          <div class="dp-evidence-row">
+            <span class="dp-evidence-tag">Raw PDF text</span>
+            <span class="dp-evidence-val${isThai ? " thai" : ""}">${fv.raw || "—"}</span>
+          </div>
+        </div>
         <ul class="dp-reasons">${(fv.flags || []).map((f) => `<li>${FLAG_LABEL[f] || f}</li>`).join("")}</ul>
       </div>`;
   }
@@ -122,7 +139,9 @@ export function renderProductDetail(container, product, store) {
     ${product.suspectedNonProduct ? `<div class="dp-badge">🎁 สงสัยว่าไม่ใช่สินค้า: ${(product.nonProductReasons || []).join(", ")}</div>` : ""}
     <div class="dp-edit-toolbar">
       ${editing ? "" : `<button class="btn" id="dpEditToggle" type="button">แก้ไข</button>`}
+      ${!editing && product.reviewRequired ? `<button class="btn btn-primary" id="dpMarkResolved" type="button">✓ ยืนยันว่าถูกต้อง (Mark Resolved)</button>` : ""}
       ${editing ? `<span class="dp-editing-badge">โหมดแก้ไข</span>` : ""}
+      <span class="dp-resolve-feedback" id="dpResolveFeedback"></span>
     </div>
     <div class="dp-row">
       ${editFieldBlock("barcode", f.barcode)}
@@ -175,6 +194,24 @@ export function renderProductDetail(container, product, store) {
     iframe.src = `${api.pdfUrl(product.docId)}#page=${product.page}&view=FitH`;
     wrap.appendChild(iframe);
   });
+
+  const resolveBtn = container.querySelector("#dpMarkResolved");
+  if (resolveBtn) {
+    resolveBtn.addEventListener("click", async () => {
+      const feedback = container.querySelector("#dpResolveFeedback");
+      resolveBtn.disabled = true;
+      feedback.textContent = "กำลังยืนยัน...";
+      feedback.className = "dp-resolve-feedback";
+      try {
+        await api.confirmReview(product.rowId);
+        document.dispatchEvent(new CustomEvent("product-saved", { detail: { rowId: product.rowId } }));
+      } catch (err) {
+        feedback.textContent = "ยืนยันไม่สำเร็จ — ยังมีปัญหาที่ต้องแก้ไขก่อน (เช่น รหัสสินค้า/ยอดเงินขัดแย้ง)";
+        feedback.className = "dp-resolve-feedback error";
+        resolveBtn.disabled = false;
+      }
+    });
+  }
 
   const editToggle = container.querySelector("#dpEditToggle");
   if (editToggle) {

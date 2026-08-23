@@ -4,6 +4,12 @@ let searchQuery = "";
 let statusFilter = "all";
 let sortMode = "newest";
 
+const DOCUMENT_TYPE_LABEL = {
+  packing_list_bigc_cdc: "Big C",
+  packing_list_bpdc: "BPDC",
+  UNKNOWN_LAYOUT: "ไม่ทราบ",
+};
+
 function qualityLabel(band) {
   return {
     VERIFIED: "เชื่อถือได้",
@@ -13,6 +19,19 @@ function qualityLabel(band) {
   }[band] || "ยังไม่มีคะแนน";
 }
 
+function bandChipClass(band) {
+  if (band === "VERIFIED" || band === "GOOD") return "HIGH";
+  if (band === "NEED_REVIEW") return "MEDIUM";
+  if (band === "HIGH_RISK") return "LOW";
+  return "MEDIUM";
+}
+
+function typeTagClass(documentType) {
+  if (documentType === "packing_list_bigc_cdc") return "type-tag-bigc";
+  if (documentType === "packing_list_bpdc") return "type-tag-bpdc";
+  return "type-tag-unknown";
+}
+
 function fmtDate(value) {
   if (!value) return "ไม่พบวันที่เอกสาร";
   return new Date(`${value}T00:00:00`).toLocaleDateString("th-TH", {
@@ -20,6 +39,11 @@ function fmtDate(value) {
     month: "short",
     day: "numeric",
   });
+}
+
+function fmtDateTime(value) {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
 
 function filteredDocuments(documents) {
@@ -45,6 +69,10 @@ function filteredDocuments(documents) {
     if (sortMode === "quality-high") return (b.qualityScore ?? -1) - (a.qualityScore ?? -1);
     return String(b.documentDate || "").localeCompare(String(a.documentDate || ""));
   });
+}
+
+function isProblemDocument(doc) {
+  return doc.qualityBand === "HIGH_RISK" || (doc.qualityCounts?.errors ?? 0) > 0 || doc.status === "error";
 }
 
 export function renderDocuments(container, store) {
@@ -95,7 +123,7 @@ export function renderDocuments(container, store) {
 
   const list = container.querySelector("#docList");
   if (!documents.length) {
-    list.innerHTML = `<div class="empty-state"><div class="icon">📄</div><div class="title">ยังไม่มีเอกสาร</div></div>`;
+    list.innerHTML = `<div class="empty-state"><div class="icon">📄</div><div class="title">ยังไม่มีเอกสาร</div><div>เพิ่ม PDF เพื่อเริ่มวิเคราะห์</div></div>`;
     return;
   }
   if (!visible.length) {
@@ -103,54 +131,96 @@ export function renderDocuments(container, store) {
     return;
   }
 
-  visible.forEach((doc) => {
-    const row = document.createElement("div");
-    row.className = "doc-row";
-    const reviewCount = doc.qualityCounts?.needReview ?? 0;
-    const errorCount = doc.qualityCounts?.errors ?? 0;
-    const qualityText = doc.qualityScore == null
-      ? "Quality —"
-      : `Quality ${doc.qualityScore}/100 · ${qualityLabel(doc.qualityBand)}`;
-    const statusText =
-      doc.status === "complete"
-        ? `${fmtDate(doc.documentDate)} · ${doc.rowCount ?? 0} rows · ${doc.pages ?? "?"} pages · ${qualityText}${reviewCount ? ` · ${reviewCount} ต้องตรวจ` : ""}${errorCount ? ` · ${errorCount} error` : ""}`
-        : doc.status === "error"
-        ? `อ่านไม่สำเร็จ: ${doc.error || "unknown error"}`
-        : `${doc.progress?.stage || "กำลังประมวลผล"} ${doc.progress?.total ? `(${doc.progress.current}/${doc.progress.total})` : ""}`;
+  const wrap = document.createElement("div");
+  wrap.className = "doc-table-wrap";
+  const table = document.createElement("table");
+  table.className = "doc-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>ไฟล์</th>
+        <th>ประเภท</th>
+        <th>วันที่เอกสาร</th>
+        <th class="num">หน้า</th>
+        <th class="num">รายการ</th>
+        <th>คุณภาพ</th>
+        <th class="num">ต้องตรวจสอบ</th>
+        <th>สถานะ</th>
+        <th>นำเข้าเมื่อ</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+  wrap.appendChild(table);
+  list.innerHTML = "";
+  list.appendChild(wrap);
 
-    row.innerHTML = `
-      <span class="status-dot ${doc.status}"></span>
-      <div style="min-width:0;flex:1;">
-        <div class="doc-name">${doc.filename}</div>
-        <div class="doc-meta">${statusText}</div>
-      </div>
-      <div class="doc-actions">
+  const tbody = table.querySelector("tbody");
+  visible.forEach((doc) => {
+    const reviewCount = doc.qualityCounts?.needReview ?? 0;
+    const problem = isProblemDocument(doc);
+    const statusLabel = doc.status === "complete" ? "พร้อมใช้งาน" : doc.status === "error" ? "ผิดพลาด" : "กำลังประมวลผล";
+    const tr = document.createElement("tr");
+    tr.className = problem ? "doc-table-row problem" : "doc-table-row";
+    tr.innerHTML = `
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="status-dot ${doc.status}"></span>
+          <span class="doc-name">${doc.filename}</span>
+        </div>
+        ${doc.status === "error" ? `<div class="doc-meta">${doc.error || "unknown error"}</div>` : doc.status === "processing" ? `<div class="doc-meta">${doc.progress?.stage || "กำลังประมวลผล"} ${doc.progress?.total ? `(${doc.progress.current}/${doc.progress.total})` : ""}</div>` : ""}
+      </td>
+      <td><span class="type-tag ${typeTagClass(doc.documentType)}">${DOCUMENT_TYPE_LABEL[doc.documentType] || "ไม่ทราบ"}</span></td>
+      <td>${fmtDate(doc.documentDate)}</td>
+      <td class="num mono">${doc.pages ?? "—"}</td>
+      <td class="num mono">${doc.rowCount ?? "—"}</td>
+      <td>${doc.qualityScore == null ? "—" : `<span class="band-chip band-${bandChipClass(doc.qualityBand)}"><span class="dot"></span>${doc.qualityScore}/100 · ${qualityLabel(doc.qualityBand)}</span>`}</td>
+      <td class="num mono">${reviewCount || "—"}</td>
+      <td><span class="status-pill status-${doc.status}">${statusLabel}</span></td>
+      <td class="mono">${fmtDateTime(doc.uploadedAt)}</td>
+      <td class="doc-table-actions">
         ${reviewCount > 0 ? `<button class="btn btn-sm btn-primary" data-action="review">Review ${reviewCount}</button>` : ""}
         ${doc.status !== "processing" ? `<button class="btn btn-sm" data-action="reprocess">Reprocess</button>` : ""}
         <button class="btn btn-sm" data-action="remove">Remove</button>
-      </div>
+      </td>
     `;
 
-    row.querySelector('[data-action="review"]')?.addEventListener("click", () => {
+    tr.querySelector('[data-action="review"]')?.addEventListener("click", () => {
       store.selectDashboardDocument(doc.id).then(() => store.navigate("review"));
     });
-    row.querySelector('[data-action="reprocess"]')?.addEventListener("click", async () => {
-      await api.reprocessDocument(doc.id);
-      await store.refreshAll();
-    });
-    row.querySelector('[data-action="remove"]').addEventListener("click", () => {
+    const doReprocess = async () => {
+      try {
+        await api.reprocessDocument(doc.id);
+        await store.refreshAll();
+      } catch (error) {
+        store.set({
+          errorDialog: { title: "ประมวลผลใหม่ไม่สำเร็จ", message: String(error?.message || error), onRetry: doReprocess },
+        });
+        document.dispatchEvent(new CustomEvent("show-error"));
+      }
+    };
+    tr.querySelector('[data-action="reprocess"]')?.addEventListener("click", doReprocess);
+    tr.querySelector('[data-action="remove"]').addEventListener("click", () => {
       store.set({
         confirmDialog: {
           title: `ลบ ${doc.filename}?`,
           message: "ข้อมูลของไฟล์นี้จะถูกลบออกจาก Dashboard และคำนวณยอดใหม่ทันที",
           onConfirm: async () => {
-            await api.deleteDocument(doc.id);
-            await store.refreshAll();
+            try {
+              await api.deleteDocument(doc.id);
+              await store.refreshAll();
+            } catch (error) {
+              store.set({
+                errorDialog: { title: "ลบไม่สำเร็จ", message: String(error?.message || error) },
+              });
+              document.dispatchEvent(new CustomEvent("show-error"));
+            }
           },
         },
       });
       document.dispatchEvent(new CustomEvent("show-confirm"));
     });
-    list.appendChild(row);
+    tbody.appendChild(tr);
   });
 }

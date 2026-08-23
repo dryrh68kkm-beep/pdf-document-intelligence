@@ -24,6 +24,7 @@ const addFilesBtn = document.getElementById("addFilesBtn");
 
 let uploadInProgress = false;
 let pollInProgress = false;
+let pollFailureCount = 0;
 
 async function render() {
   renderSidebar(store);
@@ -85,6 +86,14 @@ function renderBottomBar() {
   } else {
     const totalPages = documents.reduce((a, d) => a + (d.pages || 0), 0);
     fileStat.innerHTML = `<b>${documents.length}</b> Files · <b>${totalPages}</b> Pages`;
+  }
+  if (pollFailureCount >= 2) {
+    strip.innerHTML = `<div class="processing-item connection-warning">
+      <span>⚠ เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>
+      <button class="btn btn-sm" id="connectionRetryBtn" type="button">ลองใหม่</button>
+    </div>`;
+    strip.querySelector("#connectionRetryBtn")?.addEventListener("click", () => pollLoop());
+    return;
   }
   const processing = documents.filter((d) => d.status === "processing");
   strip.innerHTML = processing
@@ -182,6 +191,27 @@ function showDuplicateDialog(file, existing) {
   });
 }
 
+// Generic retryable-error notification, reused by any view (Documents,
+// Product Master, ...) for an action that failed - always a clear message
+// with an explicit way to try again, never a silent console.error.
+document.addEventListener("show-error", () => {
+  const cfg = store.state.errorDialog;
+  if (!cfg) return;
+  modalBox.innerHTML = `
+    <h3>${cfg.title}</h3>
+    <p>${cfg.message}</p>
+    <div class="modal-actions">
+      ${cfg.onRetry ? `<button class="btn" id="errorCancel">ปิด</button><button class="btn btn-primary" id="errorRetry">ลองใหม่</button>` : `<button class="btn btn-primary" id="errorCancel">ตกลง</button>`}
+    </div>
+  `;
+  modalBackdrop.classList.add("open");
+  modalBox.querySelector("#errorCancel").addEventListener("click", () => modalBackdrop.classList.remove("open"));
+  modalBox.querySelector("#errorRetry")?.addEventListener("click", async () => {
+    modalBackdrop.classList.remove("open");
+    await cfg.onRetry();
+  });
+});
+
 document.addEventListener("show-confirm", () => {
   const cfg = store.state.confirmDialog;
   if (!cfg) return;
@@ -250,12 +280,15 @@ async function pollLoop() {
     const wasProcessing = store.hasProcessing();
     await store.refreshDocuments({ silent: true });
     const isProcessing = store.hasProcessing();
+    pollFailureCount = 0;
     renderLightweightProgressUi();
 
     if (wasProcessing && !isProcessing) await store.refreshAll();
     nextDelay = isProcessing ? 1500 : 5000;
   } catch (error) {
     console.error("poll failed", error);
+    pollFailureCount++;
+    renderLightweightProgressUi();
     nextDelay = 5000;
   } finally {
     pollInProgress = false;
@@ -265,7 +298,25 @@ async function pollLoop() {
 
 store.subscribe(render);
 
-(async function init() {
-  await store.refreshAll();
-  pollLoop();
-})();
+function showInitError(error) {
+  workspaceEl.innerHTML = `
+    <div class="empty-state" style="padding:80px 20px;">
+      <div class="icon">⚠</div>
+      <div class="title">โหลดข้อมูลไม่สำเร็จ</div>
+      <div>${String(error?.message || error)}</div>
+      <button class="btn btn-primary" id="initRetryBtn" style="margin-top:14px;">ลองใหม่</button>
+    </div>`;
+  document.getElementById("initRetryBtn")?.addEventListener("click", init);
+}
+
+async function init() {
+  try {
+    await store.refreshAll();
+    pollLoop();
+  } catch (error) {
+    console.error("initial load failed", error);
+    showInitError(error);
+  }
+}
+
+init();
