@@ -190,16 +190,6 @@ button { font-family: inherit; }
 .chart-toggle { display: flex; gap: 4px; }
 .bar-row .mono { font-family: var(--font-data); text-align: right; }
 
-/* ---------- Data table (virtualized) ---------- */
-.table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; box-shadow: var(--shadow); }
-.table-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.table-toolbar input { flex: 1; max-width: 320px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-alt); font-size: 12.5px; color: var(--text); }
-.table-toolbar select {
-  padding: 6px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-alt);
-  color: var(--text); font-size: 12.5px; font-family: inherit;
-}
-.table-toolbar .count-label { font-size: 12px; color: var(--text-faint); margin-left: auto; }
-
 /* ---------- Shared filter-bar controls (Documents/Departments/Products toolbars) ---------- */
 .search-input {
   flex: 1; min-width: 180px; max-width: 320px; padding: 7px 11px; border-radius: 7px;
@@ -211,23 +201,6 @@ button { font-family: inherit; }
 }
 .search-input:focus, .filter-select:focus { border-color: var(--accent); outline: none; }
 
-.vtable-scroll { overflow-x: auto; }
-.vtable-head, .vrow { display: grid; grid-template-columns: var(--vt-cols, 100px 1fr 70px 70px 90px 90px 90px 90px); gap: 0; min-width: 860px; }
-.vtable-head > div, .vrow > div { padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vtable-head > div.num, .vrow > div.num { text-align: right; }
-.vtable-head {
-  background: var(--surface-alt); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--text-faint); font-weight: 600; border-bottom: 1px solid var(--border); position: sticky; top: 0;
-}
-.vtable-body { overflow-y: auto; overflow-x: hidden; position: relative; }
-.vrow { border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px; align-items: center; position: absolute; left: 0; right: 0; }
-.vrow:hover { background: var(--surface-alt); }
-.vrow.selected { background: var(--accent-soft); }
-.vrow .num { font-family: var(--font-data); text-align: right; }
-.vrow .flag-icon {
-  display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%;
-  background: var(--warning-soft); color: var(--warning); font-size: 9px; font-weight: 700; margin-left: 5px;
-}
 .band-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 999px; }
 .band-HIGH { background: var(--success-soft); color: var(--success); }
 .band-MEDIUM { background: var(--warning-soft); color: var(--warning); }
@@ -357,26 +330,7 @@ button { font-family: inherit; }
 .modal-box p { margin: 0 0 16px; font-size: 13px; color: var(--text-muted); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
-/* ---------- Review Queue: risk tiers ---------- */
-.review-count-chips { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
-.review-count-chip {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700;
-  padding: 5px 12px; border-radius: 999px;
-}
-.review-count-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.review-count-chip.tone-critical { background: var(--critical-soft); color: var(--critical); }
-.review-count-chip.tone-warning { background: var(--warning-soft); color: var(--warning); }
-.review-count-chip.tone-success { background: var(--success-soft); color: var(--success); }
-
-.review-tier { margin-bottom: 26px; }
-.review-tier-head {
-  display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; border-radius: 8px 8px 0 0;
-  font-weight: 700; font-size: 13.5px; border: 1px solid var(--border); border-bottom: none;
-}
-.review-tier-head.tone-critical { background: var(--critical-soft); color: var(--critical); }
-.review-tier-head.tone-warning { background: var(--warning-soft); color: var(--warning); }
-.review-tier-head.tone-success { background: var(--success-soft); color: var(--success); }
-.review-tier-count { font-family: var(--font-data); font-weight: 600; }
+/* ---------- Review Queue: selected-row reason detail ---------- */
 .review-tier-reason {
   font-size: 12.5px; color: var(--text-muted); background: var(--surface-alt); border: 1px solid var(--border);
   border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;
