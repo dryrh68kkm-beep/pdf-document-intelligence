@@ -105,3 +105,26 @@ def test_cp874_encoded_source_decodes_thai_text_correctly(tmp_path: Path):
     payload = json.loads(snapshot.read_text(encoding="utf-8"))
     assert payload["products"][0]["name"] == "รองเท้าผ้าใบ สีแดง S38"
     assert "�" not in payload["products"][0]["name"]
+
+
+def test_iso8859_11_encoded_source_decodes_thai_text_correctly(tmp_path: Path):
+    # Real bug found while testing a real ~30k-row store export: it decoded
+    # cleanly as iso8859_11 but raised UnicodeDecodeError under cp874 (byte
+    # 0x81 is unassigned in cp874's C1 range but is a valid control byte
+    # under iso8859_11, both otherwise being the same TIS-620 Thai mapping
+    # for the printable 0xA0-0xFF range) - so the file fell through both
+    # candidates and got silently mojibake'd via the errors="replace"
+    # fallback. 0x81 is written raw here since Python's cp874 codec refuses
+    # to *encode* it at all (it has no defined meaning in that codepage),
+    # reproducing the exact "cp874 can't decode this byte" real-world case.
+    source = tmp_path / "external_master_iso8859_11.csv"
+    snapshot = tmp_path / "master_catalog.snapshot.json"
+    name = "รองเท้าผ้าใบ สีแดง S38"
+    row = f"990000000004,{name}\x81,FOOTWEAR,990004,99 SYNTHETIC DEPARTMENT,09 SYNTHETIC DIVISION\n"
+    header = "BARCODE,ART_SV_NAME,SUBCLASS_NAME,ART_NO,DEPARTMENT_NAME,DIVISION_NAME\n"
+    source.write_bytes(header.encode("iso8859_11") + row.encode("iso8859_11"))
+
+    import_catalog_snapshot(source, snapshot_path=snapshot)
+    payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert payload["products"][0]["name"] == name + "\x81"
+    assert "�" not in payload["products"][0]["name"]
