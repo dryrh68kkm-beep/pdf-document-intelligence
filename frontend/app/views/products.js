@@ -1,4 +1,6 @@
-import { renderProductTable } from "../components/productTable.js";
+import { renderDataTable } from "../components/dataTable.js";
+import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
+import { icons } from "../icons.js";
 
 const RESOLUTION_LABEL = {
   OFFICIAL_MASTER: "Official Master",
@@ -21,6 +23,11 @@ let cachedQueryRows = [];
 // the already-loaded product list - no new backend call).
 let resolutionFilter = "all";
 let reviewFilter = "all";
+
+// Real pagination state (client-side, over the already-loaded product
+// list — see components/pagination.js).
+let page = 1;
+let pageSize = PAGE_SIZE_OPTIONS[0];
 
 function baseRows(products, deptFilter) {
   if (products === cachedProductsRef && deptFilter === cachedDeptFilter) return cachedBaseRows;
@@ -51,9 +58,51 @@ function applyExtraFilters(rows) {
   });
 }
 
+function fmt(v) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (typeof v === "number") return v % 1 === 0 ? String(v) : v.toFixed(2);
+  return v;
+}
+
+function rowConfidence(f) {
+  const value = f.barcode?.confidence ?? f.article?.confidence ?? f.name?.confidence;
+  return value == null ? null : Math.round(value * 100);
+}
+
+const COLUMNS = [
+  { key: "article", label: "ARTICLE", render: (r) => `<span class="mono">${fmt(r.fields.article?.value)}</span>` },
+  { key: "barcode", label: "BARCODE", render: (r) => `<span class="mono">${fmt(r.fields.barcode?.value)}</span>` },
+  { key: "name", label: "ชื่อสินค้า", render: (r) => fmt(r.fields.name?.value) },
+  { key: "dept", label: "แผนก", render: (r) => fmt(r.department) },
+  { key: "pu", label: "PU", align: "num", render: (r) => `<span class="mono">${fmt(r.fields.pu_qty?.value)}</span>` },
+  { key: "sku", label: "SKU QTY", align: "num", render: (r) => `<span class="mono">${fmt(r.fields.sku_qty?.value)}</span>` },
+  { key: "source", label: "แหล่งที่มา", render: (r) => RESOLUTION_LABEL[r.resolutionStatus] || r.resolutionStatus || "—" },
+  {
+    key: "confidence",
+    label: "Confidence",
+    align: "num",
+    render: (r) => {
+      const c = rowConfidence(r.fields);
+      return `<span class="mono">${c == null ? "—" : c + "%"}</span>`;
+    },
+  },
+  {
+    key: "status",
+    label: "สถานะ",
+    render: (r) =>
+      r.reviewRequired
+        ? `<span class="pill pill-critical">ต้องตรวจสอบ</span>`
+        : `<span class="pill pill-success">ปกติ</span>`,
+  },
+  {
+    key: "actions",
+    label: "จัดการ",
+    render: () => `<button type="button" class="icon-btn-sm" data-row-action="menu" aria-label="ตัวเลือกเพิ่มเติม">${icons.moreVertical}</button>`,
+  },
+];
+
 export function renderProducts(container, store) {
   const { products, deptFilter, panel, searchQuery } = store.state;
-  const scrollTop = container.querySelector(".vtable-body")?.scrollTop || 0;
 
   const departments = [...new Set(products.map((p) => p.department).filter(Boolean))].sort();
   const resolutionOptions = Object.keys(RESOLUTION_LABEL)
@@ -65,26 +114,27 @@ export function renderProducts(container, store) {
     ${deptFilter ? `<div class="back-link" id="clearDept">‹ ทุกแผนก</div>` : ""}
     <div class="workspace-header">
       <div class="workspace-title">${deptFilter || "Products"}</div>
-      <div class="workspace-sub" id="productCount"></div>
+      <div class="workspace-sub">รายการสินค้า</div>
     </div>
-    <div class="table-toolbar">
-      <input id="productFilter" type="text" placeholder="ค้นหาในตารางนี้..." value="${searchQuery || ""}" />
-      <select id="productDeptSelect" class="filter-select">
+    <div class="filter-chip-bar">
+      <input id="productFilter" class="search-input" type="text" placeholder="ค้นหาในตารางนี้..." value="${searchQuery || ""}" />
+      <select id="productDeptSelect" class="filter-chip">
         <option value=""${!deptFilter ? " selected" : ""}>ทุกแผนก</option>
         ${departments.map((d) => `<option value="${d}"${deptFilter === d ? " selected" : ""}>${d}</option>`).join("")}
       </select>
-      <select id="productResolutionSelect" class="filter-select">
+      <select id="productResolutionSelect" class="filter-chip">
         <option value="all"${resolutionFilter === "all" ? " selected" : ""}>ทุกสถานะที่มา</option>
         ${resolutionOptions}
       </select>
-      <select id="productReviewSelect" class="filter-select">
-        <option value="all"${reviewFilter === "all" ? " selected" : ""}>ทุกสถานะตรวจสอบ</option>
+      <select id="productReviewSelect" class="filter-chip">
+        <option value="all"${reviewFilter === "all" ? " selected" : ""}>ทุกสถานะ</option>
         <option value="review"${reviewFilter === "review" ? " selected" : ""}>ต้องตรวจสอบเท่านั้น</option>
         <option value="clean"${reviewFilter === "clean" ? " selected" : ""}>ปกติเท่านั้น</option>
       </select>
-      <span class="count-label" id="visibleCount"></span>
+      <span class="filter-chip-count" id="visibleCount"></span>
     </div>
     <div id="tableHost"></div>
+    <div id="paginationHost"></div>
   `;
 
   if (deptFilter) {
@@ -92,36 +142,48 @@ export function renderProducts(container, store) {
   }
 
   const host = container.querySelector("#tableHost");
-  const countEl = container.querySelector("#productCount");
+  const paginationHost = container.querySelector("#paginationHost");
   const visibleEl = container.querySelector("#visibleCount");
 
-  function draw(localQuery, preserveScrollTop) {
+  function draw(localQuery) {
     const rows = applyExtraFilters(searchedRows(products, deptFilter, localQuery));
-    countEl.textContent = `${rows.length.toLocaleString()} รายการ`;
-    visibleEl.textContent = `${rows.length.toLocaleString()} แสดงอยู่`;
-    renderProductTable(host, rows, {
+    visibleEl.textContent = `${rows.length.toLocaleString()} รายการ`;
+    const { pageRows, total } = paginate(rows, page, pageSize);
+    renderDataTable(host, pageRows, {
+      columns: COLUMNS,
+      getRowId: (row) => row.rowId,
       selectedRowId: panel?.rowId,
-      initialScrollTop: preserveScrollTop ? scrollTop : 0,
       onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
+      emptyMessage: "ไม่พบรายการที่ตรงกับตัวกรอง",
+    });
+    renderPaginationBar(paginationHost, {
+      page,
+      pageSize,
+      total,
+      onPageChange: (p) => { page = p; draw(localQuery); },
+      onPageSizeChange: (size) => { pageSize = size; page = 1; draw(localQuery); },
     });
   }
 
-  draw(searchQuery || "", true);
+  draw(searchQuery || "");
 
   container.querySelector("#productFilter").addEventListener("input", (e) => {
     clearTimeout(debounceTimer);
     const val = e.target.value;
-    debounceTimer = setTimeout(() => draw(val, false), 200);
+    debounceTimer = setTimeout(() => { page = 1; draw(val); }, 200);
   });
   container.querySelector("#productDeptSelect").addEventListener("change", (e) => {
+    page = 1;
     store.navigate("products", { deptFilter: e.target.value || null });
   });
   container.querySelector("#productResolutionSelect").addEventListener("change", (e) => {
     resolutionFilter = e.target.value;
-    draw(searchQuery || "", false);
+    page = 1;
+    draw(searchQuery || "");
   });
   container.querySelector("#productReviewSelect").addEventListener("change", (e) => {
     reviewFilter = e.target.value;
-    draw(searchQuery || "", false);
+    page = 1;
+    draw(searchQuery || "");
   });
 }
