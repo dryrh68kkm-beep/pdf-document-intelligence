@@ -29,10 +29,12 @@ function writeCollapsed(value) {
   }
 }
 
-// The logo mark, "SYSTEM STATUS: Operational" line, and "AD / Admin" user
-// row below are all purely decorative per explicit product decision - there
-// is no health-check API wired up here and no auth system in this app, so
-// none of it calls any backend endpoint.
+// The logo mark and "AD / Admin" user row below are purely decorative per
+// explicit product decision - there is no auth system in this app, so
+// neither calls any backend endpoint. A "system status" line that used to
+// sit above the user row (always reading a fixed all-clear string) was
+// removed (user request): it was never wired to a real health-check
+// endpoint and always showed the same text regardless of actual state.
 function logoMarkSvg() {
   return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><circle cx="12" cy="15" r="2.4"/></svg>`;
 }
@@ -99,11 +101,6 @@ export function renderSidebar(store) {
   const footer = document.createElement("div");
   footer.className = "sidebar-footer";
   footer.innerHTML = `
-    <div class="sidebar-status">
-      <div class="sidebar-status-label">System Status</div>
-      <div class="sidebar-status-row"><span class="sidebar-status-dot"></span>Operational</div>
-      <div class="sidebar-status-sub">All systems running normally</div>
-    </div>
     <div class="sidebar-user">
       <span class="sidebar-user-avatar">AD</span>
       <div>
