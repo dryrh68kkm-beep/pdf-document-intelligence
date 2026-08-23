@@ -8,6 +8,7 @@ const FLAG_LABEL = {
   TYPE_PARSE_FAILED: "แปลงชนิดข้อมูลไม่สำเร็จ",
   CATALOG_MATCH: "พบ Barcode นี้ในฐานข้อมูลสินค้ากลาง — ใช้ชื่อจากฐานข้อมูลแทนการอ่านจาก PDF/OCR",
   LOCAL_MASTER_MATCH: "พบ Barcode นี้ใน Local Product Master ที่ผู้ใช้ยืนยันเอง",
+  CATALOG_CHECKED_NOT_FOUND: "✓ ตรวจสอบกับ Official Master แล้ว — ไม่พบ Barcode นี้ในฐานข้อมูล จึงใช้ชื่อจาก PDF/OCR แทน (ไม่ใช่ยังไม่ตรวจ)",
   AMOUNT_MISMATCH: "จำนวน x ราคาต่อหน่วย ไม่ตรงกับยอดเงินที่บันทึกไว้",
   MISSING_DEPARTMENT: "ยังไม่ระบุแผนก",
 };
@@ -79,7 +80,10 @@ function fieldBlock(name, fv, editable) {
             <span class="dp-evidence-val${isThai ? " thai" : ""}">${fv.raw || "—"}</span>
           </div>
         </div>
-        <ul class="dp-reasons">${(fv.flags || []).map((f) => `<li>${FLAG_LABEL[f] || f}</li>`).join("")}</ul>
+        <ul class="dp-reasons">${(fv.flags || [])
+          .filter((f) => !(f === "CATALOG_CHECKED_NOT_FOUND" && fv.source === "master_catalog"))
+          .map((f) => `<li>${FLAG_LABEL[f] || f}</li>`)
+          .join("")}</ul>
       </div>`;
   }
   return html;

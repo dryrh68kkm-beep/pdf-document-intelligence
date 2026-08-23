@@ -55,6 +55,16 @@ def apply_catalog_to_row(row: TableRow, catalog: dict[str, CatalogEntry]) -> Tab
                 "validation_flags": flags,
             }
         )
+    elif barcode and name_field:
+        # No silent gap: record that a lookup was actually attempted and
+        # came back empty, so the UI can tell "checked against Official
+        # Master, genuinely not there" apart from "never checked" (user
+        # report: the review panel explained OCR/font issues but never
+        # said whether the barcode had been checked against the master
+        # file at all).
+        fields["name"] = name_field.model_copy(
+            update={"validation_flags": [*name_field.validation_flags, "CATALOG_CHECKED_NOT_FOUND"]}
+        )
 
     classification = classify_product(classification_name)
     return row.model_copy(
