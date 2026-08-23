@@ -66,6 +66,9 @@ def apply_catalog_to_row(\n    row: TableRow, catalog: dict[str, CatalogEntry], 
             update={"validation_flags": [*name_field.validation_flags, "CATALOG_CHECKED_NOT_FOUND"]}
         )
 
+    if not classify:
+        return row.model_copy(update={"fields": fields, "confidence_band": compute_confidence_band(fields)})
+
     classification = classify_product(classification_name)
     return row.model_copy(
         update={
