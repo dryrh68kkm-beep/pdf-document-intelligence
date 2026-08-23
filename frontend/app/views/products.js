@@ -1,12 +1,34 @@
 import { renderProductTable } from "../components/productTable.js";
 
 let debounceTimer = null;
+let cachedProductsRef = null;
+let cachedDeptFilter = null;
+let cachedBaseRows = [];
+let cachedQuery = null;
+let cachedQueryRows = [];
+
+function baseRows(products, deptFilter) {
+  if (products === cachedProductsRef && deptFilter === cachedDeptFilter) return cachedBaseRows;
+  cachedProductsRef = products;
+  cachedDeptFilter = deptFilter;
+  cachedBaseRows = products.filter((p) => !p.suspectedNonProduct && (!deptFilter || p.department === deptFilter));
+  cachedQuery = null;
+  cachedQueryRows = [];
+  return cachedBaseRows;
+}
+
+function searchedRows(products, deptFilter, localQuery) {
+  const rows = baseRows(products, deptFilter);
+  const q = (localQuery || "").trim().toLowerCase();
+  if (!q) return rows;
+  if (q === cachedQuery) return cachedQueryRows;
+  cachedQuery = q;
+  cachedQueryRows = rows.filter((p) => p._search.includes(q));
+  return cachedQueryRows;
+}
 
 export function renderProducts(container, store) {
   const { products, deptFilter, panel, searchQuery } = store.state;
-  // Captured before the container is wiped below, so a re-render
-  // triggered by something unrelated (e.g. a background poll tick) can
-  // restore where the user was instead of snapping back to row 1.
   const scrollTop = container.querySelector(".vtable-body")?.scrollTop || 0;
 
   container.innerHTML = `
@@ -26,24 +48,12 @@ export function renderProducts(container, store) {
     container.querySelector("#clearDept").addEventListener("click", () => store.navigate("products", { deptFilter: null }));
   }
 
-  function currentRows(localQuery) {
-    // Suspected non-product rows (POP/marketing-material internal codes,
-    // explicit "free gift" items) are excluded here to keep the product
-    // list and SKU counts clean - they're not deleted, just regrouped;
-    // see the "ของแถม / ไม่ใช่สินค้า" view.
-    let rows = products.filter((p) => !p.suspectedNonProduct);
-    if (deptFilter) rows = rows.filter((p) => p.department === deptFilter);
-    const q = (localQuery || "").trim().toLowerCase();
-    if (q) rows = rows.filter((p) => p._search.includes(q));
-    return rows;
-  }
-
   const host = container.querySelector("#tableHost");
   const countEl = container.querySelector("#productCount");
   const visibleEl = container.querySelector("#visibleCount");
 
   function draw(localQuery, preserveScrollTop) {
-    const rows = currentRows(localQuery);
+    const rows = searchedRows(products, deptFilter, localQuery);
     countEl.textContent = `${rows.length.toLocaleString()} รายการ`;
     visibleEl.textContent = `${rows.length.toLocaleString()} แสดงอยู่`;
     renderProductTable(host, rows, {
@@ -53,15 +63,11 @@ export function renderProducts(container, store) {
     });
   }
 
-  // Preserve scroll on the initial draw (this render may have been
-  // triggered by an unrelated background refresh, not the user changing
-  // view/filter); a search-box edit below always resets to the top since
-  // the visible row set actually changed.
   draw(searchQuery || "", true);
 
   container.querySelector("#productFilter").addEventListener("input", (e) => {
     clearTimeout(debounceTimer);
     const val = e.target.value;
-    debounceTimer = setTimeout(() => draw(val, false), 200); // debounced, not per-keystroke
+    debounceTimer = setTimeout(() => draw(val, false), 200);
   });
 }
