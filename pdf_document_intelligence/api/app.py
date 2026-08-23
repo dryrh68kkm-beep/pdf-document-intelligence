@@ -396,5 +396,19 @@ def export_excel():
     )
 
 
+class _NoCacheStaticFiles(StaticFiles):
+    """The frontend has no build step or filename hashing, so a browser that
+    caches index.html/main.js/styles.css keeps rendering a stale UI after an
+    update - confirmed in practice (a user reinstalling a new UI redesign
+    kept seeing the old one until a hard refresh). Forcing revalidation on
+    every request costs nothing on an offline desktop app served from
+    localhost and guarantees an update is visible on the next normal reload."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
+
 if FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+    app.mount("/", _NoCacheStaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
