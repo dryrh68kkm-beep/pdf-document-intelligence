@@ -52,11 +52,6 @@ function fmtDate(value) {
   return new Date(`${value}T00:00:00`).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
 }
 
-function fmtDateTime(value) {
-  if (!value) return "—";
-  return new Date(value).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
 function documentTypeLabel(documentType) {
   return DOCUMENT_TYPE_LABEL[documentType] || "ไม่ทราบประเภท";
 }
@@ -104,23 +99,6 @@ function heroFact(icon, label, value) {
 
 function heroKpi(value, label) {
   return `<div class="doc-hero-kpi"><div class="doc-hero-kpi-value">${value}</div><div class="doc-hero-kpi-label">${label}</div></div>`;
-}
-
-function recentDocumentRow(doc, store, isCurrent) {
-  const reviewCount = doc.qualityCounts?.needReview ?? 0;
-  const statusLabel = doc.status === "complete" ? "พร้อมใช้งาน" : doc.status === "error" ? "ผิดพลาด" : "กำลังประมวลผล";
-  const row = document.createElement("div");
-  row.className = "recent-doc-row" + (isCurrent ? " current" : "");
-  row.innerHTML = `
-    <span class="status-dot ${doc.status}"></span>
-    <div style="min-width:0;flex:1;">
-      <div class="doc-name">${escapeHtml(doc.filename)}</div>
-      <div class="doc-meta">${escapeHtml(documentTypeLabel(doc.documentType))} · ${fmtDate(doc.documentDate)} · ${statusLabel}${reviewCount ? ` · ${reviewCount} ต้องตรวจ` : ""}</div>
-    </div>
-    ${doc.qualityScore != null ? `<span class="band-chip band-${(QUALITY_BAND[doc.qualityBand] || {}).tone === "ok" ? "HIGH" : (QUALITY_BAND[doc.qualityBand] || {}).tone === "warn" ? "MEDIUM" : "LOW"}"><span class="dot"></span>${doc.qualityScore}</span>` : ""}
-  `;
-  row.addEventListener("click", () => store.selectDashboardDocument(doc.id));
-  return row;
 }
 
 function renderDonut(host, documents) {
@@ -244,22 +222,12 @@ export function renderDashboard(container, store) {
 
     <div class="section-title">Division Overview</div>
     <div id="dashDivisions"></div>
-
-    <div class="section-title">Department Overview <span class="workspace-sub" style="text-transform:none;letter-spacing:normal;font-weight:400;">(รวมทุกเอกสาร)</span></div>
-    <div id="dashDepartments" class="dept-grid"></div>
-
-    <div class="section-title" style="display:flex;justify-content:space-between;align-items:baseline;">
-      <span>เอกสารล่าสุด (Recent Documents)</span>
-      <span class="dash-panel-link" id="dashRecentLink" style="text-transform:none;letter-spacing:normal;">ดูทั้งหมด →</span>
-    </div>
-    <div id="dashRecent"></div>
   `;
 
   container.querySelector("#dashDocSelect").addEventListener("change", (e) => {
     store.selectDashboardDocument(e.target.value);
   });
   container.querySelector("#dashReconLink")?.addEventListener("click", () => store.navigate("departments"));
-  container.querySelector("#dashRecentLink")?.addEventListener("click", () => store.navigate("documents"));
 
   const applyFilters = () => {
     const dateFrom = container.querySelector("#dashDateFrom")?.value || "";
@@ -404,48 +372,21 @@ export function renderDashboard(container, store) {
           <div class="division-stat"><span class="division-stat-value">${fmtNum(division.rowCount)}</span><span class="division-stat-label">รายการ</span></div>
           <div class="division-stat"><span class="division-stat-value">${fmtNum(division.documentCount)}</span><span class="division-stat-label">เอกสาร</span></div>
         </div>
-        <div class="division-card-foot">คลิกเพื่อกรองภาพรวม</div>
+        <div class="division-card-foot">
+          <span>คลิกเพื่อกรองภาพรวม</span>
+          <button type="button" class="dash-panel-link division-card-departments-link">แผนกในฝ่ายนี้ →</button>
+        </div>
       `;
       card.addEventListener("click", () => {
         store.setDashboardOverviewFilters({ division: dashboardDivisionFilter === division.divisionCode ? "all" : division.divisionCode });
+      });
+      card.querySelector(".division-card-departments-link")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        store.openDivision(division.divisionCode);
       });
       grid.appendChild(card);
     });
     divisionsHost.innerHTML = "";
     divisionsHost.appendChild(grid);
   }
-
-  // ---- Department Overview (workspace-wide, from /api/state) ----
-  const deptHost = container.querySelector("#dashDepartments");
-  const topDepartments = (dashboard?.departments || []).slice(0, 8);
-  if (!topDepartments.length) {
-    deptHost.innerHTML = `<div class="empty-state" style="padding:24px;grid-column:1/-1;"><div class="title">ยังไม่มีข้อมูลแผนก</div></div>`;
-  } else {
-    deptHost.innerHTML = "";
-    topDepartments.forEach((d) => {
-      const card = document.createElement("div");
-      card.className = "dept-card";
-      card.innerHTML = `
-        <div class="dept-card-head">
-          <span class="dept-card-name">${escapeHtml(d.name)}</span>
-          ${d.reviewCount > 0 ? `<span class="dept-card-badge warn">${d.reviewCount} ต้องตรวจสอบ</span>` : `<span class="dept-card-badge">✓</span>`}
-        </div>
-        <div class="dept-card-stat">${fmtNum(d.skuCount)} SKU · ${fmtNum(d.rowCount)} รายการ</div>
-      `;
-      card.addEventListener("click", () => store.navigate("products", { deptFilter: d.name }));
-      deptHost.appendChild(card);
-    });
-  }
-
-  // ---- Recent documents ----
-  const recentHost = container.querySelector("#dashRecent");
-  const recent = [...documents]
-    .sort((a, b) => String(b.documentDate || "").localeCompare(String(a.documentDate || "")))
-    .slice(0, 6);
-  recentHost.innerHTML = "";
-  recent.forEach((doc) => recentHost.appendChild(recentDocumentRow(doc, store, doc.id === currentDoc?.id)));
-  recentHost.insertAdjacentHTML(
-    "beforeend",
-    `<div class="workspace-sub" style="margin-top:6px;display:flex;align-items:center;gap:6px;">${icons.refresh} อัปเดตล่าสุด: ${fmtDateTime(new Date().toISOString())}</div>`
-  );
 }
