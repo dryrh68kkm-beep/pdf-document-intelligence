@@ -97,9 +97,22 @@ class Store {
       searchQuery: "",
       currentDocumentId: null,
       dashboardDateFilter: "",
+      // Dashboard header filters (user request): a document-date RANGE plus
+      // an optional single-Division filter, replacing the earlier
+      // day-by-day navigator. "" for either date bound means unbounded (all
+      // documents). Always filters on documentDate, never uploadedAt - see
+      // inDocumentDateRange() above.
       dashboardDateFrom: "",
       dashboardDateTo: "",
       dashboardDivisionFilter: "all",
+      // { totals: {rowCount, amount, documentCount}, divisions: [...],
+      // amountAvailable, selectedDivision } - built by
+      // _computeDashboardOverview() below from each in-range document's
+      // authoritative /api/analytics/documents/{id}/divisions summary
+      // (Decimal-safe, sourced from the same division_for_department()
+      // mapping as everywhere else) - never recomputed by guessing a
+      // qty*price formula on the frontend. null until the first load's
+      // per-document fetches resolve.
       dashboardOverview: null,
       divisionSummary: null,
       divisionDetail: null,
@@ -109,11 +122,10 @@ class Store {
       // summary fetch. Refreshed alongside everything else in
       // _doRefreshAll(); empty until the first load completes.
       departmentDivisions: {},
-      // The redesigned Dashboard shows one document date's products at a
-      // time (see views/dashboard.js) - null means "not chosen yet",
-      // defaulted in _doRefreshAll() to the most recent date with a
-      // completed document, without clobbering an explicit user choice.
-      dashboardSelectedDate: null,
+      // Surfaced in the Dashboard header (user request): when data was last
+      // refreshed, and whether a refresh is in flight right now.
+      dashboardLastRefreshedAt: null,
+      dashboardRefreshing: false,
     };
     this._listeners = [];
     this._divisionCache = new Map();
@@ -177,12 +189,18 @@ class Store {
       this._refreshAllQueued = true;
       return this._refreshAllInFlight;
     }
+    this.set({ dashboardRefreshing: true });
     this._refreshAllInFlight = (async () => {
-      do {
-        this._refreshAllQueued = false;
-        await this._doRefreshAll();
-      } while (this._refreshAllQueued);
-      this._refreshAllInFlight = null;
+      try {
+        do {
+          this._refreshAllQueued = false;
+          await this._doRefreshAll();
+        } while (this._refreshAllQueued);
+        this.set({ dashboardLastRefreshedAt: new Date().toISOString() });
+      } finally {
+        this._refreshAllInFlight = null;
+        this.set({ dashboardRefreshing: false });
+      }
     })();
     return this._refreshAllInFlight;
   }
@@ -204,23 +222,11 @@ class Store {
       ? previousDocumentId
       : visibleDocuments[0]?.id ?? null;
 
-    // Default the Dashboard's selected date to the most recent document
-    // date with a completed document, but only the first time - once the
-    // user has navigated (or a date was already picked), a background
-    // refresh must not silently jump them back to "today".
-    const dashboardSelectedDate = this.state.dashboardSelectedDate
-      ?? [...documents]
-        .filter((doc) => doc.status === "complete" && doc.documentDate)
-        .map((doc) => doc.documentDate)
-        .sort()
-        .at(-1)
-      ?? null;
-
     // Keep existing per-document Division summaries instead of clearing the
     // whole cache on every refresh. Deleted/reprocessing IDs are removed; an
     // edited document is invalidated explicitly before refreshAll().
     this._pruneDivisionCache(documents);
-    this.set({ documents, dashboard, products, currentDocumentId, dashboardSelectedDate, departmentDivisions, dashboardOverview: null });
+    this.set({ documents, dashboard, products, currentDocumentId, departmentDivisions });
     // Combined into a single set() instead of two independent ones (each of
     // refreshDivisions()/refreshDashboardOverview() used to call this.set()
     // on its own, so whichever Promise settled first fired a full re-render
@@ -309,12 +315,6 @@ class Store {
 
   openPanel(panel) { this.set({ panel }); }
   closePanel() { this.set({ panel: null }); }
-
-  // Purely local - the Dashboard's day navigator pages through dates over
-  // the already-loaded documents/products, no fetch needed.
-  setDashboardSelectedDate(dateStr) {
-    this.set({ dashboardSelectedDate: dateStr });
-  }
 
   navigate(view, extra = {}) {
     this.set({ view, panel: null, ...extra });

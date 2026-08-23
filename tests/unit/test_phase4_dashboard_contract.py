@@ -13,29 +13,35 @@ INDEX = ROOT / "frontend" / "app" / "index.html"
 # A later pass (user request: consolidate the Dashboard to one page) removed
 # the standalone "Department Overview" and "Recent Documents" sections.
 #
-# Most recent pass (user request): the Dashboard's job is to answer, the
-# instant it opens, "today's products -> which department -> how many -> how
-# much" for one document date at a time, not to be a general status board.
-# Quality Score / Data Quality / Reconciliation / Document Type / Division
-# Overview all moved off the page (collapsed into one slim status strip that
-# links into Documents/Review, where that detail is actually actionable) -
-# these assertions check the new "daily report" contract replaces them.
+# A later pass (user request) made the Dashboard answer "today's products ->
+# which department -> how many -> how much" for one document date at a
+# time, navigable day by day.
+#
+# Most recent pass (user request, with a reference mockup): the day-by-day
+# navigator was replaced by a document-date RANGE filter plus an optional
+# Division filter, a Division-level donut + summary table (value-based,
+# falling back to a quantity-based breakdown when no document in range has
+# amount data) with a total row footing to 100%, and a header showing when
+# data was last refreshed. Quality Score / Data Quality / Reconciliation /
+# Document Type / Division Overview all remain off the page - moved into
+# one slim status strip that links into Documents/Review, where that detail
+# is actually actionable.
 
 
-def test_dashboard_surfaces_the_three_daily_kpis():
+def test_dashboard_surfaces_the_three_kpis():
     source = DASHBOARD.read_text(encoding="utf-8")
-    assert "สินค้าวันนี้" in source
-    assert "มูลค่ารวมวันนี้" in source
-    assert "แผนกที่มีสินค้าเข้า" in source
+    assert "มูลค่ารวม" in source
+    assert "จำนวนรายการสินค้า" in source
+    assert "จำนวนเอกสาร" in source
 
 
-def test_dashboard_surfaces_todays_product_table_and_department_breakdown():
+def test_dashboard_surfaces_product_table_and_department_breakdown():
     source = DASHBOARD.read_text(encoding="utf-8")
-    assert "รายการสินค้าวันนี้" in source
-    assert "สินค้าตามแผนกวันนี้" in source
+    assert "รายการสินค้า" in source
     # A pie chart of which department has the most product by quantity,
-    # alongside the existing value-ranked bars (user request).
+    # alongside the Division value/summary table (user request).
     assert "renderDepartmentPie" in source
+    assert "renderDivisionValueChart" in source
     # The table's columns (user request: drop unit price, keep only the
     # summarized total value): name, article/barcode, department,
     # quantity, amount.
@@ -47,13 +53,30 @@ def test_dashboard_surfaces_todays_product_table_and_department_breakdown():
     assert 'openPanel({ type: "product"' in source
 
 
-def test_dashboard_has_a_day_by_day_date_navigator():
+def test_dashboard_has_a_date_range_and_division_filter():
     dashboard_source = DASHBOARD.read_text(encoding="utf-8")
     state_source = STATE.read_text(encoding="utf-8")
-    assert "dashboardSelectedDate" in state_source
-    assert "setDashboardSelectedDate" in state_source
-    assert "dashboardSelectedDate" in dashboard_source
-    assert "shiftIsoDate" in dashboard_source
+    # Replaces the earlier day-by-day navigator (user request, with a
+    # reference mockup: a date-range picker plus a Division dropdown).
+    assert "dashboardDateFrom" in state_source
+    assert "dashboardDateTo" in state_source
+    assert "dashboardDivisionFilter" in state_source
+    assert "setDashboardOverviewFilters" in state_source
+    assert "dashDateFrom" in dashboard_source
+    assert "dashDateTo" in dashboard_source
+    assert "dashDivisionSelect" in dashboard_source
+    # No leftover day-navigator plumbing.
+    assert "dashboardSelectedDate" not in state_source
+    assert "dashboardSelectedDate" not in dashboard_source
+
+
+def test_dashboard_shows_last_refreshed_and_a_refresh_control():
+    dashboard_source = DASHBOARD.read_text(encoding="utf-8")
+    state_source = STATE.read_text(encoding="utf-8")
+    assert "dashboardLastRefreshedAt" in state_source
+    assert "dashboardRefreshing" in state_source
+    assert "dashboardLastRefreshedAt" in dashboard_source
+    assert "dashRefreshBtn" in dashboard_source
 
 
 def test_dashboard_uses_document_date_not_upload_date():
@@ -61,6 +84,21 @@ def test_dashboard_uses_document_date_not_upload_date():
     state_source = STATE.read_text(encoding="utf-8")
     assert ".documentDate" in state_source
     assert "uploadedAt" not in dashboard_source
+
+
+def test_dashboard_overview_sourced_from_authoritative_division_summary_api():
+    # Never invent a qty*price formula on the frontend - the Division
+    # totals/percentages must come from the same Decimal-safe endpoint that
+    # already powers Division Detail (see api/divisions.py), aggregated in
+    # state.js's _computeDashboardOverview().
+    state_source = STATE.read_text(encoding="utf-8")
+    assert "_computeDashboardOverview" in state_source
+    assert "getDivisions" in state_source
+
+
+def test_division_table_percentages_foot_to_100():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    assert "allocatePercentages" in source
 
 
 def test_quality_and_reconciliation_detail_moved_off_dashboard():

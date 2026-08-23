@@ -419,40 +419,6 @@ button { font-family: inherit; }
   border: 0; background: transparent; color: var(--text); font: inherit; outline: none; min-height: 26px;
 }
 
-/* ---------- Dashboard: 6 divisions (the home page's main focus) ---------- */
-.dashboard-body { display: grid; grid-template-columns: 1fr 280px; gap: 26px; align-items: start; }
-.dashboard-main { min-width: 0; }
-.division-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-.division-card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  border-left: 4px solid var(--division-accent, var(--accent));
-  padding: 18px 20px; cursor: pointer; box-shadow: var(--shadow);
-}
-.division-card:hover { border-color: var(--division-accent, var(--accent)); transform: translateY(-1px); }
-.division-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-.division-card-code { font-family: var(--font-data); font-size: 11.5px; color: var(--text-faint); }
-.division-card-name { font-weight: 700; font-size: 15px; flex: 1; }
-.division-card-amount { font-family: var(--font-data); font-size: 20px; font-weight: 700; color: var(--accent-strong); margin-bottom: 12px; }
-.division-card-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
-.division-stat { display: flex; flex-direction: column; }
-.division-stat-value { font-family: var(--font-data); font-size: 15px; font-weight: 600; }
-.division-stat-label { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.03em; }
-.division-card-foot { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.division-card-departments-link {
-  font: inherit; font-weight: 600; color: var(--accent); background: none; border: none; padding: 0; cursor: pointer;
-}
-.division-card-departments-link:hover { text-decoration: underline; }
-
-/* ---------- Dashboard: Data Quality (right panel) ---------- */
-.dashboard-aside { min-width: 0; }
-.dq-panel {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 16px 18px; box-shadow: var(--shadow);
-}
-.dq-row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
-.dq-row:last-of-type { border-bottom: none; }
-.dq-unmapped { font-size: 11.5px; color: var(--warning); margin-top: 6px; word-break: break-word; }
-
 /* ---------- Division detail: department sort controls ---------- */
 .sort-controls { margin-left: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; font-size: 12px; }
 .sort-btn {
@@ -460,24 +426,6 @@ button { font-family: inherit; }
   background: var(--surface); color: var(--text-muted); border-radius: 999px; padding: 2px 10px; margin-left: 4px; cursor: pointer;
 }
 .sort-btn.active { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
-
-/* ---------- Responsive ---------- */
-@media (max-width: 860px) {
-  .body-row, .body-row:has(.sidebar.collapsed) { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
-  .kpi-row { grid-template-columns: repeat(2, 1fr); }
-  /* The virtualized table (Products/Review/ของแถม) and the Document Manager
-     table keep their full column set and scroll horizontally inside their
-     own wrapper (.vtable-scroll / .doc-table-wrap) rather than squeezing
-     columns illegibly - the page body itself never scrolls sideways. */
-  .dashboard-body { grid-template-columns: 1fr; }
-  .division-card-stats { grid-template-columns: repeat(2, 1fr); }
-  .review-detail-grid { grid-template-columns: 1fr; }
-  .table-toolbar { flex-direction: column; align-items: stretch; }
-  .table-toolbar .count-label { margin-left: 0; }
-  .dash-filters { flex-direction: column; align-items: stretch; }
-}
-
 
 /* Dashboard document selector */
 .doc-selector-label {
@@ -695,19 +643,8 @@ button { font-family: inherit; }
 .recon-fill { background: var(--success); height: 100%; border-radius: 4px; }
 .recon-pct { font-family: var(--font-data); font-size: 11px; color: var(--text-faint); margin-top: 2px; text-align: right; }
 
-.dash-3col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 24px; align-items: start; }
 .dash-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; }
-.dash-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.dash-panel-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .dash-panel-link { font-size: 12px; color: var(--accent); font-weight: 600; cursor: pointer; }
-@media (max-width: 900px) { .dash-3col { grid-template-columns: 1fr; } }
-
-/* ---------- Dashboard: daily-report redesign (date nav + status strip) ---------- */
-.dash-date-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
-.dash-date-current { display: flex; align-items: center; gap: 6px; }
-.dash-date-label { font-size: 15px; font-weight: 700; }
-.dash-date-jump { border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; background: var(--surface); color: var(--text); font-family: inherit; }
-.dash-date-jump:focus { border-color: var(--accent); outline: none; }
 
 .dash-status-strip { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 8px; font-size: 12.5px; margin-bottom: 16px; background: var(--surface-alt); color: var(--text-muted); }
 .dash-status-strip.tone-warn { background: var(--warning-soft); color: var(--warning); }
@@ -715,5 +652,41 @@ button { font-family: inherit; }
 .dash-status-strip.tone-ok { background: var(--success-soft); color: var(--success); }
 .dash-status-strip .dash-panel-link { margin-left: auto; }
 
-.dash-dept-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 18px; align-items: start; }
-@media (max-width: 900px) { .dash-dept-grid { grid-template-columns: 1fr; } }
+/* ---------- Dashboard: header filter bar (date range + Division + refresh) ---------- */
+.dash-filter-meta { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 12px; color: var(--text-faint); }
+@keyframes dash-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.dash-filter-meta .spin { display: inline-flex; animation: dash-spin 0.8s linear infinite; }
+
+/* ---------- Dashboard: Division donut + summary table ---------- */
+.dash-division-chart-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 18px; align-items: start; margin-bottom: 24px; }
+@media (max-width: 900px) { .dash-division-chart-grid { grid-template-columns: 1fr; } }
+.division-summary-total td { font-weight: 700; border-top: 2px solid var(--border-strong); border-bottom: none; }
+
+/* ---------- Responsive ----------
+   Kept at the end of the file on purpose: several rules here (.sidebar,
+   .kpi-icon-row) have an unconditional base definition later in normal
+   cascade position than an earlier version of this block used to be, and
+   CSS breaks a same-specificity tie by source order regardless of a media
+   query matching - an earlier copy of this block silently lost to those
+   base rules (the sidebar never actually collapsed below 860px). Placing
+   the whole responsive block last guarantees it wins whenever its media
+   condition is true. */
+@media (max-width: 860px) {
+  .body-row, .body-row:has(.sidebar.collapsed) { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .kpi-icon-row { grid-template-columns: repeat(2, 1fr); }
+  /* The virtualized table (Products/Review/ของแถม) and the Document Manager
+     table keep their full column set and scroll horizontally inside their
+     own wrapper (.vtable-scroll / .doc-table-wrap) rather than squeezing
+     columns illegibly - the page body itself never scrolls sideways. */
+  .review-detail-grid { grid-template-columns: 1fr; }
+  .table-toolbar { flex-direction: column; align-items: stretch; }
+  .table-toolbar .count-label { margin-left: 0; }
+  .dash-filters { flex-direction: column; align-items: stretch; }
+  .dash-filter-meta { margin-left: 0; }
+}
+
+@media (max-width: 520px) {
+  .kpi-icon-row { grid-template-columns: 1fr; }
+}

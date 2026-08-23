@@ -3,14 +3,15 @@ import { escapeHtml } from "../escape.js";
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 
-// Dashboard redesign (user request): the page's job is to answer, the
-// instant it opens, "today's products -> which department -> how many ->
-// how much" for one document date at a time (navigable day by day), not to
-// be a general-purpose status board. Per-document quality/coverage detail
-// still exists - it just lives on Documents/Review where it's actionable,
-// collapsed here into one slim status strip. Everything below reads only
-// store.state.products/documents, already loaded by refreshAll() - no new
-// backend call.
+// Dashboard redesign (user request, with a reference mockup): the page must
+// answer, the instant it opens, "how much value came in -> which Division
+// -> how many items -> how many documents" for a document-date RANGE (not
+// upload date), with an optional Division filter. Every number here is
+// either read straight from store.state.products/documents (already loaded
+// by refreshAll()) or from store.state.dashboardOverview, which is built in
+// state.js from each in-range document's authoritative, Decimal-safe
+// GET /api/analytics/documents/{id}/divisions summary - this view never
+// invents a qty*price formula of its own.
 
 function fmtNum(value) {
   return (value ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
@@ -25,19 +26,9 @@ function fmtQty(value) {
   return value % 1 === 0 ? String(value) : value.toFixed(2);
 }
 
-function fmtDateLabel(dateStr) {
-  if (!dateStr) return "—";
-  return new Date(`${dateStr}T00:00:00`).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
-}
-
-function shiftIsoDate(dateStr, delta) {
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setDate(d.getDate() + delta);
-  return d.toISOString().slice(0, 10);
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("th-TH", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function kpiIconCard(value, label, icon, tone) {
@@ -49,9 +40,32 @@ function kpiIconCard(value, label, icon, tone) {
     </div>`;
 }
 
-// Slim status strip replacing the old per-document coverage/quality panels -
-// just enough to notice something needs attention and jump to where it's
-// actually actionable (Documents/Review).
+// Naive independent Math.round() on each Division's share can sum to 99%
+// or 101% - the summary table must foot to exactly 100% (user requirement).
+// Largest-remainder rounding: floor every share, then hand the leftover
+// percentage points to the entries with the largest fractional remainder.
+function allocatePercentages(values) {
+  const total = values.reduce((a, b) => a + b, 0);
+  if (total <= 0) return values.map(() => 0);
+  const raw = values.map((v) => (v / total) * 100);
+  const floors = raw.map(Math.floor);
+  const remainder = 100 - floors.reduce((a, b) => a + b, 0);
+  const byRemainder = raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
+  const result = [...floors];
+  for (let k = 0; k < remainder; k++) result[byRemainder[k][1]] += 1;
+  return result;
+}
+
+function inRange(documentDate, dateFrom, dateTo) {
+  if (!documentDate) return !dateFrom && !dateTo;
+  if (dateFrom && documentDate < dateFrom) return false;
+  if (dateTo && documentDate > dateTo) return false;
+  return true;
+}
+
+// Slim status strip - just enough to notice something needs attention and
+// jump to where it's actually actionable (Documents/Review), so a
+// processing/errored document never leaves the Dashboard looking blank.
 function statusStrip(documents) {
   const processing = documents.filter((d) => d.status === "processing");
   if (processing.length) {
@@ -78,130 +92,118 @@ function statusStrip(documents) {
   return `<div class="dash-status-strip tone-ok">✓ ทุกเอกสารพร้อมใช้งาน ไม่มีรายการต้องตรวจสอบ</div>`;
 }
 
-// Rolled up Division-first (user request: "แยกใหญ่ก่อนเป็นมูลค่าตามฝ่าย" -
-// separate the bigger category first, by Division), same as the product
-// table's "ฝ่าย / แผนก" column. Rendered as a donut (share of today's value)
-// plus a summary table (user-supplied reference mockup: Division / มูลค่า /
-// สัดส่วน / จำนวนรายการ / จำนวนเอกสาร), each row navigating to Products
-// filtered to that Division's departments.
 const DIVISION_DONUT_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
-const DIVISION_TOP_N = 6;
 
-function rollupByDivision(rows) {
-  const deptTotals = new Map();
-  for (const row of rows) {
-    const dept = row.department || "ไม่ระบุแผนก";
-    const amount = row.fields.amount?.value;
-    const entry = deptTotals.get(dept) || { amount: 0, count: 0, docIds: new Set() };
-    entry.amount += amount ?? 0;
-    entry.count += 1;
-    entry.docIds.add(row.docId);
-    deptTotals.set(dept, entry);
-  }
-
-  const divisions = new Map();
-  for (const [dept, info] of deptTotals) {
-    const divisionName = departmentDivisionsRef[dept]?.name || "ไม่ระบุฝ่าย";
-    const group = divisions.get(divisionName) || { total: 0, count: 0, docIds: new Set(), depts: [] };
-    group.total += info.amount;
-    group.count += info.count;
-    info.docIds.forEach((id) => group.docIds.add(id));
-    group.depts.push(dept);
-    divisions.set(divisionName, group);
-  }
-
-  return [...divisions.entries()]
-    .map(([name, group]) => ({ name, total: group.total, count: group.count, docCount: group.docIds.size, depts: group.depts }))
-    .sort((a, b) => b.total - a.total);
-}
-
-function renderDivisionValueChart(host, rows, amountAvailable) {
-  if (!rows.length) {
-    host.innerHTML = `<div class="workspace-sub" style="padding:6px 0;">ไม่มีสินค้าเข้าสำหรับวันที่นี้</div>`;
+// The main graph (user-supplied reference mockup): a donut chart of each
+// Division's share of today's-range value, plus a full summary table
+// (Division / มูลค่า / สัดส่วน / จำนวนรายการ / จำนวนเอกสาร) with a total
+// row, each row clickable to Products filtered to that Division's
+// departments. When no document in range carries amount data, falls back
+// to a quantity-based ("จำนวนรายการ") breakdown instead of hiding the
+// chart or inventing a value.
+function renderDivisionValueChart(host, overview, departmentsByDivision, onRowClick) {
+  if (!overview) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">กำลังโหลดข้อมูลสรุป...</div>`;
     return;
   }
-  const divisionEntries = rollupByDivision(rows);
-  const grandTotal = divisionEntries.reduce((sum, d) => sum + d.total, 0) || 1;
-
-  let donutHtml = "";
-  if (amountAvailable) {
-    let chartEntries = divisionEntries;
-    if (chartEntries.length > DIVISION_TOP_N) {
-      const head = chartEntries.slice(0, DIVISION_TOP_N);
-      const otherTotal = chartEntries.slice(DIVISION_TOP_N).reduce((sum, d) => sum + d.total, 0);
-      chartEntries = [...head, { name: "อื่นๆ", total: otherTotal }];
-    }
-    let offset = 0;
-    const segments = chartEntries
-      .map((d, i) => {
-        const pct = (d.total / grandTotal) * 100;
-        const seg = `var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]}) ${offset}% ${offset + pct}%`;
-        offset += pct;
-        return seg;
-      })
-      .join(", ");
-    donutHtml = `
-      <div class="donut-wrap">
-        <div style="width:130px;height:130px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
-          <div style="width:84px;height:84px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;">
-            <div class="mono" style="font-size:14px;font-weight:700;">${fmtBaht(grandTotal)}</div>
-            <div style="font-size:10px;color:var(--text-faint);">มูลค่ารวม</div>
-          </div>
-        </div>
-        <div class="donut-legend">
-          ${chartEntries
-            .map(
-              (d, i) => `
-            <div class="donut-legend-row">
-              <span class="donut-legend-dot" style="background:var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]});"></span>
-              <span class="donut-legend-name">${escapeHtml(d.name)}</span>
-              <span class="donut-legend-count">${fmtBaht(d.total)} ฿ · ${Math.round((d.total / grandTotal) * 100)}%</span>
-            </div>`
-            )
-            .join("")}
-        </div>
-      </div>`;
-  } else {
-    donutHtml = `<div class="workspace-sub" style="padding:6px 0;">ไม่มีข้อมูลมูลค่าสำหรับวันที่นี้</div>`;
+  // When a single Division is selected in the header filter, narrow the
+  // chart/table to just that Division too - otherwise the KPI cards above
+  // (scoped to the filter) and this table (always every Division) would
+  // silently disagree the moment a filter is applied.
+  const entries = overview.divisions.filter(
+    (d) => d.rowCount > 0 && (overview.selectedDivision === "all" || d.divisionCode === overview.selectedDivision)
+  );
+  if (!entries.length) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูลสินค้าในช่วงวันที่ / ฝ่ายที่เลือก</div>`;
+    return;
   }
+  const byValue = overview.amountAvailable;
+  const metric = (d) => (byValue ? d.amount : d.rowCount);
+  const sorted = [...entries].sort((a, b) => metric(b) - metric(a));
+  const percentages = allocatePercentages(sorted.map(metric));
+  const grandTotal = sorted.reduce((sum, d) => sum + metric(d), 0);
+  const grandRowCount = sorted.reduce((sum, d) => sum + d.rowCount, 0);
+  // Document count is NOT summed across the visible Division rows - one
+  // document can contribute rows to several Divisions, so summing would
+  // double-count it and overstate "how many documents". overview.totals
+  // .documentCount is the true distinct count already used by the
+  // "จำนวนเอกสาร" KPI card above, so the total row here always agrees with
+  // it exactly (and correctly narrows when a single Division is selected -
+  // see the entries filter above).
+  const grandDocCount = overview.totals.documentCount;
+
+  let offset = 0;
+  const segments = sorted
+    .map((d, i) => {
+      const pct = percentages[i];
+      const seg = `var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]}) ${offset}% ${offset + pct}%`;
+      offset += pct;
+      return seg;
+    })
+    .join(", ");
+
+  const centerValue = byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal);
+  const centerLabel = byValue ? "มูลค่ารวม (฿)" : "จำนวนรายการรวม";
 
   host.innerHTML = `
-    ${donutHtml}
-    <div class="data-table-wrap" style="margin-top:14px;">
-      <table class="data-table">
-        <thead><tr>
-          <th>Division</th>
-          <th class="num">มูลค่า (บาท)</th>
-          <th class="num">สัดส่วน</th>
-          <th class="num">จำนวนรายการ</th>
-          <th class="num">จำนวนเอกสาร</th>
-        </tr></thead>
-        <tbody>
-          ${divisionEntries
-            .map(
-              (d) => `
-            <tr class="division-summary-row" data-depts="${escapeHtml(JSON.stringify(d.depts))}" data-name="${escapeHtml(d.name)}" style="cursor:pointer;">
-              <td>${escapeHtml(d.name)}</td>
-              <td class="num mono">${amountAvailable ? fmtBaht(d.total) + " ฿" : "—"}</td>
-              <td class="num mono">${amountAvailable ? Math.round((d.total / grandTotal) * 100) + "%" : "—"}</td>
-              <td class="num mono">${fmtNum(d.count)}</td>
-              <td class="num mono">${fmtNum(d.docCount)}</td>
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
+    <div class="dash-division-chart-grid">
+      <div class="donut-wrap">
+        <div style="width:150px;height:150px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
+          <div style="width:96px;height:96px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+            <div class="mono" style="font-size:14px;font-weight:700;">${centerValue}</div>
+            <div style="font-size:9.5px;color:var(--text-faint);">${centerLabel}</div>
+          </div>
+        </div>
+      </div>
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Division</th>
+            <th class="num">${byValue ? "มูลค่า (บาท)" : "จำนวนรายการ"}</th>
+            <th class="num">สัดส่วน</th>
+            <th class="num">จำนวนรายการ</th>
+            <th class="num">จำนวนเอกสาร</th>
+          </tr></thead>
+          <tbody>
+            ${sorted
+              .map(
+                (d, i) => `
+              <tr class="division-summary-row" data-code="${escapeHtml(d.divisionCode)}" data-name="${escapeHtml(d.divisionName)}" style="cursor:pointer;">
+                <td><span class="donut-legend-dot" style="background:var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]});display:inline-block;margin-right:7px;"></span>${escapeHtml(d.divisionName)}</td>
+                <td class="num mono">${byValue ? fmtBaht(d.amount) + " ฿" : fmtNum(d.rowCount)}</td>
+                <td class="num mono">${percentages[i]}%</td>
+                <td class="num mono">${fmtNum(d.rowCount)}</td>
+                <td class="num mono">${fmtNum(d.documentCount)}</td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+          <tfoot>
+            <tr class="division-summary-total">
+              <td>รวม</td>
+              <td class="num mono">${byValue ? fmtBaht(grandTotal) + " ฿" : fmtNum(grandTotal)}</td>
+              <td class="num mono">100%</td>
+              <td class="num mono">${fmtNum(grandRowCount)}</td>
+              <td class="num mono">${fmtNum(grandDocCount)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>`;
+
+  host.querySelectorAll(".division-summary-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      const depts = departmentsByDivision.get(row.dataset.code) || [];
+      onRowClick(depts, row.dataset.name);
+    });
+  });
 }
 
 const PIE_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
 const PIE_TOP_N = 6;
 
-// Which department has the most product coming in today, by total
-// quantity (sku_qty) - a pie chart, distinct from the value-based bar
-// ranking below it. Top 6 departments get their own slice; the rest are
-// folded into "อื่นๆ" so the chart stays readable regardless of how many
-// departments appear on a given day.
+// Secondary chart (kept from an earlier request): which Department has the
+// most product by quantity, within the current date range/Division filter.
 function renderDepartmentPie(host, rows) {
   if (!rows.length) {
     host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูล</div>`;
@@ -282,10 +284,11 @@ const COLUMNS = [
 ];
 
 // Module-level pagination state (same pattern as products.js/review.js) -
-// reset to page 1 whenever the selected date actually changes.
+// reset to page 1 whenever the active filter (date range or Division)
+// actually changes.
 let page = 1;
 let pageSize = PAGE_SIZE_OPTIONS[0];
-let lastRenderedDate = null;
+let lastRenderedFilterKey = null;
 
 // COLUMNS is built once at module load, but the dept column's render()
 // needs the department->division map from store.state - kept as a
@@ -294,7 +297,11 @@ let lastRenderedDate = null;
 let departmentDivisionsRef = {};
 
 export function renderDashboard(container, store) {
-  const { documents, products, panel, dashboardSelectedDate, departmentDivisions } = store.state;
+  const {
+    documents, products, panel, departmentDivisions,
+    dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter,
+    dashboardOverview, dashboardLastRefreshedAt, dashboardRefreshing,
+  } = store.state;
   departmentDivisionsRef = departmentDivisions || {};
 
   if (!documents.length) {
@@ -309,81 +316,123 @@ export function renderDashboard(container, store) {
     return;
   }
 
-  const selectedDate = dashboardSelectedDate || todayIso();
-  if (selectedDate !== lastRenderedDate) {
+  const filterKey = `${dashboardDateFrom}|${dashboardDateTo}|${dashboardDivisionFilter}`;
+  if (filterKey !== lastRenderedFilterKey) {
     page = 1;
-    lastRenderedDate = selectedDate;
+    lastRenderedFilterKey = filterKey;
+  }
+
+  // departmentsByDivision: reverse of departmentDivisionsRef, for the
+  // Division select options and for turning a clicked Division row into a
+  // Products deptFilter (an array of that Division's department names).
+  const departmentsByDivision = new Map();
+  const allDivisionOptions = new Map();
+  for (const [dept, info] of Object.entries(departmentDivisionsRef)) {
+    if (!info) continue;
+    if (!departmentsByDivision.has(info.code)) departmentsByDivision.set(info.code, []);
+    departmentsByDivision.get(info.code).push(dept);
+    allDivisionOptions.set(info.code, info.name);
   }
 
   const docById = new Map(documents.map((d) => [d.id, d]));
-  const todaysRows = products.filter((p) => {
+  const inFilterRange = (p) => {
     const doc = docById.get(p.docId);
-    return doc && doc.status === "complete" && doc.documentDate === selectedDate && !p.suspectedNonProduct;
-  });
-
-  const deptSet = new Set(todaysRows.map((p) => p.department).filter(Boolean));
-  const amounts = todaysRows.map((p) => p.fields.amount?.value).filter((v) => v != null);
-  const amountAvailable = amounts.length > 0;
-  const totalAmount = amounts.reduce((a, b) => a + b, 0);
+    if (!doc || doc.status !== "complete" || p.suspectedNonProduct) return false;
+    if (!inRange(doc.documentDate, dashboardDateFrom, dashboardDateTo)) return false;
+    if (dashboardDivisionFilter !== "all" && departmentDivisionsRef[p.department]?.code !== dashboardDivisionFilter) return false;
+    return true;
+  };
+  const filteredRows = products.filter(inFilterRange);
 
   container.innerHTML = `
     <div class="workspace-header">
       <div class="workspace-title">Dashboard</div>
-      <div class="workspace-sub">สรุปสินค้าที่เข้าประจำวัน</div>
+      <div class="workspace-sub">สรุปภาพรวมข้อมูลตามวันที่ในเอกสาร</div>
     </div>
 
     <div id="dashStatusStrip"></div>
 
-    <div class="dash-date-nav">
-      <button type="button" class="icon-btn-sm" id="dashPrevDate" aria-label="วันก่อนหน้า">${icons.chevronLeft}</button>
-      <div class="dash-date-current">
-        <span class="nav-icon" aria-hidden="true">${icons.calendar}</span>
-        <span class="dash-date-label">${fmtDateLabel(selectedDate)}</span>
+    <div class="dash-filters">
+      <div class="dash-filter">
+        <label for="dashDateFrom">จาก</label>
+        <input type="date" id="dashDateFrom" value="${escapeHtml(dashboardDateFrom)}" />
       </div>
-      <button type="button" class="icon-btn-sm" id="dashNextDate" aria-label="วันถัดไป">${icons.chevronRight}</button>
-      <input type="date" id="dashDateJump" class="dash-date-jump" value="${escapeHtml(selectedDate)}" aria-label="เลือกวันที่" />
+      <div class="dash-filter">
+        <label for="dashDateTo">ถึง</label>
+        <input type="date" id="dashDateTo" value="${escapeHtml(dashboardDateTo)}" />
+      </div>
+      <div class="dash-filter">
+        <label for="dashDivisionSelect">Division</label>
+        <select id="dashDivisionSelect">
+          <option value="all"${dashboardDivisionFilter === "all" ? " selected" : ""}>ทั้งหมด</option>
+          ${[...allDivisionOptions.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([code, name]) => `<option value="${escapeHtml(code)}"${dashboardDivisionFilter === code ? " selected" : ""}>${escapeHtml(name)}</option>`)
+            .join("")}
+        </select>
+      </div>
+      <div class="dash-filter-meta">
+        <span>อัปเดตล่าสุด: ${fmtDateTime(dashboardLastRefreshedAt)}</span>
+        <button type="button" class="icon-btn-sm" id="dashRefreshBtn" aria-label="รีเฟรช" ${dashboardRefreshing ? "disabled" : ""}>
+          <span class="${dashboardRefreshing ? "spin" : ""}">${icons.refresh}</span>
+        </button>
+      </div>
     </div>
 
     <div class="kpi-icon-row">
-      ${kpiIconCard(fmtNum(todaysRows.length), "สินค้าวันนี้ (รายการ)", icons.box, "accent")}
-      ${kpiIconCard(amountAvailable ? fmtBaht(totalAmount) + " ฿" : "—", "มูลค่ารวมวันนี้", icons.trendingUp, "success")}
-      ${kpiIconCard(fmtNum(deptSet.size), "แผนกที่มีสินค้าเข้า", icons.building, "purple")}
+      ${kpiIconCard(
+        dashboardOverview ? (dashboardOverview.amountAvailable ? fmtBaht(dashboardOverview.totals.amount) + " ฿" : "ไม่มีข้อมูลมูลค่า") : "…",
+        "มูลค่ารวม", icons.trendingUp, "success"
+      )}
+      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.rowCount) : "…", "จำนวนรายการสินค้า", icons.box, "accent")}
+      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "purple")}
     </div>
 
-    <div class="section-title">รายการสินค้าวันนี้</div>
+    <div class="section-title">${dashboardOverview?.amountAvailable === false ? "สัดส่วนจำนวนรายการตาม Division" : "สัดส่วนมูลค่าตาม Division"}</div>
+    <div id="dashDivisionChart"></div>
+
+    <div class="section-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</div>
+    <div class="dash-panel" id="dashDeptPiePanel">
+      <div id="dashDeptPie"></div>
+    </div>
+
+    <div class="section-title">รายการสินค้า</div>
     <div id="dashProductsTable"></div>
     <div id="dashProductsPagination"></div>
-
-    <div class="section-title">สินค้าตามแผนกวันนี้</div>
-    <div class="dash-dept-grid">
-      <div class="dash-panel">
-        <div class="dash-panel-head"><span class="dash-panel-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</span></div>
-        <div id="dashDeptPie"></div>
-      </div>
-      <div class="dash-panel">
-        <div class="dash-panel-head"><span class="dash-panel-title">สัดส่วนมูลค่าตามฝ่าย</span></div>
-        <div id="dashDeptBars"></div>
-      </div>
-    </div>
   `;
 
   container.querySelector("#dashStatusStrip").innerHTML = statusStrip(documents);
   container.querySelector('[data-strip-nav="documents"]')?.addEventListener("click", () => store.navigate("documents"));
   container.querySelector('[data-strip-nav="review"]')?.addEventListener("click", () => store.navigate("review"));
 
-  container.querySelector("#dashPrevDate").addEventListener("click", () => {
-    store.setDashboardSelectedDate(shiftIsoDate(selectedDate, -1));
+  const refetch = async (patch) => {
+    try {
+      await store.setDashboardOverviewFilters(patch);
+    } catch (error) {
+      store.set({
+        errorDialog: {
+          title: "โหลดข้อมูลสรุปไม่สำเร็จ",
+          message: String(error?.message || error),
+          onRetry: () => refetch(patch),
+        },
+      });
+      document.dispatchEvent(new CustomEvent("show-error"));
+    }
+  };
+  container.querySelector("#dashDateFrom").addEventListener("change", (e) => refetch({ dateFrom: e.target.value || "" }));
+  container.querySelector("#dashDateTo").addEventListener("change", (e) => refetch({ dateTo: e.target.value || "" }));
+  container.querySelector("#dashDivisionSelect").addEventListener("change", (e) => refetch({ division: e.target.value }));
+  container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
+
+  renderDivisionValueChart(container.querySelector("#dashDivisionChart"), dashboardOverview, departmentsByDivision, (depts, name) => {
+    store.navigate("products", { deptFilter: depts, deptFilterLabel: name });
   });
-  container.querySelector("#dashNextDate").addEventListener("click", () => {
-    store.setDashboardSelectedDate(shiftIsoDate(selectedDate, 1));
-  });
-  container.querySelector("#dashDateJump").addEventListener("change", (e) => {
-    if (e.target.value) store.setDashboardSelectedDate(e.target.value);
-  });
+
+  renderDepartmentPie(container.querySelector("#dashDeptPie"), filteredRows);
 
   const tableHost = container.querySelector("#dashProductsTable");
   const paginationHost = container.querySelector("#dashProductsPagination");
-  const sortedRows = [...todaysRows].sort((a, b) => {
+  const sortedRows = [...filteredRows].sort((a, b) => {
     const av = a.fields.amount?.value;
     const bv = b.fields.amount?.value;
     if (av == null && bv == null) return 0;
@@ -399,7 +448,7 @@ export function renderDashboard(container, store) {
       getRowId: (row) => row.rowId,
       selectedRowId: panel?.rowId,
       onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
-      emptyMessage: "ไม่มีสินค้าเข้าสำหรับวันที่นี้",
+      emptyMessage: "ไม่มีสินค้าในช่วงวันที่ / ฝ่ายที่เลือก",
     });
     renderPaginationBar(paginationHost, {
       page, pageSize, total,
@@ -408,14 +457,4 @@ export function renderDashboard(container, store) {
     });
   }
   drawTable();
-
-  renderDepartmentPie(container.querySelector("#dashDeptPie"), todaysRows);
-
-  const deptBarsHost = container.querySelector("#dashDeptBars");
-  renderDivisionValueChart(deptBarsHost, todaysRows, amountAvailable);
-  deptBarsHost.querySelectorAll(".division-summary-row").forEach((row) => {
-    row.addEventListener("click", () => {
-      store.navigate("products", { deptFilter: JSON.parse(row.dataset.depts), deptFilterLabel: row.dataset.name });
-    });
-  });
 }
