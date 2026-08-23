@@ -348,6 +348,42 @@ button { font-family: inherit; }
 .status-pill.status-processing { background: var(--warning-soft); color: var(--warning); }
 .status-pill.status-error { background: var(--critical-soft); color: var(--critical); }
 
+/* ---------- Dashboard: quality banner ---------- */
+.quality-banner {
+  display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: var(--radius);
+  margin: 10px 0 20px; background: var(--surface-alt); border: 1px solid var(--border);
+}
+.quality-banner-score { font-family: var(--font-data); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+.quality-banner-score span { font-size: 14px; font-weight: 500; color: var(--text-faint); }
+.quality-banner-label { font-size: 15px; font-weight: 700; }
+.quality-banner-sub { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+.quality-band-ok { background: var(--success-soft); border-color: var(--success); }
+.quality-band-ok .quality-banner-score, .quality-band-ok .quality-banner-label { color: var(--success); }
+.quality-band-warn { background: var(--warning-soft); border-color: var(--warning); }
+.quality-band-warn .quality-banner-score, .quality-band-warn .quality-banner-label { color: var(--warning); }
+.quality-band-critical { background: var(--critical-soft); border-color: var(--critical); }
+.quality-band-critical .quality-banner-score, .quality-band-critical .quality-banner-label { color: var(--critical); }
+.quality-band-unknown .quality-banner-score { color: var(--text-faint); }
+
+/* ---------- Dashboard: filter bar ---------- */
+.dash-filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
+.dash-filter {
+  display: flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; box-shadow: var(--shadow);
+}
+.dash-filter label { font-size: 11px; color: var(--text-faint); }
+.dash-filter input, .dash-filter select {
+  border: 0; background: transparent; color: var(--text); font: inherit; outline: none; min-height: 26px;
+}
+
+/* ---------- Dashboard: recent documents ---------- */
+.recent-doc-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; cursor: pointer;
+}
+.recent-doc-row:hover { border-color: var(--accent); }
+.recent-doc-row.current { border-color: var(--accent); background: var(--accent-soft); }
+
 /* ---------- Dashboard: 6 divisions (the home page's main focus) ---------- */
 .dashboard-body { display: grid; grid-template-columns: 1fr 280px; gap: 26px; align-items: start; }
 .dashboard-main { min-width: 0; }
