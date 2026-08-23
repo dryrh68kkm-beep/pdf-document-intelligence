@@ -31,7 +31,7 @@ INDEX = ROOT / "frontend" / "app" / "index.html"
 def test_dashboard_surfaces_the_three_kpis():
     source = DASHBOARD.read_text(encoding="utf-8")
     assert "มูลค่ารวม" in source
-    assert "จำนวนรายการสินค้า" in source
+    assert "จำนวนรายการ" in source
     assert "จำนวนเอกสาร" in source
 
 
@@ -39,18 +39,50 @@ def test_dashboard_surfaces_product_table_and_department_breakdown():
     source = DASHBOARD.read_text(encoding="utf-8")
     assert "รายการสินค้า" in source
     # A pie chart of which department has the most product by quantity,
-    # alongside the Division value/summary table (user request).
+    # alongside the Division donut card and full summary table (user
+    # request, with a reference mockup - split into two sections: a
+    # compact donut+legend card, and a fuller table with an Action column).
     assert "renderDepartmentPie" in source
-    assert "renderDivisionValueChart" in source
-    # The table's columns (user request: drop unit price, keep only the
-    # summarized total value): name, article/barcode, department,
-    # quantity, amount.
+    assert "renderDivisionDonutCard" in source
+    assert "renderDivisionSummaryTable" in source
+    # The table's columns (user request, with a reference mockup: bring
+    # back ราคาต่อหน่วย alongside the summarized total value - both sourced
+    # from the same backend fields, never recomputed on the frontend):
+    # name, article, barcode, division/department, quantity, unit price,
+    # amount, status.
     assert "sku_qty" in source
-    assert "unit_price" not in source
+    assert "unit_price" in source
     assert ".amount" in source
     # Clicking a row still opens the existing product detail/evidence panel
     # - not a second, duplicate detail implementation.
     assert 'openPanel({ type: "product"' in source
+
+
+def test_dashboard_product_list_has_search_filter_sort():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    assert "dashProductSearch" in source
+    assert "dashProductDeptSelect" in source
+    assert "dashProductSortSelect" in source
+    assert "localSearchText" in source
+
+
+def test_dashboard_division_colors_are_stable_not_render_order():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    assert "DIVISION_COLOR_BY_NAME" in source
+    assert "colorForDivision" in source
+
+
+def test_dashboard_has_date_range_shortcuts():
+    source = DASHBOARD.read_text(encoding="utf-8")
+    assert "วันนี้" in source
+    assert "เมื่อวาน" in source
+    assert "เดือนนี้" in source
+
+
+def test_decorative_system_status_removed_from_sidebar():
+    sidebar = (ROOT / "frontend" / "app" / "components" / "sidebar.js").read_text(encoding="utf-8")
+    assert "System Status" not in sidebar
+    assert "Operational" not in sidebar
 
 
 def test_dashboard_has_a_date_range_and_division_filter():

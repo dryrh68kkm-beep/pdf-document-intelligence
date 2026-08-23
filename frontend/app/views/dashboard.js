@@ -26,15 +26,46 @@ function fmtQty(value) {
   return value % 1 === 0 ? String(value) : value.toFixed(2);
 }
 
-function fmtDateTime(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("th-TH", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function pad2(n) {
+  return String(n).padStart(2, "0");
 }
 
-function kpiIconCard(value, label, icon, tone) {
+// DD/MM/YYYY HH:mm per the reference mockup's exact format (spec section 6).
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isoDaysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function isoMonthStart() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`;
+}
+
+// Date-range shortcuts (spec section 2): all computed off today's real
+// calendar date, no new backend call - setDashboardOverviewFilters already
+// accepts an explicit {dateFrom, dateTo} pair.
+const DATE_SHORTCUTS = [
+  { label: "วันนี้", range: () => [todayIso(), todayIso()] },
+  { label: "เมื่อวาน", range: () => [isoDaysAgo(1), isoDaysAgo(1)] },
+  { label: "7 วัน", range: () => [isoDaysAgo(6), todayIso()] },
+  { label: "เดือนนี้", range: () => [isoMonthStart(), todayIso()] },
+];
+
+function kpiIconCard(value, label, icon, hexColor) {
   return `
     <div class="kpi-icon-card">
-      <div class="kpi-icon-badge tone-${tone}">${icon}</div>
+      <div class="kpi-icon-badge tone-solid" style="background:${hexColor};">${icon}</div>
       <div class="kpi-value">${value}</div>
       <div class="kpi-label">${label}</div>
     </div>`;
@@ -92,31 +123,48 @@ function statusStrip(documents) {
   return `<div class="dash-status-strip tone-ok">✓ ทุกเอกสารพร้อมใช้งาน ไม่มีรายการต้องตรวจสอบ</div>`;
 }
 
-const DIVISION_DONUT_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
+// Fixed Division colors (user request: "สีต้องตรงกันทุกจุด... ห้ามสุ่มสีใหม่
+// ทุกครั้งที่ render"). Keyed by Division NAME rather than the numeric code
+// the user's reference list paired each color with - verified against the
+// real master catalog (via GET /api/analytics/documents/{id}/divisions)
+// that its own codes don't match the reference list's assumed pairing
+// (e.g. this catalog's "01" is HARD LINE, not SOFT LINE as the reference
+// implied), so keying by code would silently mis-color HARD LINE with the
+// color meant for SOFT LINE. The name is what a viewer actually reads, so
+// that's what stays stably paired with its color - never by render-order
+// index, so a Division keeps the same color everywhere (donut, legend,
+// summary table) regardless of sort order or which date range is selected.
+// A name outside this fixed set still gets a *stable* color via a
+// deterministic hash of the name, not array position.
+const DIVISION_COLOR_BY_NAME = {
+  "SOFT LINE": "#2563EB",
+  "HOME LINE": "#18B58B",
+  "DRY FOOD": "#F5A623",
+  "FRESH FOOD": "#EF6670",
+  "PHARMACY": "#9B59D0",
+  "HARD LINE": "#38A3DB",
+};
+const DIVISION_FALLBACK_PALETTE = ["#3478F6", "#2DB486", "#D99A1F", "#9560D8", "#EF6570", "#4D91A8"];
+function colorForDivision(name) {
+  const key = (name || "?").toUpperCase().trim();
+  if (DIVISION_COLOR_BY_NAME[key]) return DIVISION_COLOR_BY_NAME[key];
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return DIVISION_FALLBACK_PALETTE[hash % DIVISION_FALLBACK_PALETTE.length];
+}
 
-// The main graph (user-supplied reference mockup): a donut chart of each
-// Division's share of today's-range value, plus a full summary table
-// (Division / มูลค่า / สัดส่วน / จำนวนรายการ / จำนวนเอกสาร) with a total
-// row, each row clickable to Products filtered to that Division's
-// departments. When no document in range carries amount data, falls back
-// to a quantity-based ("จำนวนรายการ") breakdown instead of hiding the
-// chart or inventing a value.
-function renderDivisionValueChart(host, overview, departmentsByDivision, onRowClick) {
-  if (!overview) {
-    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">กำลังโหลดข้อมูลสรุป...</div>`;
-    return;
-  }
-  // When a single Division is selected in the header filter, narrow the
-  // chart/table to just that Division too - otherwise the KPI cards above
-  // (scoped to the filter) and this table (always every Division) would
-  // silently disagree the moment a filter is applied.
+// Shared prep for both Division sections below: the filtered/sorted
+// Division entries (narrowed to the selected Division, if any, so the
+// chart/table never disagrees with the header filter or the KPI cards),
+// plus their percentages (allocatePercentages guarantees these foot to
+// exactly 100%) and grand totals. Returns null when there's nothing to
+// show, so both render functions share one "no data" check.
+function prepareDivisionEntries(overview) {
+  if (!overview) return null;
   const entries = overview.divisions.filter(
     (d) => d.rowCount > 0 && (overview.selectedDivision === "all" || d.divisionCode === overview.selectedDivision)
   );
-  if (!entries.length) {
-    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูลสินค้าในช่วงวันที่ / ฝ่ายที่เลือก</div>`;
-    return;
-  }
+  if (!entries.length) return { entries: [] };
   const byValue = overview.amountAvailable;
   const metric = (d) => (byValue ? d.amount : d.rowCount);
   const sorted = [...entries].sort((a, b) => metric(b) - metric(a));
@@ -125,76 +173,147 @@ function renderDivisionValueChart(host, overview, departmentsByDivision, onRowCl
   const grandRowCount = sorted.reduce((sum, d) => sum + d.rowCount, 0);
   // Document count is NOT summed across the visible Division rows - one
   // document can contribute rows to several Divisions, so summing would
-  // double-count it and overstate "how many documents". overview.totals
-  // .documentCount is the true distinct count already used by the
-  // "จำนวนเอกสาร" KPI card above, so the total row here always agrees with
-  // it exactly (and correctly narrows when a single Division is selected -
-  // see the entries filter above).
+  // double-count it. overview.totals.documentCount is the true distinct
+  // count already used by the "จำนวนเอกสาร" KPI card, so every total here
+  // always agrees with it exactly.
   const grandDocCount = overview.totals.documentCount;
+  return { entries: sorted, byValue, metric, percentages, grandTotal, grandRowCount, grandDocCount };
+}
+
+// "สัดส่วนมูลค่าตาม Division" (spec section 9): one card, donut left (40%)
+// / compact legend right (60%) - just Division / มูลค่า / สัดส่วน, no
+// action column (that lives in the fuller summary table below). Falls back
+// to a quantity-based breakdown, clearly labeled, when no document in
+// range carries amount data rather than hiding the chart or inventing ฿0.
+function renderDivisionDonutCard(host, overview) {
+  const prepared = prepareDivisionEntries(overview);
+  if (!prepared) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">กำลังโหลดข้อมูลสรุป...</div>`;
+    return;
+  }
+  if (!prepared.entries.length) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูลสินค้าในช่วงวันที่ / ฝ่ายที่เลือก</div>`;
+    return;
+  }
+  const { entries, byValue, percentages, grandTotal } = prepared;
 
   let offset = 0;
-  const segments = sorted
+  const segments = entries
     .map((d, i) => {
       const pct = percentages[i];
-      const seg = `var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]}) ${offset}% ${offset + pct}%`;
+      const seg = `${colorForDivision(d.divisionName)} ${offset}% ${offset + pct}%`;
       offset += pct;
       return seg;
     })
     .join(", ");
 
   const centerValue = byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal);
-  const centerLabel = byValue ? "มูลค่ารวม (฿)" : "จำนวนรายการรวม";
+  const centerLabel = byValue ? "มูลค่ารวม (บาท)" : "จำนวนรายการรวม";
 
   host.innerHTML = `
-    <div class="dash-division-chart-grid">
+    <div class="dash-division-donut-grid">
       <div class="donut-wrap">
-        <div style="width:150px;height:150px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
-          <div style="width:96px;height:96px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
-            <div class="mono" style="font-size:14px;font-weight:700;">${centerValue}</div>
-            <div style="font-size:9.5px;color:var(--text-faint);">${centerLabel}</div>
+        <div style="width:170px;height:170px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
+          <div style="width:112px;height:112px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+            <div class="mono" style="font-size:16px;font-weight:700;color:var(--text);">${centerValue}</div>
+            <div style="font-size:10px;color:var(--text-faint);">${centerLabel}</div>
           </div>
         </div>
       </div>
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead><tr>
-            <th>Division</th>
-            <th class="num">${byValue ? "มูลค่า (บาท)" : "จำนวนรายการ"}</th>
-            <th class="num">สัดส่วน</th>
-            <th class="num">จำนวนรายการ</th>
-            <th class="num">จำนวนเอกสาร</th>
-          </tr></thead>
-          <tbody>
-            ${sorted
-              .map(
-                (d, i) => `
-              <tr class="division-summary-row" data-code="${escapeHtml(d.divisionCode)}" data-name="${escapeHtml(d.divisionName)}" style="cursor:pointer;">
-                <td><span class="donut-legend-dot" style="background:var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]});display:inline-block;margin-right:7px;"></span>${escapeHtml(d.divisionName)}</td>
-                <td class="num mono">${byValue ? fmtBaht(d.amount) + " ฿" : fmtNum(d.rowCount)}</td>
-                <td class="num mono">${percentages[i]}%</td>
-                <td class="num mono">${fmtNum(d.rowCount)}</td>
-                <td class="num mono">${fmtNum(d.documentCount)}</td>
-              </tr>`
-              )
-              .join("")}
-          </tbody>
-          <tfoot>
-            <tr class="division-summary-total">
-              <td>รวม</td>
-              <td class="num mono">${byValue ? fmtBaht(grandTotal) + " ฿" : fmtNum(grandTotal)}</td>
-              <td class="num mono">100%</td>
-              <td class="num mono">${fmtNum(grandRowCount)}</td>
-              <td class="num mono">${fmtNum(grandDocCount)}</td>
-            </tr>
-          </tfoot>
-        </table>
+      <div class="dash-division-legend">
+        <div class="dash-division-legend-head">
+          <span>Division</span><span class="num">${byValue ? "มูลค่า (บาท)" : "จำนวนรายการ"}</span><span class="num">สัดส่วน</span>
+        </div>
+        ${entries
+          .map(
+            (d, i) => `
+          <div class="dash-division-legend-row">
+            <span class="dash-division-legend-name"><span class="donut-legend-dot" style="background:${colorForDivision(d.divisionName)};"></span>${escapeHtml(d.divisionName)}</span>
+            <span class="num mono">${byValue ? fmtBaht(d.amount) : fmtNum(d.rowCount)}</span>
+            <span class="num mono">${percentages[i]}%</span>
+          </div>`
+          )
+          .join("")}
+        <div class="dash-division-legend-row dash-division-legend-total">
+          <span class="dash-division-legend-name">รวม</span>
+          <span class="num mono">${byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal)}</span>
+          <span class="num mono">100%</span>
+        </div>
       </div>
     </div>`;
+}
 
+// "สรุปมูลค่าตาม Division" (spec section 12): the fuller table - Division /
+// มูลค่า / สัดส่วน / จำนวนรายการ / จำนวนเอกสาร / Action - each row's Action
+// reuses the existing Products-page Division filter (an array of that
+// Division's departments), the same "view what's inside this Division"
+// entry point the Dashboard already had - not a new detail page.
+function renderDivisionSummaryTable(host, overview, departmentsByDivision, onRowClick) {
+  const prepared = prepareDivisionEntries(overview);
+  if (!prepared) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">กำลังโหลดข้อมูลสรุป...</div>`;
+    return;
+  }
+  if (!prepared.entries.length) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูลสินค้าในช่วงวันที่ / ฝ่ายที่เลือก</div>`;
+    return;
+  }
+  const { entries, byValue, percentages, grandTotal, grandRowCount, grandDocCount } = prepared;
+
+  host.innerHTML = `
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>Division</th>
+          <th class="num">${byValue ? "มูลค่า (บาท)" : "จำนวนรายการ"}</th>
+          <th class="num">สัดส่วน</th>
+          <th class="num">จำนวนรายการ</th>
+          <th class="num">จำนวนเอกสาร</th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+          ${entries
+            .map(
+              (d, i) => `
+            <tr class="division-summary-row" data-code="${escapeHtml(d.divisionCode)}" data-name="${escapeHtml(d.divisionName)}">
+              <td><span class="donut-legend-dot" style="background:${colorForDivision(d.divisionName)};display:inline-block;margin-right:7px;"></span>${escapeHtml(d.divisionName)}</td>
+              <td class="num mono">${byValue ? fmtBaht(d.amount) : fmtNum(d.rowCount)}</td>
+              <td class="num mono">${percentages[i]}%</td>
+              <td class="num mono">${fmtNum(d.rowCount)}</td>
+              <td class="num mono">${fmtNum(d.documentCount)}</td>
+              <td class="num"><button type="button" class="dash-panel-link" data-division-action="${escapeHtml(d.divisionCode)}">ดู ›</button></td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+        <tfoot>
+          <tr class="division-summary-total">
+            <td>รวม</td>
+            <td class="num mono">${byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal)}</td>
+            <td class="num mono">100%</td>
+            <td class="num mono">${fmtNum(grandRowCount)}</td>
+            <td class="num mono">${fmtNum(grandDocCount)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+
+  const clickRow = (code, name) => {
+    const depts = departmentsByDivision.get(code) || [];
+    onRowClick(depts, name);
+  };
   host.querySelectorAll(".division-summary-row").forEach((row) => {
-    row.addEventListener("click", () => {
-      const depts = departmentsByDivision.get(row.dataset.code) || [];
-      onRowClick(depts, row.dataset.name);
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("[data-division-action]")) return; // handled below
+      clickRow(row.dataset.code, row.dataset.name);
+    });
+  });
+  host.querySelectorAll("[data-division-action]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const row = btn.closest(".division-summary-row");
+      clickRow(row.dataset.code, row.dataset.name);
     });
   });
 }
@@ -257,18 +376,25 @@ function renderDepartmentPie(host, rows) {
   `;
 }
 
+// Status badge (spec section 15): reuses the app's existing .pill system
+// (see products.js/review.js) rather than a new one. suspectedNonProduct
+// rows are already filtered out upstream, so only two real states apply to
+// a Dashboard product row today: needs review, or normal - a fabricated
+// "High Risk"/"Processing" distinction isn't backed by any real per-row
+// field, so it's not invented here (see the final report's "not changed"
+// list).
+function statusBadge(row) {
+  if (row.reviewRequired) return `<span class="pill pill-warning">ต้องตรวจ</span>`;
+  return `<span class="pill pill-success">ปกติ</span>`;
+}
+
 const COLUMNS = [
   { key: "name", label: "ชื่อสินค้า", render: (r) => escapeHtml(r.fields.name?.value) || "—" },
-  {
-    key: "identifier",
-    label: "Article / Barcode",
-    render: (r) => `
-      <div class="mono" style="font-size:12px;">${escapeHtml(r.fields.article?.value) || "—"}</div>
-      <div class="mono" style="font-size:11px;color:var(--text-faint);">${escapeHtml(r.fields.barcode?.value) || "—"}</div>`,
-  },
+  { key: "article", label: "Article", render: (r) => `<span class="mono">${escapeHtml(r.fields.article?.value) || "—"}</span>` },
+  { key: "barcode", label: "Barcode", render: (r) => `<span class="mono">${escapeHtml(r.fields.barcode?.value) || "—"}</span>` },
   {
     key: "dept",
-    label: "ฝ่าย / แผนก",
+    label: "Division / Department",
     render: (r) => {
       const division = departmentDivisionsRef[r.department]?.name;
       return `
@@ -276,11 +402,22 @@ const COLUMNS = [
         <div>${escapeHtml(r.department) || "—"}</div>`;
     },
   },
-  { key: "qty", label: "จำนวน", align: "num", render: (r) => `<span class="mono">${fmtQty(r.fields.sku_qty?.value)}</span>` },
+  { key: "qty", label: "SKU Qty", align: "num", render: (r) => `<span class="mono">${fmtQty(r.fields.sku_qty?.value)}</span>` },
   {
-    key: "amount", label: "มูลค่ารวม", align: "num",
-    render: (r) => `<span class="mono">${r.fields.amount?.value != null ? fmtBaht(r.fields.amount.value) : "—"}</span>`,
+    key: "unitPrice", label: "ราคาต่อหน่วย", align: "num",
+    // unit_price is the master catalog's own CURRENT_COST, looked up by
+    // barcode server-side (pdf_document_intelligence/api/rows.py) - never
+    // recomputed here. null (no catalog cost for this barcode) renders as
+    // "—", never a fabricated 0.
+    render: (r) => `<span class="mono">${r.fields.unit_price?.value != null ? fmtBaht(r.fields.unit_price.value) : "—"}</span>`,
   },
+  {
+    key: "amount", label: "มูลค่า", align: "num",
+    // amount = unit_price * sku_qty, computed once in Decimal on the
+    // backend (same file as above) and never recomputed on the frontend.
+    render: (r) => `<span class="mono" style="font-weight:600;">${r.fields.amount?.value != null ? fmtBaht(r.fields.amount.value) : "—"}</span>`,
+  },
+  { key: "status", label: "สถานะ", render: statusBadge },
 ];
 
 // Module-level pagination state (same pattern as products.js/review.js) -
@@ -289,6 +426,40 @@ const COLUMNS = [
 let page = 1;
 let pageSize = PAGE_SIZE_OPTIONS[0];
 let lastRenderedFilterKey = null;
+
+// Product-list search/filter/sort (spec section 13-14) - kept as local
+// module state and applied by redrawing only the table/pagination (see
+// drawTable() below), not a full store.set()-triggered re-render, so
+// typing in the search box or changing sort stays cheap even with tens of
+// thousands of rows loaded. localSearchText mirrors products.js's own
+// fix for the same class of bug: an unrelated background render (a poll
+// noticing a document finished, another tab's edit) must not wipe
+// whatever the user is mid-typing, so the input reads from this local
+// variable already, not by re-syncing from anywhere.
+let localSearchText = "";
+let localDeptFilter = "";
+let sortKey = "amount"; // amount | qty | name | dept
+
+const SORT_COMPARATORS = {
+  amount: (a, b) => {
+    const av = a.fields.amount?.value;
+    const bv = b.fields.amount?.value;
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return bv - av;
+  },
+  qty: (a, b) => {
+    const av = a.fields.sku_qty?.value;
+    const bv = b.fields.sku_qty?.value;
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return bv - av;
+  },
+  name: (a, b) => (a.fields.name?.value || "").localeCompare(b.fields.name?.value || "", "th"),
+  dept: (a, b) => (a.department || "").localeCompare(b.department || "", "th"),
+};
 
 // COLUMNS is built once at module load, but the dept column's render()
 // needs the department->division map from store.state - kept as a
@@ -344,10 +515,31 @@ export function renderDashboard(container, store) {
   };
   const filteredRows = products.filter(inFilterRange);
 
+  // Product-list's own local search box (spec section 13-14) - see
+  // localSearchText/localDeptFilter/sortKey above for why this doesn't
+  // trigger a full re-render on every keystroke: applySearch() is called
+  // fresh inside drawTable() below, not baked into this outer render.
+  const productDepartments = [...new Set(filteredRows.map((p) => p.department).filter(Boolean))].sort();
+  function applySearch(rows) {
+    const q = localSearchText.trim().toLowerCase();
+    return rows.filter((p) => {
+      if (localDeptFilter && p.department !== localDeptFilter) return false;
+      if (!q) return true;
+      return (p._search || "").includes(q);
+    });
+  }
+
+  // Preserve the search box's cursor/focus across the innerHTML rebuild
+  // below - same fix as products.js for the same class of bug (an
+  // unrelated background render must not kick focus out of the box).
+  const searchInputEl = container.querySelector("#dashProductSearch");
+  const hadFocus = searchInputEl === document.activeElement;
+  const selectionStart = hadFocus ? searchInputEl.selectionStart : null;
+
   container.innerHTML = `
     <div class="workspace-header">
       <div class="workspace-title">Dashboard</div>
-      <div class="workspace-sub">สรุปภาพรวมข้อมูลตามวันที่ในเอกสาร</div>
+      <div class="workspace-sub">สรุปสินค้าที่เข้า อ้างอิงวันที่ในเอกสาร</div>
     </div>
 
     <div id="dashStatusStrip"></div>
@@ -360,6 +552,9 @@ export function renderDashboard(container, store) {
       <div class="dash-filter">
         <label for="dashDateTo">ถึง</label>
         <input type="date" id="dashDateTo" value="${escapeHtml(dashboardDateTo)}" />
+      </div>
+      <div class="dash-date-shortcuts">
+        ${DATE_SHORTCUTS.map((s) => `<button type="button" class="dash-date-shortcut-btn" data-shortcut="${escapeHtml(s.label)}">${escapeHtml(s.label)}</button>`).join("")}
       </div>
       <div class="dash-filter">
         <label for="dashDivisionSelect">Division</label>
@@ -381,22 +576,43 @@ export function renderDashboard(container, store) {
 
     <div class="kpi-icon-row">
       ${kpiIconCard(
-        dashboardOverview ? (dashboardOverview.amountAvailable ? fmtBaht(dashboardOverview.totals.amount) + " ฿" : "ไม่มีข้อมูลมูลค่า") : "…",
-        "มูลค่ารวม", icons.trendingUp, "success"
+        dashboardOverview ? (dashboardOverview.amountAvailable ? "฿ " + fmtBaht(dashboardOverview.totals.amount) : "ไม่มีข้อมูลมูลค่า") : "…",
+        "มูลค่ารวม", icons.trendingUp, "#2563EB"
       )}
-      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.rowCount) : "…", "จำนวนรายการสินค้า", icons.box, "accent")}
-      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "purple")}
+      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.rowCount) : "…", "จำนวนรายการ", icons.box, "#12B886")}
+      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "#9B51E0")}
     </div>
 
     <div class="section-title">${dashboardOverview?.amountAvailable === false ? "สัดส่วนจำนวนรายการตาม Division" : "สัดส่วนมูลค่าตาม Division"}</div>
-    <div id="dashDivisionChart"></div>
+    <div class="dash-panel" id="dashDivisionDonutCard"></div>
+
+    <div class="section-title">สรุปมูลค่าตาม Division</div>
+    <div id="dashDivisionSummaryTable"></div>
 
     <div class="section-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</div>
     <div class="dash-panel" id="dashDeptPiePanel">
       <div id="dashDeptPie"></div>
     </div>
 
-    <div class="section-title">รายการสินค้า</div>
+    <div class="dash-product-list-head">
+      <div>
+        <div class="section-title" style="margin:0;">รายการสินค้าวันนี้</div>
+        <div class="workspace-sub" id="dashProductListCount">${fmtNum(applySearch(filteredRows).length)} รายการ</div>
+      </div>
+      <div class="dash-product-list-controls">
+        <input id="dashProductSearch" class="search-input" type="text" placeholder="ค้นหา Barcode / Article / ชื่อสินค้า" value="${escapeHtml(localSearchText)}" />
+        <select id="dashProductDeptSelect" class="filter-chip">
+          <option value="">ทุก Division / Department</option>
+          ${productDepartments.map((d) => `<option value="${escapeHtml(d)}"${localDeptFilter === d ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}
+        </select>
+        <select id="dashProductSortSelect" class="filter-chip">
+          <option value="amount"${sortKey === "amount" ? " selected" : ""}>มูลค่าสูงสุด</option>
+          <option value="qty"${sortKey === "qty" ? " selected" : ""}>จำนวนสูงสุด</option>
+          <option value="name"${sortKey === "name" ? " selected" : ""}>ชื่อสินค้า</option>
+          <option value="dept"${sortKey === "dept" ? " selected" : ""}>แผนก</option>
+        </select>
+      </div>
+    </div>
     <div id="dashProductsTable"></div>
     <div id="dashProductsPagination"></div>
   `;
@@ -423,8 +639,16 @@ export function renderDashboard(container, store) {
   container.querySelector("#dashDateTo").addEventListener("change", (e) => refetch({ dateTo: e.target.value || "" }));
   container.querySelector("#dashDivisionSelect").addEventListener("change", (e) => refetch({ division: e.target.value }));
   container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
+  container.querySelectorAll(".dash-date-shortcut-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const shortcut = DATE_SHORTCUTS.find((s) => s.label === btn.dataset.shortcut);
+      const [dateFrom, dateTo] = shortcut.range();
+      refetch({ dateFrom, dateTo });
+    });
+  });
 
-  renderDivisionValueChart(container.querySelector("#dashDivisionChart"), dashboardOverview, departmentsByDivision, (depts, name) => {
+  renderDivisionDonutCard(container.querySelector("#dashDivisionDonutCard"), dashboardOverview);
+  renderDivisionSummaryTable(container.querySelector("#dashDivisionSummaryTable"), dashboardOverview, departmentsByDivision, (depts, name) => {
     store.navigate("products", { deptFilter: depts, deptFilterLabel: name });
   });
 
@@ -432,16 +656,18 @@ export function renderDashboard(container, store) {
 
   const tableHost = container.querySelector("#dashProductsTable");
   const paginationHost = container.querySelector("#dashProductsPagination");
-  const sortedRows = [...filteredRows].sort((a, b) => {
-    const av = a.fields.amount?.value;
-    const bv = b.fields.amount?.value;
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    return bv - av;
-  });
+  const countEl = container.querySelector("#dashProductListCount");
 
+  // Re-applies search/dept-filter/sort fresh from filteredRows (already
+  // computed once above from the date-range/Division header filter) on
+  // every call - typing in the search box or changing sort only re-runs
+  // this and repaints the table/pagination/count label, never the whole
+  // Dashboard (KPIs, Division donut/table, department pie all stay
+  // untouched), so it stays cheap even with tens of thousands of rows.
   function drawTable() {
+    const searchedRows = applySearch(filteredRows);
+    countEl.textContent = `${fmtNum(searchedRows.length)} รายการ`;
+    const sortedRows = [...searchedRows].sort(SORT_COMPARATORS[sortKey]);
     const { pageRows, total } = paginate(sortedRows, page, pageSize);
     renderDataTable(tableHost, pageRows, {
       columns: COLUMNS,
@@ -457,4 +683,26 @@ export function renderDashboard(container, store) {
     });
   }
   drawTable();
+
+  const searchInput = container.querySelector("#dashProductSearch");
+  if (hadFocus) {
+    searchInput.focus();
+    searchInput.setSelectionRange(selectionStart, selectionStart);
+  }
+  let searchDebounce = null;
+  searchInput.addEventListener("input", (e) => {
+    localSearchText = e.target.value;
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => { page = 1; drawTable(); }, 200);
+  });
+  container.querySelector("#dashProductDeptSelect").addEventListener("change", (e) => {
+    localDeptFilter = e.target.value;
+    page = 1;
+    drawTable();
+  });
+  container.querySelector("#dashProductSortSelect").addEventListener("change", (e) => {
+    sortKey = e.target.value;
+    page = 1;
+    drawTable();
+  });
 }
