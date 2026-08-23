@@ -64,8 +64,12 @@ function renderSidePanel() {
 
 // When a correction/undo saves, refresh all data (dashboard/products
 // recalculate from the DB, never patched in place) and re-open the panel
-// on the freshly-saved row so evidence + history reflect the save.
+// on the freshly-saved row so evidence + history reflect the save. Only the
+// edited document's existing Division summary is invalidated; historical
+// documents keep their cached summaries.
 document.addEventListener("product-saved", async (e) => {
+  const changedDocId = store.state.panel?.data?.docId;
+  store.invalidateDivisionSummary(changedDocId);
   await store.refreshAll();
   const rowId = e.detail.rowId;
   const fresh = store.state.products.find((p) => p.rowId === rowId);
@@ -95,7 +99,6 @@ function renderBottomBar() {
 }
 
 function renderLightweightProgressUi() {
-  // Polling progress must not tear down/rebuild the active dashboard/table.
   renderSidebar(store);
   renderBottomBar();
 }
@@ -126,7 +129,6 @@ function showUploadError(error) {
   modalBox.querySelector("#uploadErrorOk").addEventListener("click", () => modalBackdrop.classList.remove("open"));
 }
 
-// ---------- Upload / dedupe ----------
 async function uploadFiles(fileList) {
   if (uploadInProgress) return;
   const files = Array.from(fileList).filter((file) => file.name.toLowerCase().endsWith(".pdf"));
@@ -136,18 +138,10 @@ async function uploadFiles(fileList) {
   try {
     for (const file of files) {
       const { status, body } = await api.uploadDocument(file);
-      if (status === 409) {
-        showDuplicateDialog(file, body.existingDocument);
-      }
+      if (status === 409) showDuplicateDialog(file, body.existingDocument);
     }
-
-    // Only fetch document/progress state here. Loading dashboard + every
-    // product immediately while OCR is starting caused the UI to freeze.
     await store.refreshDocuments({ silent: true });
     renderLightweightProgressUi();
-
-    // Very small documents may finish before the first poll. In that case
-    // refresh the heavy views exactly once now.
     if (!store.hasProcessing()) await store.refreshAll();
   } catch (error) {
     showUploadError(error);
@@ -216,7 +210,6 @@ fileInput.addEventListener("change", (e) => {
   uploadFiles(files);
 });
 
-// Drag & drop anywhere on the app
 let dragDepth = 0;
 window.addEventListener("dragenter", (e) => {
   if (uploadInProgress || !e.dataTransfer?.types?.includes("Files")) return;
@@ -239,10 +232,6 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = api.exportUrl();
 });
 
-// Global search: routes to Products view: the view itself reads
-// state.searchQuery as its initial filter value (see views/products.js) -
-// state is the single source of truth here, not a simulated DOM event
-// crossing a re-render boundary.
 let searchDebounce = null;
 document.getElementById("globalSearch").addEventListener("input", (e) => {
   clearTimeout(searchDebounce);
@@ -252,7 +241,6 @@ document.getElementById("globalSearch").addEventListener("input", (e) => {
   }, 200);
 });
 
-// ---------- Polling ----------
 async function pollLoop() {
   if (pollInProgress) return;
   pollInProgress = true;
@@ -260,20 +248,11 @@ async function pollLoop() {
 
   try {
     const wasProcessing = store.hasProcessing();
-
-    // During OCR we only need document/progress state. The old loop called
-    // refreshAll() every 1.5s, re-fetching every product + dashboard and
-    // triggering multiple full renders, which made the app appear to hang
-    // and flicker/rerender continuously while a file was being added.
     await store.refreshDocuments({ silent: true });
     const isProcessing = store.hasProcessing();
     renderLightweightProgressUi();
 
-    if (wasProcessing && !isProcessing) {
-      // Processing just finished: hydrate dashboard/products once.
-      await store.refreshAll();
-    }
-
+    if (wasProcessing && !isProcessing) await store.refreshAll();
     nextDelay = isProcessing ? 1500 : 5000;
   } catch (error) {
     console.error("poll failed", error);
