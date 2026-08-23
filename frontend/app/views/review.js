@@ -28,6 +28,10 @@ const REASON_PRIORITY = {
   MISSING_DEPARTMENT: 3,
 };
 
+let cachedProductsRef = null;
+let cachedItems = [];
+let cachedCounts = { critical: 0, numeric: 0, evidence: 0 };
+
 function fieldIssues(product) {
   const issues = [];
   for (const [field, value] of Object.entries(product.fields || {})) {
@@ -39,27 +43,41 @@ function fieldIssues(product) {
   return issues;
 }
 
-function priority(product) {
-  const reasons = [...(product.reviewReasons || []), ...fieldIssues(product).map((x) => x.flag)];
+function priorityFromIssues(product, issues) {
+  const reasons = [...(product.reviewReasons || []), ...issues.map((x) => x.flag)];
   return Math.min(...reasons.map((r) => REASON_PRIORITY[r] ?? 4), 4);
 }
 
+function derivedReviewItems(products) {
+  if (products === cachedProductsRef) return { items: cachedItems, counts: cachedCounts };
+
+  cachedProductsRef = products;
+  cachedItems = products
+    .filter((p) => p.reviewRequired)
+    .map((p) => {
+      const issues = fieldIssues(p);
+      return { ...p, _reviewPriority: priorityFromIssues(p, issues), _fieldIssues: issues };
+    })
+    .sort((a, b) => a._reviewPriority - b._reviewPriority || (a.page || 0) - (b.page || 0));
+
+  cachedCounts = {
+    critical: cachedItems.filter((p) => p._reviewPriority === 0).length,
+    numeric: cachedItems.filter((p) => p._reviewPriority === 1 || p._reviewPriority === 2).length,
+    evidence: cachedItems.filter((p) => p._reviewPriority >= 3).length,
+  };
+  return { items: cachedItems, counts: cachedCounts };
+}
+
 function reasonText(product) {
-  const reasons = [...new Set([...(product.reviewReasons || []), ...fieldIssues(product).map((x) => x.flag)])];
+  const issues = product._fieldIssues || fieldIssues(product);
+  const reasons = [...new Set([...(product.reviewReasons || []), ...issues.map((x) => x.flag)])];
   if (!reasons.length) return "ต้องตรวจสอบความถูกต้อง";
   return reasons.map((r) => REASON_LABELS[r] || r).join(" • ");
 }
 
 export function renderReview(container, store) {
   const { products, panel } = store.state;
-  const items = products
-    .filter((p) => p.reviewRequired)
-    .map((p) => ({ ...p, _reviewPriority: priority(p), _fieldIssues: fieldIssues(p) }))
-    .sort((a, b) => a._reviewPriority - b._reviewPriority || (a.page || 0) - (b.page || 0));
-
-  const critical = items.filter((p) => p._reviewPriority === 0).length;
-  const numeric = items.filter((p) => p._reviewPriority === 1 || p._reviewPriority === 2).length;
-  const evidence = items.filter((p) => p._reviewPriority >= 3).length;
+  const { items, counts } = derivedReviewItems(products);
   const scrollTop = container.querySelector(".vtable-body")?.scrollTop || 0;
 
   container.innerHTML = `
@@ -71,7 +89,7 @@ export function renderReview(container, store) {
       ? `<div class="empty-state"><div class="icon">✅</div><div class="title">ไม่มีรายการต้องตรวจสอบ</div></div>`
       : `
         <div class="workspace-sub" style="margin-bottom:10px;">
-          สำคัญ ${critical.toLocaleString()} • เกี่ยวกับยอด/จำนวน ${numeric.toLocaleString()} • ตรวจหลักฐาน ${evidence.toLocaleString()}
+          สำคัญ ${counts.critical.toLocaleString()} • เกี่ยวกับยอด/จำนวน ${counts.numeric.toLocaleString()} • ตรวจหลักฐาน ${counts.evidence.toLocaleString()}
         </div>
         <div id="reviewReason" class="workspace-sub" style="margin-bottom:12px;">เลือกแถวเพื่อดูสาเหตุ, field, หน้า PDF และหลักฐานต้นฉบับ</div>
         <div id="tableHost"></div>`}
