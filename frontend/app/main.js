@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { store } from "./state.js";
+import { icons } from "./icons.js";
 import { renderSidebar } from "./components/sidebar.js";
 import { renderProductDetail, detailPanelIsDirty, detailPanelReset, setDirtyChangeListener } from "./components/detailPanel.js";
 
@@ -258,8 +259,23 @@ window.addEventListener("drop", (e) => {
   if (!uploadInProgress && e.dataTransfer?.files?.length) uploadFiles(e.dataTransfer.files);
 });
 
+document.getElementById("exportBtnIcon").innerHTML = icons.download;
 document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = api.exportUrl();
+});
+
+// Filter icon-button: decorative on views without an inline filter bar,
+// focuses the first filter control already rendered by the active view
+// (department/status/etc. selects that already exist per-view) when one is
+// present - no new filtering behavior is introduced here.
+document.getElementById("topbarFilterBtn").innerHTML = icons.filter;
+document.getElementById("topbarFilterBtn").addEventListener("click", () => {
+  workspaceEl.querySelector(".filter-chip-bar select, .filter-bar select")?.focus();
+});
+
+document.getElementById("topbarRefreshBtn").innerHTML = icons.refresh;
+document.getElementById("topbarRefreshBtn").addEventListener("click", () => {
+  store.refreshAll();
 });
 
 let searchDebounce = null;

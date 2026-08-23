@@ -1,8 +1,11 @@
 import { api } from "../api.js";
+import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 
 let searchQuery = "";
 let statusFilter = "all";
 let sortMode = "newest";
+let page = 1;
+let pageSize = PAGE_SIZE_OPTIONS[0];
 
 const DOCUMENT_TYPE_LABEL = {
   packing_list_bigc_cdc: "Big C",
@@ -107,6 +110,7 @@ export function renderDocuments(container, store) {
 
   container.querySelector("#docSearch").addEventListener("input", (event) => {
     searchQuery = event.target.value;
+    page = 1;
     renderDocuments(container, store);
     const input = container.querySelector("#docSearch");
     input?.focus();
@@ -114,10 +118,12 @@ export function renderDocuments(container, store) {
   });
   container.querySelector("#docStatusFilter").addEventListener("change", (event) => {
     statusFilter = event.target.value;
+    page = 1;
     renderDocuments(container, store);
   });
   container.querySelector("#docSort").addEventListener("change", (event) => {
     sortMode = event.target.value;
+    page = 1;
     renderDocuments(container, store);
   });
 
@@ -130,6 +136,8 @@ export function renderDocuments(container, store) {
     list.innerHTML = `<div class="empty-state"><div class="icon">🔎</div><div class="title">ไม่พบเอกสารที่ตรงกับตัวกรอง</div></div>`;
     return;
   }
+
+  const { pageRows, total } = paginate(visible, page, pageSize);
 
   const wrap = document.createElement("div");
   wrap.className = "doc-table-wrap";
@@ -155,9 +163,18 @@ export function renderDocuments(container, store) {
   wrap.appendChild(table);
   list.innerHTML = "";
   list.appendChild(wrap);
+  const paginationHost = document.createElement("div");
+  list.appendChild(paginationHost);
+  renderPaginationBar(paginationHost, {
+    page,
+    pageSize,
+    total,
+    onPageChange: (p) => { page = p; renderDocuments(container, store); },
+    onPageSizeChange: (size) => { pageSize = size; page = 1; renderDocuments(container, store); },
+  });
 
   const tbody = table.querySelector("tbody");
-  visible.forEach((doc) => {
+  pageRows.forEach((doc) => {
     const reviewCount = doc.qualityCounts?.needReview ?? 0;
     const problem = isProblemDocument(doc);
     const statusLabel = doc.status === "complete" ? "พร้อมใช้งาน" : doc.status === "error" ? "ผิดพลาด" : "กำลังประมวลผล";

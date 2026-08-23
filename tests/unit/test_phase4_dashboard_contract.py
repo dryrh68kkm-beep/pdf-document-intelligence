@@ -23,7 +23,7 @@ def test_dashboard_surfaces_core_kpis():
     assert "Division Overview" in source
     assert "Department Overview" in source
     assert "Data Quality" in source
-    assert "Reconciliation Status" in source
+    assert "Reconciliation Summary" in source
     assert "Recent Documents" in source
 
 
