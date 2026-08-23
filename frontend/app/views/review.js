@@ -32,14 +32,16 @@ const REASON_PRIORITY = {
 
 // Risk tiers (Phase 5): priority 0 is a hard identifier/department conflict
 // (High Risk), 1-2 is a numeric reconciliation gap (Needs Review), 3+ is a
-// lower-severity evidence-only flag with otherwise-usable data ("Resolved" -
-// i.e. low risk / ready to confirm with "Mark Resolved" rather than
-// requiring a correction first).
+// lower-severity evidence-only flag with otherwise-usable data - ready to
+// confirm with "Mark Resolved" (see detailPanel.js), but NOT resolved yet:
+// every row here still has reviewRequired=true, since a row that's actually
+// been confirmed leaves this list entirely. Labeling this tier "Resolved"
+// would claim work that hasn't happened - "Low Priority" says what's true.
 const TABS = [
   { key: "all", label: "ทั้งหมด", tone: "neutral", test: () => true },
   { key: "high", label: "High Risk", tone: "critical", test: (p) => p._reviewPriority === 0 },
   { key: "needs", label: "Needs Review", tone: "warning", test: (p) => p._reviewPriority === 1 || p._reviewPriority === 2 },
-  { key: "resolved", label: "Resolved", tone: "success", test: (p) => p._reviewPriority >= 3 },
+  { key: "low", label: "Low Priority", tone: "success", test: (p) => p._reviewPriority >= 3 },
 ];
 
 const PRIORITY_PILL = {
