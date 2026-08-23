@@ -196,6 +196,17 @@ button { font-family: inherit; }
 }
 .table-toolbar .count-label { font-size: 12px; color: var(--text-faint); margin-left: auto; }
 
+/* ---------- Shared filter-bar controls (Documents/Departments/Products toolbars) ---------- */
+.search-input {
+  flex: 1; min-width: 180px; max-width: 320px; padding: 7px 11px; border-radius: 7px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 13px;
+}
+.filter-select {
+  padding: 7px 10px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--text); font: inherit; font-size: 13px;
+}
+.search-input:focus, .filter-select:focus { border-color: var(--accent); outline: none; }
+
 .vtable-scroll { overflow-x: auto; }
 .vtable-head, .vrow { display: grid; grid-template-columns: var(--vt-cols, 100px 1fr 70px 70px 90px 90px 90px 90px); gap: 0; min-width: 860px; }
 .vtable-head > div, .vrow > div { padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -493,11 +504,19 @@ button { font-family: inherit; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 860px) {
-  .body-row { grid-template-columns: 1fr; }
+  .body-row, .body-row:has(.sidebar.collapsed) { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .kpi-row { grid-template-columns: repeat(2, 1fr); }
-  .vtable-head, .vrow { grid-template-columns: 1fr 60px 70px !important; }
+  /* The virtualized table (Products/Review/ของแถม) and the Document Manager
+     table keep their full column set and scroll horizontally inside their
+     own wrapper (.vtable-scroll / .doc-table-wrap) rather than squeezing
+     columns illegibly - the page body itself never scrolls sideways. */
   .dashboard-body { grid-template-columns: 1fr; }
+  .division-card-stats { grid-template-columns: repeat(2, 1fr); }
+  .review-detail-grid { grid-template-columns: 1fr; }
+  .table-toolbar { flex-direction: column; align-items: stretch; }
+  .table-toolbar .count-label { margin-left: 0; }
+  .dash-filters { flex-direction: column; align-items: stretch; }
 }
 
 
