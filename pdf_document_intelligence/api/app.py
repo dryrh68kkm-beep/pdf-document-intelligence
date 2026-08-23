@@ -25,6 +25,7 @@ from starlette.background import BackgroundTask
 
 from pdf_document_intelligence.api import review as review_api
 from pdf_document_intelligence.api.aggregate import build_dashboard_state
+from pdf_document_intelligence.api.dashboard_overview import build_dashboard_overview
 from pdf_document_intelligence.api.divisions import build_division_departments, build_division_summary
 from pdf_document_intelligence.api.health import check_health
 from pdf_document_intelligence.api.serialize import _row_stats, document_detail_json, document_summary_json, product_row_json
@@ -101,10 +102,6 @@ async def upload_document(file: UploadFile, force: bool = False):
     try:
         doc = store.create(file.filename, pdf_bytes)
     except sqlite3.DatabaseError as exc:
-        # Two concurrent uploads of the same file can both pass the
-        # find_by_hash check before either commits. Depending on sqlite/Python
-        # timing, the unique-index violation may surface as IntegrityError or
-        # its DatabaseError base class. Only normalize this known constraint.
         if "UNIQUE constraint failed: documents.sha256" not in str(exc):
             raise
         existing = store.find_by_hash(sha256)
@@ -137,6 +134,20 @@ def get_document(doc_id: str):
     if not doc:
         raise HTTPException(404, "not found")
     return document_detail_json(doc, _doc_products(doc_id))
+
+
+@app.get("/api/analytics/dashboard-overview")
+def get_dashboard_overview(
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    division: str | None = Query(default=None),
+):
+    return build_dashboard_overview(
+        store.repo,
+        date_from=date_from,
+        date_to=date_to,
+        division=division,
+    )
 
 
 @app.get("/api/analytics/documents/{doc_id}/divisions")
