@@ -1,84 +1,12 @@
 import { api } from "./api.js";
 
 function buildSearchIndex(product) {
-  // Computed once per data refresh (not per keystroke, per the app spec's
-  // caching requirement) - Thai text isn't case-folded (Thai has no case)
-  // but the Latin/digit parts are, so search is case-insensitive throughout.
   const f = product.fields;
   const parts = [
     f.barcode?.value, f.article?.value, f.name?.value, f.dn_no?.value,
     f.do_no?.value, product.department, product.docFilename,
   ];
   return parts.filter(Boolean).join(" ").toLowerCase();
-}
-
-function inDocumentDateRange(documentDate, dateFrom, dateTo) {
-  if (!documentDate) return !dateFrom && !dateTo;
-  if (dateFrom && documentDate < dateFrom) return false;
-  if (dateTo && documentDate > dateTo) return false;
-  return true;
-}
-
-function buildDashboardOverview(items, divisionFilter) {
-  const divisionMap = new Map();
-  let amountAvailable = false;
-  let allRows = 0;
-  let allAmount = 0;
-
-  items.forEach(({ document, summary }) => {
-    amountAvailable = amountAvailable || Boolean(summary.amountAvailable);
-    allRows += summary.documentTotals?.rowCount ?? 0;
-    allAmount += summary.documentTotals?.amount ?? 0;
-
-    (summary.divisions || []).forEach((division) => {
-      if (!divisionMap.has(division.divisionCode)) {
-        divisionMap.set(division.divisionCode, {
-          divisionCode: division.divisionCode,
-          divisionName: division.divisionName,
-          rowCount: 0,
-          amount: 0,
-          documentIds: new Set(),
-        });
-      }
-      const bucket = divisionMap.get(division.divisionCode);
-      bucket.rowCount += division.rowCount ?? 0;
-      bucket.amount += division.amount ?? 0;
-      if ((division.rowCount ?? 0) > 0) bucket.documentIds.add(document.id);
-    });
-  });
-
-  const divisions = [...divisionMap.values()]
-    .map((division) => ({
-      divisionCode: division.divisionCode,
-      divisionName: division.divisionName,
-      rowCount: division.rowCount,
-      amount: Math.round((division.amount + Number.EPSILON) * 100) / 100,
-      documentCount: division.documentIds.size,
-    }))
-    .sort((a, b) => a.divisionCode.localeCompare(b.divisionCode));
-
-  const selected = divisionFilter && divisionFilter !== "all"
-    ? divisions.find((division) => division.divisionCode === divisionFilter) || null
-    : null;
-
-  const totals = selected
-    ? {
-        rowCount: selected.rowCount,
-        amount: selected.amount,
-        documentCount: selected.documentCount,
-      }
-    : {
-        rowCount: allRows,
-        amount: Math.round((allAmount + Number.EPSILON) * 100) / 100,
-        documentCount: items.length,
-      };
-
-  return {
-    totals,
-    divisions,
-    amountAvailable,
-    selectedDivision: selected?.divisionCode ?? "all",
-  };
 }
 
 class Store {
@@ -121,8 +49,6 @@ class Store {
   async refreshDocuments({ silent = false } = {}) {
     const documents = await api.listDocuments();
     if (silent) {
-      // Progress polling should not rebuild the whole active view every 1.5s.
-      // main.js updates only the sidebar/bottom progress UI for silent polls.
       Object.assign(this.state, { documents });
     } else {
       this.set({ documents });
@@ -165,24 +91,25 @@ class Store {
 
   async refreshDashboardOverview() {
     const { dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter } = this.state;
-    const documents = this.state.documents.filter(
-      (doc) => doc.status === "complete" && inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo),
-    );
-    const pairs = await Promise.all(
-      documents.map(async (document) => ({ document, summary: await this._getDivisionSummary(document.id) })),
-    );
-    const usable = pairs.filter((item) => item.summary);
-    this.set({ dashboardOverview: buildDashboardOverview(usable, dashboardDivisionFilter) });
+    try {
+      const dashboardOverview = await api.dashboardOverview({
+        dateFrom: dashboardDateFrom,
+        dateTo: dashboardDateTo,
+        division: dashboardDivisionFilter,
+      });
+      this.set({ dashboardOverview });
+    } catch {
+      this.set({ dashboardOverview: null });
+    }
   }
 
   async setDashboardOverviewFilters({ dateFrom, dateTo, division } = {}) {
-    const patch = {
+    this.set({
       dashboardDateFrom: dateFrom ?? this.state.dashboardDateFrom,
       dashboardDateTo: dateTo ?? this.state.dashboardDateTo,
       dashboardDivisionFilter: division ?? this.state.dashboardDivisionFilter,
       dashboardOverview: null,
-    };
-    this.set(patch);
+    });
     await this.refreshDashboardOverview();
   }
 
