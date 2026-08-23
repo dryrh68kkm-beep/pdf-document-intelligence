@@ -715,8 +715,5 @@ button { font-family: inherit; }
 .dash-status-strip.tone-ok { background: var(--success-soft); color: var(--success); }
 .dash-status-strip .dash-panel-link { margin-left: auto; }
 
-.dept-bar-row { cursor: pointer; padding: 4px 0; border-radius: 6px; transition: background 0.1s; }
-.dept-bar-row:hover { background: var(--surface-alt); }
-
 .dash-dept-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 18px; align-items: start; }
 @media (max-width: 900px) { .dash-dept-grid { grid-template-columns: 1fr; } }

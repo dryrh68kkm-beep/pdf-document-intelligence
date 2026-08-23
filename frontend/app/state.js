@@ -89,6 +89,10 @@ class Store {
       products: [],
       view: "dashboard",
       deptFilter: null,
+      // Display label for deptFilter when it's a Division-level array filter
+      // (e.g. from the Dashboard's "มูลค่าตามฝ่าย" table) - a plain string
+      // deptFilter doesn't need this, it's shown directly as the title.
+      deptFilterLabel: null,
       panel: null,
       searchQuery: "",
       currentDocumentId: null,

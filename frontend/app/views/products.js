@@ -44,11 +44,17 @@ let reviewFilter = "all";
 let page = 1;
 let pageSize = PAGE_SIZE_OPTIONS[0];
 
+function matchesDeptFilter(product, deptFilter) {
+  if (!deptFilter) return true;
+  if (Array.isArray(deptFilter)) return deptFilter.includes(product.department);
+  return product.department === deptFilter;
+}
+
 function baseRows(products, deptFilter) {
   if (products === cachedProductsRef && deptFilter === cachedDeptFilter) return cachedBaseRows;
   cachedProductsRef = products;
   cachedDeptFilter = deptFilter;
-  cachedBaseRows = products.filter((p) => !p.suspectedNonProduct && (!deptFilter || p.department === deptFilter));
+  cachedBaseRows = products.filter((p) => !p.suspectedNonProduct && matchesDeptFilter(p, deptFilter));
   cachedQuery = null;
   cachedQueryRows = [];
   return cachedBaseRows;
@@ -117,7 +123,12 @@ const COLUMNS = [
 ];
 
 export function renderProducts(container, store) {
-  const { products, deptFilter, panel, searchQuery } = store.state;
+  const { products, deptFilter, deptFilterLabel, panel, searchQuery } = store.state;
+  // deptFilter is either a single department string (picked from the
+  // dropdown below, or a department-level click elsewhere) or an array of
+  // department names (a Division-level click - e.g. the Dashboard's
+  // "มูลค่าตามฝ่าย" table), which carries its own display name.
+  const filterTitle = deptFilterLabel || (Array.isArray(deptFilter) ? null : deptFilter);
 
   if (searchQuery !== lastSyncedStoreQuery) {
     localSearchText = searchQuery || "";
@@ -139,7 +150,7 @@ export function renderProducts(container, store) {
   container.innerHTML = `
     ${deptFilter ? `<div class="back-link" id="clearDept">‹ ทุกแผนก</div>` : ""}
     <div class="workspace-header">
-      <div class="workspace-title">${escapeHtml(deptFilter) || "Products"}</div>
+      <div class="workspace-title">${escapeHtml(filterTitle) || "Products"}</div>
       <div class="workspace-sub">รายการสินค้า</div>
     </div>
     <div class="filter-chip-bar">
@@ -164,7 +175,7 @@ export function renderProducts(container, store) {
   `;
 
   if (deptFilter) {
-    container.querySelector("#clearDept").addEventListener("click", () => store.navigate("products", { deptFilter: null }));
+    container.querySelector("#clearDept").addEventListener("click", () => store.navigate("products", { deptFilter: null, deptFilterLabel: null }));
   }
 
   const host = container.querySelector("#tableHost");
@@ -207,7 +218,7 @@ export function renderProducts(container, store) {
   });
   container.querySelector("#productDeptSelect").addEventListener("change", (e) => {
     page = 1;
-    store.navigate("products", { deptFilter: e.target.value || null });
+    store.navigate("products", { deptFilter: e.target.value || null, deptFilterLabel: null });
   });
   container.querySelector("#productResolutionSelect").addEventListener("change", (e) => {
     resolutionFilter = e.target.value;

@@ -80,56 +80,118 @@ function statusStrip(documents) {
 
 // Rolled up Division-first (user request: "แยกใหญ่ก่อนเป็นมูลค่าตามฝ่าย" -
 // separate the bigger category first, by Division), same as the product
-// table's "ฝ่าย / แผนก" column - a Division's bar is the sum of its
-// Departments' amounts, with the Departments listed underneath as a
-// smaller, clickable breakdown.
-function departmentValueBars(rows, amountAvailable) {
-  if (!rows.length) {
-    return `<div class="workspace-sub" style="padding:6px 0;">ไม่มีสินค้าเข้าสำหรับวันที่นี้</div>`;
-  }
+// table's "ฝ่าย / แผนก" column. Rendered as a donut (share of today's value)
+// plus a summary table (user-supplied reference mockup: Division / มูลค่า /
+// สัดส่วน / จำนวนรายการ / จำนวนเอกสาร), each row navigating to Products
+// filtered to that Division's departments.
+const DIVISION_DONUT_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
+const DIVISION_TOP_N = 6;
+
+function rollupByDivision(rows) {
   const deptTotals = new Map();
   for (const row of rows) {
     const dept = row.department || "ไม่ระบุแผนก";
     const amount = row.fields.amount?.value;
-    deptTotals.set(dept, (deptTotals.get(dept) || 0) + (amount ?? 0));
+    const entry = deptTotals.get(dept) || { amount: 0, count: 0, docIds: new Set() };
+    entry.amount += amount ?? 0;
+    entry.count += 1;
+    entry.docIds.add(row.docId);
+    deptTotals.set(dept, entry);
   }
 
   const divisions = new Map();
-  for (const [dept, amount] of deptTotals) {
+  for (const [dept, info] of deptTotals) {
     const divisionName = departmentDivisionsRef[dept]?.name || "ไม่ระบุฝ่าย";
-    if (!divisions.has(divisionName)) divisions.set(divisionName, { total: 0, depts: [] });
-    const group = divisions.get(divisionName);
-    group.total += amount;
-    group.depts.push([dept, amount]);
+    const group = divisions.get(divisionName) || { total: 0, count: 0, docIds: new Set(), depts: [] };
+    group.total += info.amount;
+    group.count += info.count;
+    info.docIds.forEach((id) => group.docIds.add(id));
+    group.depts.push(dept);
+    divisions.set(divisionName, group);
   }
 
-  const divisionEntries = [...divisions.entries()].sort((a, b) => b[1].total - a[1].total);
-  const maxDivision = Math.max(...divisionEntries.map(([, g]) => g.total), 1);
+  return [...divisions.entries()]
+    .map(([name, group]) => ({ name, total: group.total, count: group.count, docCount: group.docIds.size, depts: group.depts }))
+    .sort((a, b) => b.total - a.total);
+}
 
-  return divisionEntries
-    .map(([divisionName, group]) => {
-      const depts = [...group.depts].sort((a, b) => b[1] - a[1]);
-      return `
-      <div class="recon-summary-row" style="margin-bottom:14px;">
-        <div class="recon-summary-head">
-          <span class="recon-summary-name" style="font-weight:700;">${escapeHtml(divisionName)}</span>
-          <span class="recon-summary-frac">${amountAvailable ? fmtBaht(group.total) + " ฿" : "—"}</span>
+function renderDivisionValueChart(host, rows, amountAvailable) {
+  if (!rows.length) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:6px 0;">ไม่มีสินค้าเข้าสำหรับวันที่นี้</div>`;
+    return;
+  }
+  const divisionEntries = rollupByDivision(rows);
+  const grandTotal = divisionEntries.reduce((sum, d) => sum + d.total, 0) || 1;
+
+  let donutHtml = "";
+  if (amountAvailable) {
+    let chartEntries = divisionEntries;
+    if (chartEntries.length > DIVISION_TOP_N) {
+      const head = chartEntries.slice(0, DIVISION_TOP_N);
+      const otherTotal = chartEntries.slice(DIVISION_TOP_N).reduce((sum, d) => sum + d.total, 0);
+      chartEntries = [...head, { name: "อื่นๆ", total: otherTotal }];
+    }
+    let offset = 0;
+    const segments = chartEntries
+      .map((d, i) => {
+        const pct = (d.total / grandTotal) * 100;
+        const seg = `var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]}) ${offset}% ${offset + pct}%`;
+        offset += pct;
+        return seg;
+      })
+      .join(", ");
+    donutHtml = `
+      <div class="donut-wrap">
+        <div style="width:130px;height:130px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
+          <div style="width:84px;height:84px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+            <div class="mono" style="font-size:14px;font-weight:700;">${fmtBaht(grandTotal)}</div>
+            <div style="font-size:10px;color:var(--text-faint);">มูลค่ารวม</div>
+          </div>
         </div>
-        <div class="recon-track"><div class="recon-fill" style="width:${amountAvailable ? Math.max(2, Math.round((group.total / maxDivision) * 100)) : 0}%;"></div></div>
-        <div style="margin-top:6px;padding-left:12px;display:flex;flex-direction:column;gap:4px;">
-          ${depts
+        <div class="donut-legend">
+          ${chartEntries
             .map(
-              ([dept, amount]) => `
-            <div class="dept-bar-row" data-dept="${escapeHtml(dept)}" style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--text-muted);">
-              <span>${escapeHtml(dept)}</span>
-              <span class="mono">${amountAvailable ? fmtBaht(amount) + " ฿" : "—"}</span>
+              (d, i) => `
+            <div class="donut-legend-row">
+              <span class="donut-legend-dot" style="background:var(${DIVISION_DONUT_COLORS[i % DIVISION_DONUT_COLORS.length]});"></span>
+              <span class="donut-legend-name">${escapeHtml(d.name)}</span>
+              <span class="donut-legend-count">${fmtBaht(d.total)} ฿ · ${Math.round((d.total / grandTotal) * 100)}%</span>
             </div>`
             )
             .join("")}
         </div>
       </div>`;
-    })
-    .join("");
+  } else {
+    donutHtml = `<div class="workspace-sub" style="padding:6px 0;">ไม่มีข้อมูลมูลค่าสำหรับวันที่นี้</div>`;
+  }
+
+  host.innerHTML = `
+    ${donutHtml}
+    <div class="data-table-wrap" style="margin-top:14px;">
+      <table class="data-table">
+        <thead><tr>
+          <th>Division</th>
+          <th class="num">มูลค่า (บาท)</th>
+          <th class="num">สัดส่วน</th>
+          <th class="num">จำนวนรายการ</th>
+          <th class="num">จำนวนเอกสาร</th>
+        </tr></thead>
+        <tbody>
+          ${divisionEntries
+            .map(
+              (d) => `
+            <tr class="division-summary-row" data-depts="${escapeHtml(JSON.stringify(d.depts))}" data-name="${escapeHtml(d.name)}" style="cursor:pointer;">
+              <td>${escapeHtml(d.name)}</td>
+              <td class="num mono">${amountAvailable ? fmtBaht(d.total) + " ฿" : "—"}</td>
+              <td class="num mono">${amountAvailable ? Math.round((d.total / grandTotal) * 100) + "%" : "—"}</td>
+              <td class="num mono">${fmtNum(d.count)}</td>
+              <td class="num mono">${fmtNum(d.docCount)}</td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 const PIE_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
@@ -299,7 +361,7 @@ export function renderDashboard(container, store) {
         <div id="dashDeptPie"></div>
       </div>
       <div class="dash-panel">
-        <div class="dash-panel-head"><span class="dash-panel-title">มูลค่าตามฝ่าย</span></div>
+        <div class="dash-panel-head"><span class="dash-panel-title">สัดส่วนมูลค่าตามฝ่าย</span></div>
         <div id="dashDeptBars"></div>
       </div>
     </div>
@@ -350,8 +412,10 @@ export function renderDashboard(container, store) {
   renderDepartmentPie(container.querySelector("#dashDeptPie"), todaysRows);
 
   const deptBarsHost = container.querySelector("#dashDeptBars");
-  deptBarsHost.innerHTML = departmentValueBars(todaysRows, amountAvailable);
-  deptBarsHost.querySelectorAll(".dept-bar-row").forEach((row) => {
-    row.addEventListener("click", () => store.navigate("products", { deptFilter: row.dataset.dept }));
+  renderDivisionValueChart(deptBarsHost, todaysRows, amountAvailable);
+  deptBarsHost.querySelectorAll(".division-summary-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      store.navigate("products", { deptFilter: JSON.parse(row.dataset.depts), deptFilterLabel: row.dataset.name });
+    });
   });
 }
