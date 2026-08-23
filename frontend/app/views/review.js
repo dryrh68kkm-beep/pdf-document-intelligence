@@ -28,9 +28,21 @@ const REASON_PRIORITY = {
   MISSING_DEPARTMENT: 3,
 };
 
+// Risk tiers (Phase 5): priority 0 is a hard identifier/department conflict
+// (High Risk), 1-2 is a numeric reconciliation gap (Needs Review), 3+ is a
+// lower-severity evidence-only flag with otherwise-usable data (labeled
+// "Resolved" per spec - i.e. low risk / ready to confirm with "Mark
+// Resolved" rather than requiring a correction first).
+const TIERS = [
+  { key: "high", label: "High Risk", sub: "ต้องแก้ไขก่อนใช้ข้อมูลได้ (รหัสสินค้า/แผนกขัดแย้ง)", tone: "critical", test: (p) => p._reviewPriority === 0 },
+  { key: "needs", label: "Needs Review", sub: "ตรวจสอบยอด/จำนวนที่ไม่ตรงกัน", tone: "warning", test: (p) => p._reviewPriority === 1 || p._reviewPriority === 2 },
+  { key: "resolved", label: "Resolved", sub: "ความเสี่ยงต่ำ ข้อมูลใช้ได้ - ตรวจหลักฐานแล้วกด \"ยืนยันว่าถูกต้อง\"", tone: "success", test: (p) => p._reviewPriority >= 3 },
+];
+
 let cachedProductsRef = null;
 let cachedItems = [];
 let cachedCounts = { critical: 0, numeric: 0, evidence: 0 };
+const scrollTops = {};
 
 function fieldIssues(product) {
   const issues = [];
@@ -75,10 +87,20 @@ function reasonText(product) {
   return reasons.map((r) => REASON_LABELS[r] || r).join(" • ");
 }
 
+function fmtPct(value) {
+  return value == null ? "—" : `${Math.round(value * 100)}%`;
+}
+
+function buildEvidenceDetail(product) {
+  const issues = product._fieldIssues?.length ? product._fieldIssues : fieldIssues(product);
+  const primaryFieldName = issues[0]?.field || "name";
+  const fv = product.fields?.[primaryFieldName];
+  return { primaryFieldName, fv, issues };
+}
+
 export function renderReview(container, store) {
   const { products, panel } = store.state;
   const { items, counts } = derivedReviewItems(products);
-  const scrollTop = container.querySelector(".vtable-body")?.scrollTop || 0;
 
   container.innerHTML = `
     <div class="workspace-header">
@@ -88,33 +110,69 @@ export function renderReview(container, store) {
     ${items.length === 0
       ? `<div class="empty-state"><div class="icon">✅</div><div class="title">ไม่มีรายการต้องตรวจสอบ</div></div>`
       : `
-        <div class="workspace-sub" style="margin-bottom:10px;">
-          สำคัญ ${counts.critical.toLocaleString()} • เกี่ยวกับยอด/จำนวน ${counts.numeric.toLocaleString()} • ตรวจหลักฐาน ${counts.evidence.toLocaleString()}
+        <div class="review-count-chips">
+          <span class="review-count-chip tone-critical"><span class="dot"></span>High Risk ${counts.critical.toLocaleString()}</span>
+          <span class="review-count-chip tone-warning"><span class="dot"></span>Needs Review ${counts.numeric.toLocaleString()}</span>
+          <span class="review-count-chip tone-success"><span class="dot"></span>Resolved ${counts.evidence.toLocaleString()}</span>
         </div>
-        <div id="reviewReason" class="workspace-sub" style="margin-bottom:12px;">เลือกแถวเพื่อดูสาเหตุ, field, หน้า PDF และหลักฐานต้นฉบับ</div>
-        <div id="tableHost"></div>`}
+        <div id="reviewTiers"></div>`}
   `;
 
   if (!items.length) return;
 
-  const showReason = (row) => {
-    const issueFields = row._fieldIssues?.length
-      ? ` | Field: ${[...new Set(row._fieldIssues.map((x) => x.field))].join(", ")}`
-      : "";
-    const page = row.page ? ` | หน้า ${row.page}` : "";
-    const reason = container.querySelector("#reviewReason");
-    if (reason) reason.textContent = `${reasonText(row)}${issueFields}${page}`;
-  };
+  const tiersHost = container.querySelector("#reviewTiers");
 
-  renderProductTable(container.querySelector("#tableHost"), items, {
-    selectedRowId: panel?.rowId,
-    initialScrollTop: scrollTop,
-    onRowClick: (row) => {
-      showReason(row);
-      store.openPanel({ type: "product", rowId: row.rowId, data: row });
-    },
+  TIERS.forEach((tier) => {
+    const rows = items.filter(tier.test);
+    if (!rows.length) return;
+
+    const section = document.createElement("section");
+    section.className = "review-tier";
+    section.innerHTML = `
+      <div class="review-tier-head tone-${tier.tone}">
+        <span class="review-tier-title">${tier.label}</span>
+        <span class="review-tier-count">${rows.length.toLocaleString()} รายการ</span>
+      </div>
+      <div class="workspace-sub" style="margin:6px 0 10px;">${tier.sub}</div>
+      <div class="review-tier-reason" id="reason-${tier.key}">เลือกแถวเพื่อดูสาเหตุ, field, หน้า PDF และหลักฐานต้นฉบับ</div>
+      <div class="review-tier-table" id="table-${tier.key}"></div>
+    `;
+    tiersHost.appendChild(section);
+
+    const reasonHost = section.querySelector(`#reason-${tier.key}`);
+    const showReason = (row) => {
+      const { primaryFieldName, fv } = buildEvidenceDetail(row);
+      const issueFields = row._fieldIssues?.length
+        ? [...new Set(row._fieldIssues.map((x) => x.field))].join(", ")
+        : primaryFieldName;
+      reasonHost.innerHTML = `
+        <div class="review-detail-grid">
+          <div><span class="dp-label">สินค้า</span><div class="dp-value">${row.fields?.name?.value ?? "—"}</div></div>
+          <div><span class="dp-label">Article</span><div class="dp-value mono">${row.fields?.article?.value ?? "—"}</div></div>
+          <div><span class="dp-label">Barcode</span><div class="dp-value mono">${row.fields?.barcode?.value ?? "—"}</div></div>
+          <div><span class="dp-label">Field ที่มีปัญหา</span><div class="dp-value">${issueFields}</div></div>
+          <div><span class="dp-label">ค่า OCR อ่านได้</span><div class="dp-value">${fv?.ocrRaw ?? "—"}</div></div>
+          <div><span class="dp-label">ค่าปัจจุบัน (Master/PDF)</span><div class="dp-value">${fv?.value ?? "—"}</div></div>
+          <div><span class="dp-label">ความมั่นใจ</span><div class="dp-value mono">${fmtPct(fv?.ocrConfidence ?? fv?.confidence)}</div></div>
+          <div><span class="dp-label">หน้า PDF</span><div class="dp-value mono">${row.page ?? "—"}</div></div>
+        </div>
+        <div class="dp-source-note" style="margin-top:6px;">เหตุผล: ${reasonText(row)}</div>
+      `;
+    };
+
+    renderProductTable(section.querySelector(`#table-${tier.key}`), rows, {
+      selectedRowId: panel?.rowId,
+      initialScrollTop: scrollTops[tier.key] || 0,
+      onRowClick: (row) => {
+        showReason(row);
+        store.openPanel({ type: "product", rowId: row.rowId, data: row });
+      },
+    });
+
+    const bodyEl = section.querySelector(".vtable-body");
+    bodyEl?.addEventListener("scroll", () => { scrollTops[tier.key] = bodyEl.scrollTop; });
+
+    const selected = rows.find((p) => p.rowId === panel?.rowId);
+    if (selected) showReason(selected);
   });
-
-  const selected = items.find((p) => p.rowId === panel?.rowId);
-  if (selected) showReason(selected);
 }
