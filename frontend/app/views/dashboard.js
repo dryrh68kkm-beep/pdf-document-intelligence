@@ -1,262 +1,252 @@
-// Dashboard Phase 1: Division -> Department -> Product. The home page
-// leads with the 6 major divisions (data/department_hierarchy.csv is the
-// only source for that structure - see templates/department_groups.py
-// and api/divisions.py); it never starts at Department directly.
-import { api } from "../api.js";
+const DIVISION_COLORS = ["#3478f6", "#2db486", "#ffb329", "#9560d8", "#ef6570", "#4d91a8"];
 
-const DIVISION_ACCENTS = ["#4a6fa5", "#5a8f7b", "#a5764a", "#8a5a9c", "#b0553f", "#3f7f9c"];
-
-function fmtNum(n) {
-  return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
+function fmtNum(value) {
+  return (value ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
 }
 
-function fmtBaht(n) {
-  return "฿" + (n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function fmtBaht(value) {
+  return (value ?? 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
-function fmtDate(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
-function fmtDocumentDate(iso) {
-  if (!iso) return "ไม่พบวันที่ในเอกสาร";
-  return new Date(iso + "T00:00:00").toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+function divisionColor(index) {
+  return DIVISION_COLORS[index % DIVISION_COLORS.length];
 }
 
-function statusLabel(status) {
-  return { complete: "ประมวลผลสำเร็จ", processing: "กำลังประมวลผล", error: "ผิดพลาด" }[status] || status;
-}
+function buildDonut(divisions, amountAvailable) {
+  const total = divisions.reduce((sum, division) => sum + (division.amount || 0), 0);
+  if (!amountAvailable || total <= 0) {
+    return { background: "#edf1f7", total, percentages: new Map() };
+  }
 
-function qualityBandLabel(band) {
+  let cursor = 0;
+  const stops = [];
+  const percentages = new Map();
+  divisions.forEach((division, index) => {
+    const percentage = (division.amount / total) * 100;
+    const next = cursor + percentage;
+    percentages.set(division.divisionCode, percentage);
+    if (percentage > 0) {
+      stops.push(`${divisionColor(index)} ${cursor.toFixed(3)}% ${next.toFixed(3)}%`);
+    }
+    cursor = next;
+  });
+
   return {
-    VERIFIED: "เชื่อถือได้",
-    GOOD: "คุณภาพดี",
-    NEED_REVIEW: "ควรตรวจสอบ",
-    HIGH_RISK: "ความเสี่ยงสูง",
-  }[band] || "ยังไม่มีคะแนน";
+    background: stops.length ? `conic-gradient(${stops.join(",")})` : "#edf1f7",
+    total,
+    percentages,
+  };
 }
 
-function qualityBandClass(band) {
-  return {
-    VERIFIED: "ok",
-    GOOD: "ok",
-    NEED_REVIEW: "warn",
-    HIGH_RISK: "warn",
-  }[band] || "";
-}
-
-function kpiCard(value, label) {
-  return `<div class="kpi-card"><div class="kpi-value">${value}</div><div class="kpi-label">${label}</div></div>`;
-}
-
-function divisionCard(d, index, hasAmountData) {
-  const accent = DIVISION_ACCENTS[index % DIVISION_ACCENTS.length];
-  const statusBadge =
-    d.status === "REVIEW"
-      ? `<span class="dept-card-badge warn">${d.reviewCount} ต้องตรวจสอบ</span>`
-      : `<span class="dept-card-badge">ปกติ</span>`;
+function kpi(icon, label, value, unit = "") {
   return `
-    <div class="division-card" data-division="${d.divisionCode}" style="--division-accent:${accent}">
-      <div class="division-card-head">
-        <span class="division-card-code">${d.divisionCode}</span>
-        <span class="division-card-name">${d.divisionName}</span>
-        ${statusBadge}
+    <div class="phase4-kpi">
+      <div class="phase4-kpi-icon" aria-hidden="true">${icon}</div>
+      <div>
+        <div class="phase4-kpi-label">${label}</div>
+        <div class="phase4-kpi-value">${value}${unit ? `<span class="phase4-kpi-unit">${unit}</span>` : ""}</div>
       </div>
-      ${hasAmountData ? `<div class="division-card-amount">${fmtBaht(d.amount)}</div>` : ""}
-      <div class="division-card-stats">
-        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.rowCount)}</span><span class="division-stat-label">รายการ</span></div>
-        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.weight)}</span><span class="division-stat-label">น้ำหนัก (กก.)</span></div>
-        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.puQty)}</span><span class="division-stat-label">PU</span></div>
-        <div class="division-stat"><span class="division-stat-value">${fmtNum(d.skuQty)}</span><span class="division-stat-label">SKU</span></div>
-      </div>
-      <div class="division-card-foot">${d.departmentCount} แผนก</div>
     </div>`;
 }
 
-let chartMetric = "sku";
-
-function divisionChart(divisions, hasAmountData) {
-  const activeMetric = hasAmountData ? chartMetric : "sku";
-  const metricKey = activeMetric === "amount" ? "amount" : "skuQty";
-  const sorted = [...divisions].sort((a, b) => b[metricKey] - a[metricKey]);
-  const max = Math.max(1, ...sorted.map((d) => d[metricKey]));
-  const rows = sorted
-    .map((d) => {
-      const pct = Math.max(2, (d[metricKey] / max) * 100);
-      const valueLabel = activeMetric === "amount" ? fmtBaht(d.amount) : fmtNum(d.skuQty);
-      const amountText = hasAmountData ? ` · มูลค่ารวม ${fmtBaht(d.amount)}` : "";
-      const title = `${d.divisionName} · รายการ ${fmtNum(d.rowCount)} · น้ำหนัก ${fmtNum(d.weight)} กก. · PU ${fmtNum(d.puQty)} · SKU ${fmtNum(d.skuQty)}${amountText}`;
-      return `
-        <div class="bar-row" title="${title}">
-          <span>${d.divisionCode} ${d.divisionName}</span>
-          <span class="bar-track"><span class="bar-fill" style="width:${pct}%"></span></span>
-          <span class="mono">${valueLabel}</span>
-        </div>`;
-    })
-    .join("");
-  return `
-    <div class="chart-panel">
-      <div class="section-title chart-title-row">
-        <span>ภาพรวม 6 ฝ่ายใหญ่</span>
-        <span class="chart-toggle">
-          <button class="sort-btn${activeMetric === "sku" ? " active" : ""}" data-metric="sku">SKU</button>
-          ${hasAmountData ? `<button class="sort-btn${activeMetric === "amount" ? " active" : ""}" data-metric="amount">มูลค่า ฿</button>` : ""}
-        </span>
-      </div>
-      <div class="bar-chart">${rows}</div>
-    </div>`;
+function dateBounds(documents) {
+  const dates = documents
+    .filter((document) => document.status === "complete" && document.documentDate)
+    .map((document) => document.documentDate)
+    .sort();
+  return { min: dates[0] || "", max: dates[dates.length - 1] || "" };
 }
 
 export function renderDashboard(container, store) {
-  const { documents, currentDocumentId, divisionSummary, dashboardDateFilter } = store.state;
-  const visibleDocuments = dashboardDateFilter
-    ? documents.filter((item) => item.documentDate === dashboardDateFilter)
-    : documents;
-  const doc = visibleDocuments.find((item) => item.id === currentDocumentId);
+  const {
+    documents,
+    dashboardOverview,
+    dashboardDateFrom,
+    dashboardDateTo,
+    dashboardDivisionFilter,
+  } = store.state;
 
-  if (!doc) {
-    const noDocuments = documents.length === 0;
-    container.innerHTML = noDocuments
-      ? `<div class="empty-state"><div class="icon">📦</div><div class="title">ยังไม่มีเอกสาร</div><div>เพิ่ม PDF เพื่อเริ่มวิเคราะห์</div><button class="btn btn-primary" style="margin-top:14px;" id="emptyAddBtn">＋ Add Files</button></div>`
-      : `<div class="empty-state"><div class="icon">📅</div><div class="title">ไม่พบเอกสารสำหรับวันที่เลือก</div><div>ระบบกรองจากวันที่ที่อ่านได้ใน PDF เท่านั้น</div><button class="btn" style="margin-top:14px;" id="clearDateFilterBtn">ล้างตัวกรองวันที่</button></div>`;
-    if (noDocuments) {
-      container.querySelector("#emptyAddBtn").addEventListener("click", () => document.getElementById("fileInput").click());
-    } else {
-      container.querySelector("#clearDateFilterBtn").addEventListener("click", () => store.setDashboardDateFilter(""));
-    }
+  if (!documents.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">📦</div>
+        <div class="title">ยังไม่มีเอกสาร</div>
+        <div>เพิ่ม PDF เพื่อเริ่มวิเคราะห์</div>
+        <button class="btn btn-primary" style="margin-top:14px;" id="emptyAddBtn">＋ Add Files</button>
+      </div>`;
+    container.querySelector("#emptyAddBtn")?.addEventListener("click", () => document.getElementById("fileInput")?.click());
     return;
   }
 
-  const documentOptions = visibleDocuments
-    .map((item) => `<option value="${item.id}"${item.id === currentDocumentId ? " selected" : ""}>${item.filename}</option>`)
+  const bounds = dateBounds(documents);
+  const overview = dashboardOverview;
+  const divisions = overview?.divisions || [];
+  const divisionOptions = divisions
+    .map((division) => `<option value="${escapeHtml(division.divisionCode)}"${dashboardDivisionFilter === division.divisionCode ? " selected" : ""}>${escapeHtml(division.divisionCode)} - ${escapeHtml(division.divisionName)}</option>`)
     .join("");
 
-  const header = `
-    <div class="doc-header">
-      <div class="doc-header-info">
-        <label class="doc-selector-label" for="dashDocumentDateFilter">กรองจากวันที่ในเอกสาร</label>
-        <input class="doc-date-filter" id="dashDocumentDateFilter" type="date" value="${dashboardDateFilter}">
-        <label class="doc-selector-label" for="dashDocumentSelect">เอกสารที่กำลังดู</label>
-        <select class="doc-selector" id="dashDocumentSelect">${documentOptions}</select>
-        <div class="doc-header-title">${doc.filename}</div>
-        <div class="doc-header-meta">
-          <span>วันที่เอกสาร: ${fmtDocumentDate(doc.documentDate)}</span>
-          ${doc.documentDateEvidence ? `<span>·</span><span>${doc.documentDateEvidence.label} หน้า ${doc.documentDateEvidence.page}</span>` : ""}
-          <span>·</span>
-          <span>${doc.pages ?? "—"} หน้า</span>
-          <span>·</span>
-          <span class="status-pill status-${doc.status}">${statusLabel(doc.status)}</span>
+  container.innerHTML = `
+    <div class="phase4-dashboard">
+      <div class="phase4-head">
+        <div>
+          <div class="phase4-title">Dashboard</div>
+          <div class="phase4-subtitle">สรุปภาพรวมข้อมูล โดยอ้างอิงวันที่ที่อ่านได้จากเอกสาร</div>
+        </div>
+        <div class="phase4-filters">
+          <div class="phase4-filter">
+            <label for="phase4DateFrom">จาก</label>
+            <input id="phase4DateFrom" type="date" value="${escapeHtml(dashboardDateFrom)}" min="${escapeHtml(bounds.min)}" max="${escapeHtml(bounds.max)}">
+            <span>–</span>
+            <label for="phase4DateTo">ถึง</label>
+            <input id="phase4DateTo" type="date" value="${escapeHtml(dashboardDateTo)}" min="${escapeHtml(bounds.min)}" max="${escapeHtml(bounds.max)}">
+          </div>
+          <div class="phase4-filter">
+            <label for="phase4Division">Division</label>
+            <select id="phase4Division">
+              <option value="all"${dashboardDivisionFilter === "all" ? " selected" : ""}>ทั้งหมด</option>
+              ${divisionOptions}
+            </select>
+          </div>
         </div>
       </div>
-      <div class="doc-header-actions">
-        <button class="btn" id="dashRefreshBtn">↻ Refresh</button>
-        <button class="btn btn-primary" id="dashExportBtn">Export Excel</button>
-      </div>
-    </div>
-  `;
+      <div id="phase4Content"></div>
+    </div>`;
 
-  container.innerHTML = header;
-  container.querySelector("#dashExportBtn").addEventListener("click", () => {
-    window.location.href = api.exportUrl();
-  });
-  container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
-  container.querySelector("#dashDocumentSelect").addEventListener("change", (event) => {
-    store.selectDashboardDocument(event.target.value);
-  });
-  container.querySelector("#dashDocumentDateFilter").addEventListener("change", (event) => {
-    store.setDashboardDateFilter(event.target.value);
-  });
+  const applyFilters = () => {
+    const dateFrom = container.querySelector("#phase4DateFrom")?.value || "";
+    const dateTo = container.querySelector("#phase4DateTo")?.value || "";
+    const division = container.querySelector("#phase4Division")?.value || "all";
+    store.setDashboardOverviewFilters({ dateFrom, dateTo, division });
+  };
+  container.querySelector("#phase4DateFrom")?.addEventListener("change", applyFilters);
+  container.querySelector("#phase4DateTo")?.addEventListener("change", applyFilters);
+  container.querySelector("#phase4Division")?.addEventListener("change", applyFilters);
 
-  if (doc.status !== "complete" || !divisionSummary) {
-    const body = document.createElement("div");
-    body.className = "empty-state";
-    body.innerHTML =
-      doc.status === "error"
-        ? `<div class="icon">⚠️</div><div class="title">อ่านไฟล์ไม่สำเร็จ</div><div>${doc.error || ""}</div>`
-        : `<div class="icon processing-hourglass" role="status" aria-label="กำลังประมวลผล">⏳</div><div class="title">กำลังประมวลผลเอกสาร</div><div>${doc.progress?.stage || ""}</div>`;
-    container.appendChild(body);
+  const content = container.querySelector("#phase4Content");
+  if (!overview) {
+    content.innerHTML = `<div class="phase4-panel phase4-empty"><strong>กำลังสรุปข้อมูล</strong><span>กำลังรวมข้อมูลตามวันที่ในเอกสาร...</span></div>`;
     return;
   }
 
-  const hasAmountData = Boolean(divisionSummary.amountAvailable);
-  const kpis = [
-    kpiCard(fmtNum(divisionSummary.documentTotals.rowCount), "รายการทั้งหมด"),
-    kpiCard(fmtNum(divisionSummary.documentTotals.weight), "น้ำหนักรวม (กก.)"),
-    kpiCard(fmtNum(divisionSummary.documentTotals.puQty), "PU รวม"),
-    kpiCard(fmtNum(divisionSummary.documentTotals.skuQty), "SKU รวม"),
-    ...(hasAmountData ? [kpiCard(fmtBaht(divisionSummary.documentTotals.amount), "มูลค่ารวม (฿)")] : []),
-  ].join("");
-
-  const divisionCards = divisionSummary.divisions.map((d, i) => divisionCard(d, i, hasAmountData)).join("");
-  const chart = divisionChart(divisionSummary.divisions, hasAmountData);
-
-  const dq = divisionSummary.dataQuality;
-  const rec = divisionSummary.reconciliation;
-  const qualityScore = doc.qualityScore;
-  const qualityBand = doc.qualityBand;
-  const qualityCounts = doc.qualityCounts || {};
-  const reviewCount = qualityCounts.needReview ?? dq.reviewRequired ?? 0;
-  const errorCount = qualityCounts.errors ?? rec.errors ?? 0;
-  const verifiedCount = qualityCounts.verified ?? dq.cleanRows ?? 0;
-  const qualityClass = qualityBandClass(qualityBand);
-  const dqRow = (label, value) => `<div class="dq-row"><span>${label}</span><span class="mono">${fmtNum(value)}</span></div>`;
-  const qualitySummary = `
-    <div class="dq-panel">
-      <div class="section-title">คุณภาพเอกสาร</div>
-      <div class="dq-row">
-        <span>สถานะ</span>
-        <span class="dept-card-badge ${qualityClass}">${qualityBandLabel(qualityBand)}</span>
-      </div>
-      <div class="dq-row">
-        <span>Quality Score</span>
-        <span class="mono">${qualityScore == null ? "—" : `${fmtNum(qualityScore)} / 100`}</span>
-      </div>
-      ${dqRow("รายการที่ยืนยันแล้ว", verifiedCount)}
-      ${dqRow("ต้องตรวจสอบ", reviewCount)}
-      ${dqRow("ข้อผิดพลาด", errorCount)}
-      ${reviewCount > 0 ? `<button class="btn btn-primary" id="openReviewQueueBtn" style="width:100%;margin-top:12px;">ดู ${fmtNum(reviewCount)} รายการที่ต้องตรวจ</button>` : `<div class="dq-unmapped" style="margin-top:12px;">ไม่พบรายการที่ต้องตรวจสอบ</div>`}
-      <div class="section-title" style="margin-top:18px;">รายละเอียดแหล่งข้อมูล</div>
-      ${dqRow("Clean rows", dq.cleanRows)}
-      ${dqRow("Corrected", dq.corrected)}
-      ${dqRow("Resolved from Master", dq.resolvedFromMaster)}
-      ${dqRow("Resolved from OCR", dq.resolvedFromOcr)}
-      ${dqRow("Unresolved", dq.unresolved)}
-      ${dqRow("Unmapped departments", dq.unmappedDepartments.length)}
-      ${dq.unmappedDepartments.length ? `<div class="dq-unmapped">${dq.unmappedDepartments.join(", ")}</div>` : ""}
-      ${hasAmountData && dq.unmappedRowCount ? `<div class="dq-row"><span>Unmapped amount</span><span class="mono">${fmtBaht(dq.unmappedAmount)}</span></div>` : ""}
-      <div class="section-title" style="margin-top:18px;">Reconciliation</div>
-      <div class="dq-row"><span>Status</span><span class="mono">${rec.status ?? "—"}</span></div>
-      <div class="dq-row"><span>Errors</span><span class="mono">${rec.errors}</span></div>
-    </div>
-  `;
-
-  const body = document.createElement("div");
-  body.className = "dashboard-body";
-  body.innerHTML = `
-    <div class="dashboard-main">
-      <div class="kpi-row">${kpis}</div>
-      ${chart}
-      <div class="section-title">สรุปตามฝ่าย</div>
-      <div class="division-grid">${divisionCards}</div>
-    </div>
-    <aside class="dashboard-aside">${qualitySummary}</aside>
-  `;
-  container.appendChild(body);
-
-  const reviewButton = body.querySelector("#openReviewQueueBtn");
-  if (reviewButton) {
-    reviewButton.addEventListener("click", () => store.navigate("review"));
+  if (overview.totals.documentCount === 0) {
+    content.innerHTML = `
+      <div class="phase4-panel phase4-empty">
+        <strong>ไม่พบเอกสารในช่วงที่เลือก</strong>
+        <span>ตัวกรองนี้ใช้วันที่ที่อ่านได้จาก PDF เท่านั้น</span><br>
+        <button class="btn" id="phase4ClearFilters" style="margin-top:14px;">ล้างตัวกรอง</button>
+      </div>`;
+    content.querySelector("#phase4ClearFilters")?.addEventListener("click", () => {
+      store.setDashboardOverviewFilters({ dateFrom: "", dateTo: "", division: "all" });
+    });
+    return;
   }
 
-  body.querySelectorAll(".division-card").forEach((el) => {
-    el.addEventListener("click", () => store.openDivision(el.dataset.division));
-  });
+  const donut = buildDonut(divisions, overview.amountAvailable);
+  const visibleRows = dashboardDivisionFilter === "all"
+    ? divisions
+    : divisions.filter((division) => division.divisionCode === dashboardDivisionFilter);
+  const selectedShare = dashboardDivisionFilter === "all"
+    ? 100
+    : donut.percentages.get(dashboardDivisionFilter) || 0;
 
-  body.querySelectorAll(".chart-toggle .sort-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      chartMetric = btn.dataset.metric;
-      renderDashboard(container, store);
+  const kpis = [
+    kpi("฿", "มูลค่ารวม", overview.amountAvailable ? fmtBaht(overview.totals.amount) : "—", overview.amountAvailable ? "บาท" : ""),
+    kpi("▤", "จำนวนรายการ", fmtNum(overview.totals.rowCount), "รายการ"),
+    kpi("▧", "จำนวนเอกสาร", fmtNum(overview.totals.documentCount), "เอกสาร"),
+  ].join("");
+
+  const legendRows = divisions.map((division, index) => {
+    const percentage = donut.percentages.get(division.divisionCode) || 0;
+    return `
+      <div class="phase4-legend-row">
+        <div class="phase4-legend-name">
+          <span class="phase4-dot" style="background:${divisionColor(index)}"></span>
+          <span>${escapeHtml(division.divisionCode)} - ${escapeHtml(division.divisionName)}</span>
+        </div>
+        <div class="phase4-money">${overview.amountAvailable ? fmtBaht(division.amount) : "—"}</div>
+        <div class="phase4-percent">${overview.amountAvailable ? `${percentage.toFixed(1)}%` : "—"}</div>
+      </div>`;
+  }).join("");
+
+  const tableRows = visibleRows.map((division, index) => {
+    const originalIndex = divisions.findIndex((item) => item.divisionCode === division.divisionCode);
+    const percentage = donut.percentages.get(division.divisionCode) || 0;
+    return `
+      <tr data-division="${escapeHtml(division.divisionCode)}" title="กรอง Dashboard เป็น ${escapeHtml(division.divisionName)}">
+        <td>
+          <span class="phase4-dot" style="display:inline-block;margin-right:8px;background:${divisionColor(originalIndex >= 0 ? originalIndex : index)}"></span>
+          ${escapeHtml(division.divisionCode)} - ${escapeHtml(division.divisionName)}
+        </td>
+        <td class="num">${overview.amountAvailable ? fmtBaht(division.amount) : "—"}</td>
+        <td class="num">${overview.amountAvailable ? `${percentage.toFixed(1)}%` : "—"}</td>
+        <td class="num">${fmtNum(division.rowCount)}</td>
+        <td class="num">${fmtNum(division.documentCount)}</td>
+      </tr>`;
+  }).join("");
+
+  content.innerHTML = `
+    <div class="phase4-kpis">${kpis}</div>
+
+    <section class="phase4-panel">
+      <div class="phase4-panel-title">สัดส่วนมูลค่าตาม Division</div>
+      <div class="phase4-share">
+        <div class="phase4-donut-wrap">
+          <div class="phase4-donut" style="background:${donut.background}" role="img" aria-label="สัดส่วนมูลค่าตาม Division">
+            <div class="phase4-donut-center">
+              <span>มูลค่ารวม</span>
+              <strong>${overview.amountAvailable ? fmtBaht(donut.total) : "—"}</strong>
+              <span>${overview.amountAvailable ? "บาท" : "ยังไม่มีข้อมูลมูลค่า"}</span>
+            </div>
+          </div>
+        </div>
+        <div class="phase4-legend">${legendRows}</div>
+      </div>
+    </section>
+
+    <section class="phase4-panel">
+      <div class="phase4-panel-title">สรุปมูลค่าตาม Division</div>
+      <div class="phase4-table-wrap">
+        <table class="phase4-table">
+          <thead>
+            <tr>
+              <th>Division</th>
+              <th class="num">มูลค่า (บาท)</th>
+              <th class="num">สัดส่วน</th>
+              <th class="num">จำนวนรายการ</th>
+              <th class="num">จำนวนเอกสาร</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+            <tr class="total">
+              <td>รวม</td>
+              <td class="num">${overview.amountAvailable ? fmtBaht(overview.totals.amount) : "—"}</td>
+              <td class="num">${overview.amountAvailable ? `${selectedShare.toFixed(1)}%` : "—"}</td>
+              <td class="num">${fmtNum(overview.totals.rowCount)}</td>
+              <td class="num">${fmtNum(overview.totals.documentCount)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="phase4-footnote">* ข้อมูลอ้างอิงจากวันที่ในเอกสาร ไม่ใช่วันที่อัปโหลด</div>`;
+
+  content.querySelectorAll("tr[data-division]").forEach((row) => {
+    row.addEventListener("click", () => {
+      store.setDashboardOverviewFilters({ division: row.dataset.division });
     });
   });
 }
