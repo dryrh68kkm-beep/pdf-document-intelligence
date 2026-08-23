@@ -53,6 +53,8 @@ export const api = {
       body: JSON.stringify(entry),
     }).then(json),
   officialMasterCount: () => fetch(`${BASE}/api/master/official/count`).then(json),
+  officialMasterLookup: (barcode) =>
+    fetch(`${BASE}/api/master/official/lookup?barcode=${encodeURIComponent(barcode)}`).then(json),
   masterSnapshotStatus: () => fetch(`${BASE}/api/master/snapshot/status`).then(json),
   importMasterCatalog: (file) => {
     const form = new FormData();
