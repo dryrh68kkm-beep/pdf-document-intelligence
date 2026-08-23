@@ -391,8 +391,10 @@ button { font-family: inherit; }
 .doc-row .doc-actions { margin-left: auto; display: flex; gap: 6px; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .status-dot.complete { background: var(--success); }
-.status-dot.processing { background: var(--warning); }
+.status-dot.processing { background: var(--warning); animation: status-dot-pulse 1.2s ease-in-out infinite; }
 .status-dot.error { background: var(--critical); }
+@keyframes status-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .status-dot.processing { animation: none; } }
 
 /* ---------- Document Manager table ---------- */
 .doc-table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); overflow-x: auto; }
@@ -444,6 +446,9 @@ button { font-family: inherit; }
 .quality-band-critical { background: var(--critical-soft); border-color: var(--critical); }
 .quality-band-critical .quality-banner-score, .quality-band-critical .quality-banner-label { color: var(--critical); }
 .quality-band-unknown .quality-banner-score { color: var(--text-faint); }
+.quality-band-processing { background: var(--warning-soft); border-color: var(--warning); }
+.quality-band-processing .quality-banner-score, .quality-band-processing .quality-banner-label { color: var(--warning); }
+.quality-band-processing .quality-banner-score { font-size: 26px; }
 
 /* ---------- Dashboard: filter bar ---------- */
 .dash-filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }

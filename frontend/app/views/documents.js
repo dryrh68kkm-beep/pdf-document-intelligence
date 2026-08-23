@@ -190,6 +190,15 @@ export function renderDocuments(container, store) {
       store.selectDashboardDocument(doc.id).then(() => store.navigate("review"));
     });
     const doReprocess = async () => {
+      const btn = tr.querySelector('[data-action="reprocess"]');
+      // The server call + refreshAll() round-trip isn't instant - without
+      // this, clicking Reprocess looked like nothing happened until the
+      // next render, which is exactly the "did it even start?" complaint
+      // this button used to get.
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "กำลังเริ่ม...";
+      }
       try {
         await api.reprocessDocument(doc.id);
         await store.refreshAll();
@@ -198,6 +207,10 @@ export function renderDocuments(container, store) {
           errorDialog: { title: "ประมวลผลใหม่ไม่สำเร็จ", message: String(error?.message || error), onRetry: doReprocess },
         });
         document.dispatchEvent(new CustomEvent("show-error"));
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Reprocess";
+        }
       }
     };
     tr.querySelector('[data-action="reprocess"]')?.addEventListener("click", doReprocess);

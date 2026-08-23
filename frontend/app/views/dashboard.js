@@ -52,7 +52,21 @@ function documentTypeLabel(documentType) {
 }
 
 function qualityBanner(doc) {
-  if (!doc || doc.qualityScore == null) {
+  if (!doc || doc.status === "processing") {
+    const stage = doc?.progress?.stage || "กำลังเริ่มประมวลผล";
+    const progressText = doc?.progress?.total ? ` (${fmtNum(doc.progress.current)}/${fmtNum(doc.progress.total)})` : "";
+    return `<div class="quality-banner quality-band-processing">
+      <div class="quality-banner-score processing-hourglass" role="status" aria-label="กำลังประมวลผล">⏳</div>
+      <div><div class="quality-banner-label">กำลังประมวลผลเอกสาร</div><div class="quality-banner-sub">${escapeHtml(stage)}${progressText}</div></div>
+    </div>`;
+  }
+  if (doc.status === "error") {
+    return `<div class="quality-banner quality-band-critical">
+      <div class="quality-banner-score">⚠️</div>
+      <div><div class="quality-banner-label">อ่านไฟล์ไม่สำเร็จ</div><div class="quality-banner-sub">${escapeHtml(doc.error || "")}</div></div>
+    </div>`;
+  }
+  if (doc.qualityScore == null) {
     return `<div class="quality-banner quality-band-unknown">
       <div class="quality-banner-score">—</div>
       <div><div class="quality-banner-label">ยังไม่มีคะแนนคุณภาพ</div><div class="quality-banner-sub">เอกสารนี้ยังไม่มีข้อมูลคุณภาพ</div></div>
