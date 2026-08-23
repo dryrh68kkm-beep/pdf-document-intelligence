@@ -78,29 +78,57 @@ function statusStrip(documents) {
   return `<div class="dash-status-strip tone-ok">✓ ทุกเอกสารพร้อมใช้งาน ไม่มีรายการต้องตรวจสอบ</div>`;
 }
 
+// Rolled up Division-first (user request: "แยกใหญ่ก่อนเป็นมูลค่าตามฝ่าย" -
+// separate the bigger category first, by Division), same as the product
+// table's "ฝ่าย / แผนก" column - a Division's bar is the sum of its
+// Departments' amounts, with the Departments listed underneath as a
+// smaller, clickable breakdown.
 function departmentValueBars(rows, amountAvailable) {
   if (!rows.length) {
     return `<div class="workspace-sub" style="padding:6px 0;">ไม่มีสินค้าเข้าสำหรับวันที่นี้</div>`;
   }
-  const totals = new Map();
+  const deptTotals = new Map();
   for (const row of rows) {
     const dept = row.department || "ไม่ระบุแผนก";
     const amount = row.fields.amount?.value;
-    totals.set(dept, (totals.get(dept) || 0) + (amount ?? 0));
+    deptTotals.set(dept, (deptTotals.get(dept) || 0) + (amount ?? 0));
   }
-  const entries = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-  const max = Math.max(...entries.map(([, amount]) => amount), 1);
-  return entries
-    .map(
-      ([dept, amount]) => `
-      <div class="recon-summary-row dept-bar-row" data-dept="${escapeHtml(dept)}">
+
+  const divisions = new Map();
+  for (const [dept, amount] of deptTotals) {
+    const divisionName = departmentDivisionsRef[dept]?.name || "ไม่ระบุฝ่าย";
+    if (!divisions.has(divisionName)) divisions.set(divisionName, { total: 0, depts: [] });
+    const group = divisions.get(divisionName);
+    group.total += amount;
+    group.depts.push([dept, amount]);
+  }
+
+  const divisionEntries = [...divisions.entries()].sort((a, b) => b[1].total - a[1].total);
+  const maxDivision = Math.max(...divisionEntries.map(([, g]) => g.total), 1);
+
+  return divisionEntries
+    .map(([divisionName, group]) => {
+      const depts = [...group.depts].sort((a, b) => b[1] - a[1]);
+      return `
+      <div class="recon-summary-row" style="margin-bottom:14px;">
         <div class="recon-summary-head">
-          <span class="recon-summary-name">${escapeHtml(dept)}</span>
-          <span class="recon-summary-frac">${amountAvailable ? fmtBaht(amount) + " ฿" : "—"}</span>
+          <span class="recon-summary-name" style="font-weight:700;">${escapeHtml(divisionName)}</span>
+          <span class="recon-summary-frac">${amountAvailable ? fmtBaht(group.total) + " ฿" : "—"}</span>
         </div>
-        <div class="recon-track"><div class="recon-fill" style="width:${amountAvailable ? Math.max(2, Math.round((amount / max) * 100)) : 0}%;"></div></div>
-      </div>`
-    )
+        <div class="recon-track"><div class="recon-fill" style="width:${amountAvailable ? Math.max(2, Math.round((group.total / maxDivision) * 100)) : 0}%;"></div></div>
+        <div style="margin-top:6px;padding-left:12px;display:flex;flex-direction:column;gap:4px;">
+          ${depts
+            .map(
+              ([dept, amount]) => `
+            <div class="dept-bar-row" data-dept="${escapeHtml(dept)}" style="display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--text-muted);">
+              <span>${escapeHtml(dept)}</span>
+              <span class="mono">${amountAvailable ? fmtBaht(amount) + " ฿" : "—"}</span>
+            </div>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+    })
     .join("");
 }
 
@@ -271,7 +299,7 @@ export function renderDashboard(container, store) {
         <div id="dashDeptPie"></div>
       </div>
       <div class="dash-panel">
-        <div class="dash-panel-head"><span class="dash-panel-title">มูลค่าตามแผนก</span></div>
+        <div class="dash-panel-head"><span class="dash-panel-title">มูลค่าตามฝ่าย</span></div>
         <div id="dashDeptBars"></div>
       </div>
     </div>
