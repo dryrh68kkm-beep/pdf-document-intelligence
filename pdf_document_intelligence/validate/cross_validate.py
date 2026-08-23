@@ -51,6 +51,9 @@ class ThaiOcrCrossValidator:
         self.ocr_calls = 0
 
     def maybe_apply(self, field: FieldValue, page_quality: TextQuality) -> FieldValue:
+        # Exact Official Master matches are authoritative and need no OCR.
+        if field.source == "master_catalog":
+            return field
         if field.type != "string":
             return field
         candidate_text = str(field.value) if field.value is not None else field.raw_value
