@@ -53,6 +53,15 @@ export const api = {
       body: JSON.stringify(entry),
     }).then(json),
   officialMasterCount: () => fetch(`${BASE}/api/master/official/count`).then(json),
+  masterSnapshotStatus: () => fetch(`${BASE}/api/master/snapshot/status`).then(json),
+  importMasterCatalog: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch(`${BASE}/api/master/import`, { method: "POST", body: form }).then(async (res) => {
+      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+      return res.json();
+    });
+  },
 
   health: () => fetch(`${BASE}/api/health`).then(json),
 };
