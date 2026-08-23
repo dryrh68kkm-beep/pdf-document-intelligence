@@ -73,3 +73,34 @@ def test_existing_snapshot_is_not_overwritten_without_explicit_refresh(tmp_path:
     )
     import_catalog_snapshot(source, snapshot_path=snapshot)
     assert snapshot.read_bytes() == first
+
+
+def test_cp874_encoded_source_decodes_thai_text_correctly(tmp_path: Path):
+    # Real store master exports have shown up in the Windows Thai codepage
+    # (cp874/TIS-620), not just UTF-8. Decoding as UTF-8 with errors="replace"
+    # doesn't raise - it silently turns every Thai character into U+FFFD,
+    # producing mojibake product names throughout the catalog. Regression for
+    # that exact symptom, seen in practice after an in-web CSV re-import.
+    source = tmp_path / "external_master_cp874.csv"
+    snapshot = tmp_path / "master_catalog.snapshot.json"
+    with source.open("w", encoding="cp874", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["BARCODE", "ART_SV_NAME", "SUBCLASS_NAME", "ART_NO", "DEPARTMENT_NAME", "DIVISION_NAME"],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "BARCODE": "990000000003",
+                "ART_SV_NAME": "รองเท้าผ้าใบ สีแดง S38",
+                "SUBCLASS_NAME": "FOOTWEAR",
+                "ART_NO": "990003",
+                "DEPARTMENT_NAME": "99 SYNTHETIC DEPARTMENT",
+                "DIVISION_NAME": "09 SYNTHETIC DIVISION",
+            }
+        )
+
+    import_catalog_snapshot(source, snapshot_path=snapshot)
+    payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert payload["products"][0]["name"] == "รองเท้าผ้าใบ สีแดง S38"
+    assert "�" not in payload["products"][0]["name"]

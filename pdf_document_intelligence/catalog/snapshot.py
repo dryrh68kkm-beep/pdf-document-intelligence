@@ -18,7 +18,13 @@ from pdf_document_intelligence.db.paths import get_data_dir
 CATALOG_ENV = "PDF_INTELLIGENCE_MASTER_CATALOG"
 SNAPSHOT_FILENAME = "master_catalog.snapshot.json"
 SNAPSHOT_VERSION = 1
-CATALOG_ENCODING = "utf-8"
+# Real store master exports have shown up in both UTF-8 and the Windows Thai
+# codepage (cp874, aka iso8859_11/TIS-620) - decoding a cp874 file as UTF-8
+# with errors="replace" doesn't raise, it silently turns every Thai
+# character into U+FFFD and produces mojibake product names throughout the
+# catalog (seen in practice after an in-web CSV re-import). Try encodings in
+# order and keep the first one that decodes the whole file cleanly.
+CATALOG_ENCODING_CANDIDATES = ("utf-8-sig", "cp874")
 
 
 def get_snapshot_path() -> Path:
@@ -34,11 +40,27 @@ def _clean(value: object) -> str:
     return str(value or "").strip()
 
 
+def _detect_encoding(source_path: Path) -> str:
+    raw = source_path.read_bytes()
+    for encoding in CATALOG_ENCODING_CANDIDATES:
+        try:
+            raw.decode(encoding)
+            return encoding
+        except UnicodeDecodeError:
+            continue
+    # Nothing decoded cleanly - fall back to the first candidate with
+    # replacement rather than raising, so an unusual file still imports
+    # (possibly with a handful of garbled characters) instead of blocking
+    # the whole catalog import outright.
+    return CATALOG_ENCODING_CANDIDATES[0]
+
+
 def _compile_source(source_path: Path) -> dict[str, Any]:
     products: list[dict[str, str]] = []
     hierarchy: dict[str, str] = {}
 
-    with source_path.open("r", encoding=CATALOG_ENCODING, errors="replace", newline="") as f:
+    encoding = _detect_encoding(source_path)
+    with source_path.open("r", encoding=encoding, errors="replace", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             barcode = _clean(row.get("BARCODE"))
