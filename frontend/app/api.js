@@ -22,6 +22,14 @@ export const api = {
   pdfUrl: (id) => `${BASE}/api/documents/${id}/pdf`,
   allProducts: () => fetch(`${BASE}/api/products`).then(json),
   dashboardState: () => fetch(`${BASE}/api/state`).then(json),
+  dashboardOverview: ({ dateFrom = "", dateTo = "", division = "all" } = {}) => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    if (division && division !== "all") params.set("division", division);
+    const qs = params.toString();
+    return fetch(`${BASE}/api/analytics/dashboard-overview${qs ? `?${qs}` : ""}`).then(json);
+  },
   exportUrl: () => `${BASE}/api/export.xlsx`,
 
   getDivisions: (docId) => fetch(`${BASE}/api/analytics/documents/${docId}/divisions`).then(json),
