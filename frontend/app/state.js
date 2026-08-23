@@ -118,8 +118,24 @@ class Store {
     return this.state.documents.some((d) => d.status === "processing");
   }
 
+  _pruneDivisionCache(documents) {
+    const completedIds = new Set(documents.filter((doc) => doc.status === "complete").map((doc) => doc.id));
+    for (const docId of this._divisionCache.keys()) {
+      if (!completedIds.has(docId)) this._divisionCache.delete(docId);
+    }
+  }
+
+  invalidateDivisionSummary(docId) {
+    if (docId) this._divisionCache.delete(docId);
+  }
+
   async refreshDocuments({ silent = false } = {}) {
     const documents = await api.listDocuments();
+    // A deleted/reprocessing document must not keep a stale cached Division
+    // summary, but completed documents that did not change can safely retain
+    // theirs. This keeps the existing Dashboard path while avoiding repeated
+    // re-fetches for every historical document.
+    this._pruneDivisionCache(documents);
     if (silent) {
       // Progress polling should not rebuild the whole active view every 1.5s.
       // main.js updates only the sidebar/bottom progress UI for silent polls.
@@ -146,7 +162,10 @@ class Store {
       ? previousDocumentId
       : visibleDocuments[0]?.id ?? null;
 
-    this._divisionCache.clear();
+    // Keep existing per-document Division summaries instead of clearing the
+    // whole cache on every refresh. Deleted/reprocessing IDs are removed; an
+    // edited document is invalidated explicitly before refreshAll().
+    this._pruneDivisionCache(documents);
     this.set({ documents, dashboard, products, currentDocumentId, dashboardOverview: null });
     await Promise.all([this.refreshDivisions(), this.refreshDashboardOverview()]);
   }
