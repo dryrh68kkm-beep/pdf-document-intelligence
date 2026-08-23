@@ -16,6 +16,9 @@ resolve against" concern in the API layer only.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+
+from pdf_document_intelligence.catalog.loader import get_default_catalog
 from pdf_document_intelligence.db.repository import Repository
 from pdf_document_intelligence.models.document import ExtractedTable, TableRow
 
@@ -28,6 +31,19 @@ def _identity_code(fields: dict) -> str | None:
     if barcode and barcode.value:
         return str(barcode.value)
     return None
+
+
+def _catalog_unit_price(barcode: str | None) -> Decimal | None:
+    """Real per-item cost from the master catalog (CURRENT_COST column),
+    looked up the same way name resolution already matches a row's barcode
+    against the same catalog snapshot - not a guess, not an extraction
+    change: unit_price/amount were never populated by any packing-list
+    template, this is the API layer enriching a resolved barcode with the
+    master's own cost figure, same as it already does for `name`."""
+    if not barcode:
+        return None
+    entry = get_default_catalog().get(barcode)
+    return entry.unit_cost if entry else None
 
 
 def resolve_local_master(row: TableRow, repo: Repository) -> TableRow:
@@ -86,11 +102,43 @@ def flatten_row(document_id: str, table: ExtractedTable, row: TableRow) -> dict:
     review_required = any(fv.review_required for fv in f.values())
     review_reasons = sorted({flag for fv in f.values() for flag in fv.validation_flags if fv.review_required})
 
+    barcode_value = str(barcode_field.value) if barcode_field and barcode_field.value else None
+    sku_qty_value = num("sku_qty")
+    unit_cost = _catalog_unit_price(barcode_value)
+    unit_price = float(unit_cost) if unit_cost is not None else None
+    amount = (
+        float((unit_cost * Decimal(str(sku_qty_value))).quantize(Decimal("0.01")))
+        if unit_cost is not None and sku_qty_value is not None
+        else None
+    )
+    # unit_price/amount aren't modeled TableRow fields (no packing-list
+    # template extracts a price), so f.items() below never carries them -
+    # without this the Products table/Evidence panel, which read every
+    # field through row["fields"][name], would never see these two at all
+    # even though the flat unit_price/amount columns above are correct.
+    evidence_page = name_field.bbox.page if name_field else table.page_start
+    synthetic_fields = {
+        key: {
+            "name": key,
+            "raw_value": "",
+            "value": value,
+            "type": "decimal",
+            "bbox": {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0, "page": evidence_page},
+            "source": "master_catalog" if unit_cost is not None else "pdf_text",
+            "confidence": 1.0 if unit_cost is not None else 0.0,
+            "validation_flags": ["CATALOG_MATCH"] if unit_cost is not None else [],
+            "review_required": False,
+            "ocr_raw_value": None,
+            "ocr_confidence": None,
+        }
+        for key, value in (("unit_price", unit_price), ("amount", amount))
+    }
+
     return {
         "source_page": name_field.bbox.page if name_field else table.page_start,
         "row_index": row.row_index,
         "department": table.name,
-        "barcode": str(barcode_field.value) if barcode_field and barcode_field.value else None,
+        "barcode": barcode_value,
         "article_code": str(article_field.value) if article_field and article_field.value else None,
         "identity_code": _identity_code(f),
         "raw_product_name": name_field.raw_value if name_field else None,
@@ -98,10 +146,10 @@ def flatten_row(document_id: str, table: ExtractedTable, row: TableRow) -> dict:
         "resolved_product_name": name_field.value if name_field else None,
         "weight_qty": num("weight_qty"),
         "pu_qty": num("pu_qty"),
-        "sku_qty": num("sku_qty"),
+        "sku_qty": sku_qty_value,
         "unit": None,
-        "unit_price": None,
-        "amount": None,
+        "unit_price": unit_price,
+        "amount": amount,
         "confidence": name_field.confidence if name_field else None,
         "confidence_band": row.confidence_band,
         "resolution_status": _resolution_status(row),
@@ -109,7 +157,7 @@ def flatten_row(document_id: str, table: ExtractedTable, row: TableRow) -> dict:
         "review_reasons": review_reasons,
         "suspected_non_product": row.suspected_non_product,
         "non_product_reasons": row.non_product_reasons,
-        "fields": {name: fv.model_dump(mode="json") for name, fv in f.items()},
+        "fields": {**{name: fv.model_dump(mode="json") for name, fv in f.items()}, **synthetic_fields},
     }
 
 

@@ -8,6 +8,7 @@ is never committed to the repository.
 from __future__ import annotations
 
 import functools
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from pdf_document_intelligence.catalog.snapshot import (
@@ -16,14 +17,27 @@ from pdf_document_intelligence.catalog.snapshot import (
 )
 
 
-class CatalogEntry:
-    __slots__ = ("barcode", "name", "structure", "root_code")
+def _parse_unit_cost(raw: object) -> Decimal | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
 
-    def __init__(self, barcode: str, name: str, structure: str, root_code: str) -> None:
+
+class CatalogEntry:
+    __slots__ = ("barcode", "name", "structure", "root_code", "unit_cost")
+
+    def __init__(
+        self, barcode: str, name: str, structure: str, root_code: str, unit_cost: Decimal | None = None
+    ) -> None:
         self.barcode = barcode
         self.name = name
         self.structure = structure
         self.root_code = root_code
+        self.unit_cost = unit_cost
 
 
 def _catalog_from_snapshot() -> dict[str, CatalogEntry]:
@@ -41,6 +55,7 @@ def _catalog_from_snapshot() -> dict[str, CatalogEntry]:
             name=name,
             structure=str(row.get("structure") or "").strip(),
             root_code=str(row.get("root_code") or "").strip(),
+            unit_cost=_parse_unit_cost(row.get("unit_cost")),
         )
     return catalog
 

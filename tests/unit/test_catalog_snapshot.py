@@ -52,6 +52,7 @@ def test_external_master_is_compiled_once_and_source_can_be_removed(tmp_path: Pa
             "name": "SYNTHETIC PRODUCT",
             "structure": "SYNTHETIC SUBCLASS",
             "root_code": "990001",
+            "unit_cost": "",
         }
     ]
     assert payload["department_divisions"] == {
