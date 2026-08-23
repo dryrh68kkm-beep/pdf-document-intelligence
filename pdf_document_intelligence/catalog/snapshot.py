@@ -18,13 +18,17 @@ from pdf_document_intelligence.db.paths import get_data_dir
 CATALOG_ENV = "PDF_INTELLIGENCE_MASTER_CATALOG"
 SNAPSHOT_FILENAME = "master_catalog.snapshot.json"
 SNAPSHOT_VERSION = 1
-# Real store master exports have shown up in both UTF-8 and the Windows Thai
-# codepage (cp874, aka iso8859_11/TIS-620) - decoding a cp874 file as UTF-8
-# with errors="replace" doesn't raise, it silently turns every Thai
+# Real store master exports have shown up in UTF-8, the Windows Thai
+# codepage (cp874), and plain ISO-8859-11 - cp874 and iso8859_11 are close
+# cousins (both TIS-620-based) but not identical: cp874 leaves a handful of
+# byte values in 0x80-0x9F undefined and raises on them (seen on a real
+# ~30k-row store export), while iso8859_11 assigns the full 256-byte range
+# and decodes those same files cleanly. Decoding a cp874/iso8859_11 file as
+# UTF-8 with errors="replace" doesn't raise, it silently turns every Thai
 # character into U+FFFD and produces mojibake product names throughout the
 # catalog (seen in practice after an in-web CSV re-import). Try encodings in
 # order and keep the first one that decodes the whole file cleanly.
-CATALOG_ENCODING_CANDIDATES = ("utf-8-sig", "cp874")
+CATALOG_ENCODING_CANDIDATES = ("utf-8-sig", "cp874", "iso8859_11")
 
 
 def get_snapshot_path() -> Path:
