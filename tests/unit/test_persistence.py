@@ -358,3 +358,78 @@ def test_master_coverage_kpi_reports_real_counts(db_path):
     state = build_dashboard_state(repo)
     total_pct = sum(item["percent"] for item in state["masterCoverage"])
     assert 99.0 <= total_pct <= 101.0  # rounding tolerance, not fabricated
+
+
+# --- Name-correction propagation across documents (user request: fixing a
+# product's name on one bill should also fix it wherever else the same
+# barcode appears, on a different document) ---
+
+def test_name_correction_propagates_to_same_barcode_on_another_document(db_path):
+    repo = _repo_at(db_path)
+    _seed_document(repo)  # doc-1, barcode 8850000000001 = "ขนมปัง A"
+
+    row2 = make_row(0, "BAKERY", "8850000000001", "ART1", "ขนมปัง A (อ่านผิด)", 10.0, 5, 5)
+    result2 = make_result("doc-2", "second.pdf", [("BAKERY", [row2])])
+    repo.create_document("doc-2", sha256="xyz", filename="second.pdf", file_size=10)
+    repo.set_document_complete("doc-2", 1, {"confidence": 0.9})
+    persist_document_result("doc-2", result2, repo)
+
+    doc1_row = next(r for r in repo.list_product_rows(document_id="doc-1") if r["barcode"] == "8850000000001")
+    outcome = apply_correction(repo, doc1_row["id"], "name", "ขนมปัง A (ชื่อถูกต้อง)", reason="ยืนยันจากเอกสารต้นฉบับ")
+    assert outcome["propagatedCount"] == 1
+
+    doc2_row = next(r for r in repo.list_product_rows(document_id="doc-2") if r["barcode"] == "8850000000001")
+    assert doc2_row["resolved_product_name"] == "ขนมปัง A (ชื่อถูกต้อง)"
+    assert doc2_row["resolution_status"] == "CORRECTED"
+    # The propagated change is its own audited correction, not a silent
+    # overwrite - undo history on doc-2's row must show it happened.
+    history = repo.list_corrections(doc2_row["id"])
+    assert any(c["field_name"] == "name" and c["new_value"] == "ขนมปัง A (ชื่อถูกต้อง)" for c in history)
+
+
+def test_name_correction_upserts_local_master_so_future_documents_resolve_it(db_path):
+    repo = _repo_at(db_path)
+    _seed_document(repo)
+    row = next(r for r in repo.list_product_rows() if r["barcode"] == "8850000000001")
+    apply_correction(repo, row["id"], "name", "ขนมปัง A (ชื่อถูกต้อง)", reason="ยืนยันจากเอกสารต้นฉบับ")
+
+    entry = repo.find_local_master_by_barcode("8850000000001")
+    assert entry is not None
+    assert entry["product_name"] == "ขนมปัง A (ชื่อถูกต้อง)"
+
+    new_row = make_row(0, "BAKERY", "8850000000001", "ART1", "ชื่อจาก OCR เก่า", 10.0, 5, 5)
+    result = make_result("doc-3", "third.pdf", [("BAKERY", [new_row])])
+    repo.create_document("doc-3", sha256="qqq", filename="third.pdf", file_size=10)
+    repo.set_document_complete("doc-3", 1, {"confidence": 0.9})
+    persist_document_result("doc-3", result, repo)
+
+    stored = repo.list_product_rows(document_id="doc-3")[0]
+    assert stored["resolved_product_name"] == "ขนมปัง A (ชื่อถูกต้อง)"
+
+
+def test_correcting_an_already_matching_name_does_not_propagate_again(db_path):
+    """Idempotence guard: re-applying the same correction (e.g. the user
+    edits and saves again without changing the value) must not create a
+    fresh no-op correction record on every sibling row."""
+    repo = _repo_at(db_path)
+    _seed_document(repo)
+    row = next(r for r in repo.list_product_rows() if r["barcode"] == "8850000000001")
+    first = apply_correction(repo, row["id"], "name", "ขนมปัง A (ชื่อถูกต้อง)", reason="test")
+    assert first["propagatedCount"] == 0  # no other document has this barcode yet
+
+    second = apply_correction(repo, row["id"], "name", "ขนมปัง A (ชื่อถูกต้อง)", reason="test")
+    assert second["propagatedCount"] == 0
+
+
+def test_correction_on_row_without_barcode_does_not_attempt_propagation(db_path):
+    repo = _repo_at(db_path)
+    repo.create_document("doc-1", sha256="no-barcode", filename="test.pdf", file_size=10)
+    row_no_barcode = make_row(0, "BAKERY", None, "ART1", "สินค้าไม่มีบาร์โค้ด", 1.0, 1, 1)
+    result = make_result("doc-1", "test.pdf", [("BAKERY", [row_no_barcode])])
+    repo.set_document_complete("doc-1", 1, {"confidence": 0.9})
+    persist_document_result("doc-1", result, repo)
+
+    row = repo.list_product_rows()[0]
+    outcome = apply_correction(repo, row["id"], "name", "ชื่อใหม่", reason="test")
+    assert outcome["propagatedCount"] == 0
+    assert repo.count_local_master() == 0

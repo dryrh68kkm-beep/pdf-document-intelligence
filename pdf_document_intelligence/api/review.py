@@ -57,7 +57,38 @@ def apply_correction(repo: Repository, row_id: str, field_name: str, new_value, 
     result = repo.update_product_row_field(
         row_id, field_name, old_value, coerced, column_updates, reason, source,
     )
-    return {**result, "row": repo.get_product_row(row_id)}
+    propagated = 0
+    if field_name == "name" and row.get("barcode") and coerced:
+        propagated = _propagate_name_correction(repo, row["barcode"], coerced, row_id, row["document_id"], source)
+    return {**result, "row": repo.get_product_row(row_id), "propagatedCount": propagated}
+
+
+def _propagate_name_correction(repo: Repository, barcode: str, corrected_name: str, source_row_id: str, source_document_id: str, source: str) -> int:
+    """User request: correcting a product's name should also fix the same
+    product's name everywhere else it appears (a different document/bill
+    carrying the same barcode), not just the one row being edited - and
+    should stick for documents imported later too, via Local Verified
+    Master (same barcode-match path resolve_local_master() already uses
+    for a brand-new document's rows)."""
+    repo.upsert_local_master_name(barcode, corrected_name, source_document_id)
+
+    updated = 0
+    for sibling in repo.list_product_rows_by_barcode(barcode, exclude_row_id=source_row_id):
+        if sibling.get("resolved_product_name") == corrected_name:
+            continue
+        sibling_review_required, sibling_review_reasons = _recompute_review_flags(sibling, "resolved_product_name", corrected_name)
+        repo.update_product_row_field(
+            sibling["id"], "name", sibling.get("resolved_product_name"), corrected_name,
+            {
+                "resolved_product_name": corrected_name,
+                "review_required": int(sibling_review_required),
+                "review_reasons": json.dumps(sibling_review_reasons),
+            },
+            f"auto-applied: barcode {barcode} corrected on another document (row {source_row_id})",
+            source,
+        )
+        updated += 1
+    return updated
 
 
 def _recompute_review_flags(row: dict, changed_column: str, new_value) -> tuple[bool, list[str]]:
