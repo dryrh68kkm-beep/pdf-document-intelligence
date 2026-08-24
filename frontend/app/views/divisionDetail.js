@@ -32,7 +32,11 @@ function deptRow(d, store, hasAmountData) {
     <div class="dept-card-stat">${d.rowCount} รายการ${hasAmountData ? ` · ${fmtBaht(d.amount)}` : ""}</div>
     <div class="dept-card-stat">น้ำหนัก ${fmtNum(d.weight)} กก. · PU ${fmtNum(d.puQty)} · SKU ${fmtNum(d.skuQty)}</div>
   `;
-  row.addEventListener("click", () => store.navigate("products", { deptFilter: d.name }));
+  // deptFilterLabel must be cleared explicitly - see the same comment in
+  // departments.js's deptCard(): store.navigate() only overwrites the keys
+  // it's given, so a stale label from an earlier click elsewhere would
+  // otherwise show the wrong name as the Products page title.
+  row.addEventListener("click", () => store.navigate("products", { deptFilter: d.name, deptFilterLabel: null }));
   return row;
 }
 

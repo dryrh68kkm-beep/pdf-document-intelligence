@@ -26,7 +26,14 @@ function deptCard(d, store) {
     <div class="dept-card-stat">${d.skuCount} SKU · ${d.rowCount} รายการ</div>
     <div class="dept-card-stat">น้ำหนัก ${fmtNum(d.totals.weight_qty)} กก. · PU ${fmtNum(d.totals.pu_qty)} · SKU qty ${fmtNum(d.totals.sku_qty)}</div>
   `;
-  card.addEventListener("click", () => store.navigate("products", { deptFilter: d.name }));
+  // deptFilterLabel must be cleared explicitly here - store.navigate() only
+  // overwrites the state keys it's given, so a stale label left over from a
+  // previous Division-row click elsewhere (e.g. the Dashboard's Division
+  // summary table, which sets both deptFilter and deptFilterLabel) would
+  // otherwise stick and show the WRONG department name as the Products
+  // page title even though the actual filtered rows are for this
+  // department - looking like the click went to the wrong place.
+  card.addEventListener("click", () => store.navigate("products", { deptFilter: d.name, deptFilterLabel: null }));
   return card;
 }
 

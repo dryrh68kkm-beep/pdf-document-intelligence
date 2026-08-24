@@ -296,7 +296,12 @@ document.getElementById("globalSearch").addEventListener("input", (e) => {
   clearTimeout(searchDebounce);
   const val = e.target.value;
   searchDebounce = setTimeout(() => {
-    store.navigate("products", { deptFilter: null, searchQuery: val });
+    // deptFilterLabel must be cleared explicitly here too - see the same
+    // comment in departments.js's deptCard(): store.navigate() only
+    // overwrites the keys it's given, so a stale label from an earlier
+    // Division-row click would otherwise keep showing as the Products
+    // page title even after deptFilter itself is cleared for this search.
+    store.navigate("products", { deptFilter: null, deptFilterLabel: null, searchQuery: val });
   }, 200);
 });
 
