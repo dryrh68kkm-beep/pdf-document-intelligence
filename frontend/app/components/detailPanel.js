@@ -180,7 +180,6 @@ export function renderProductDetail(container, product, store) {
       </div>
     ` : ""}
     <div class="dp-source-link" id="dpShowPdf">👁 ดูจากเอกสารต้นฉบับ (หน้า ${product.page})</div>
-    <div id="dpPdfWrap"></div>
     <div class="dp-history-section">
       <div class="dp-label" style="margin-top:16px;">ประวัติการแก้ไข</div>
       <div id="dpHistory"></div>
@@ -189,15 +188,30 @@ export function renderProductDetail(container, product, store) {
 
   renderHistory(container.querySelector("#dpHistory"), product.rowId);
 
+  // Opens in the app's existing modal (#modalBackdrop/#modalBox, the same
+  // one main.js uses for confirm/error dialogs) rather than the small
+  // inline iframe this used to embed directly in the side panel - user
+  // request: bigger, but a window, not fullscreen. modal-box-lg is a size
+  // modifier only; the dialogs elsewhere keep the normal small modal-box.
   container.querySelector("#dpShowPdf").addEventListener("click", () => {
-    const wrap = container.querySelector("#dpPdfWrap");
-    if (wrap.dataset.loaded) return;
-    wrap.dataset.loaded = "1";
-    const iframe = document.createElement("iframe");
-    iframe.className = "evidence-pdf";
-    iframe.title = "เอกสารต้นฉบับ";
-    iframe.src = `${api.pdfUrl(product.docId)}#page=${product.page}&view=FitH`;
-    wrap.appendChild(iframe);
+    const backdrop = document.getElementById("modalBackdrop");
+    const box = document.getElementById("modalBox");
+    box.classList.add("modal-box-lg");
+    box.innerHTML = `
+      <div class="modal-pdf-head">
+        <h3>เอกสารต้นฉบับ — หน้า ${product.page}</h3>
+        <button type="button" class="btn btn-sm" id="dpPdfModalClose">ปิด</button>
+      </div>
+      <iframe class="evidence-pdf-modal" title="เอกสารต้นฉบับ" src="${api.pdfUrl(product.docId)}#page=${product.page}&view=FitH"></iframe>
+    `;
+    backdrop.classList.add("open");
+    const close = () => {
+      backdrop.classList.remove("open");
+      box.classList.remove("modal-box-lg");
+      box.innerHTML = "";
+    };
+    box.querySelector("#dpPdfModalClose").addEventListener("click", close);
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); }, { once: true });
   });
 
   const resolveBtn = container.querySelector("#dpMarkResolved");
