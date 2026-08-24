@@ -224,6 +224,7 @@ def patch_product(row_id: str, body: dict = Body(...)):
     return {
         "correctionId": result["correction_id"],
         "row": product_row_json(result["row"], doc["filename"] if doc else ""),
+        "propagatedCount": result.get("propagatedCount", 0),
     }
 
 

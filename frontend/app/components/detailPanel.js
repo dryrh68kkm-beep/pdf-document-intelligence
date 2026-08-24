@@ -265,12 +265,21 @@ export function renderProductDetail(container, product, store) {
       feedback.textContent = "กำลังบันทึก...";
       feedback.className = "dp-save-feedback";
       try {
+        let propagatedCount = 0;
         for (const [field, rawValue] of Object.entries(pendingEdits)) {
           const numeric = ["weight_qty", "pu_qty", "sku_qty", "unit_price", "amount"].includes(field);
           const value = numeric ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
-          await api.patchProduct(product.rowId, field, value, pendingReason || null);
+          const result = await api.patchProduct(product.rowId, field, value, pendingReason || null);
+          propagatedCount += result?.propagatedCount || 0;
         }
-        feedback.textContent = "✓ บันทึกแล้ว";
+        // A name correction also propagates to every other row sharing this
+        // barcode (user request: fixing this name should fix the same
+        // product wherever else it appears, across other documents) and is
+        // saved to Local Verified Master so future documents resolve it
+        // too - surfaced here so the user knows it wasn't just this one row.
+        feedback.textContent = propagatedCount > 0
+          ? `✓ บันทึกแล้ว (แก้ไข ${propagatedCount} รายการที่ตรงกันในเอกสารอื่นด้วย)`
+          : "✓ บันทึกแล้ว";
         feedback.className = "dp-save-feedback ok";
         editing = false;
         pendingEdits = {};

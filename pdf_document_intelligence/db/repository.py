@@ -416,6 +416,43 @@ class Repository:
             )
         return {"created": True, "entry": self.find_local_master_by_barcode(barcode)}
 
+    def upsert_local_master_name(self, barcode: str, product_name: str, source_document_id: str | None) -> dict:
+        """Unlike add_local_master() (insert-only, never overwrites), this
+        always applies the given name - a manual correction to a barcode's
+        name (user request: correcting one row's name should also fix the
+        same product's name wherever else its barcode appears) is a
+        deliberate override, so an existing Local Master entry's name must
+        actually change too, not be left stale."""
+        now = _now()
+        with get_write_lock(), self._conn:
+            existing = self.find_local_master_by_barcode(barcode)
+            if existing:
+                self._conn.execute(
+                    "UPDATE local_product_master SET product_name=?, updated_at=? WHERE barcode=?",
+                    (product_name, now, barcode),
+                )
+            else:
+                self._conn.execute(
+                    """INSERT INTO local_product_master
+                       (id, barcode, article_code, product_name, department, unit,
+                        source_document_id, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (new_id(), barcode, None, product_name, None, None, source_document_id, now, now),
+                )
+        return self.find_local_master_by_barcode(barcode)
+
+    def list_product_rows_by_barcode(self, barcode: str, exclude_row_id: str | None = None) -> list[dict]:
+        """Every non-deleted row across every document sharing this
+        barcode - used to propagate a name correction (user request) to
+        the same product wherever else it appears, not just the one row
+        being edited."""
+        q = "SELECT * FROM product_rows WHERE barcode=? AND deleted_at IS NULL"
+        params: list[Any] = [barcode]
+        if exclude_row_id:
+            q += " AND id != ?"
+            params.append(exclude_row_id)
+        return [dict(r) for r in self._conn.execute(q, params)]
+
     def list_local_master(self, search: str | None = None) -> list[dict]:
         q = "SELECT * FROM local_product_master"
         params: list[Any] = []
