@@ -244,7 +244,17 @@ button { font-family: inherit; }
 .dp-source-link { font-size: 12.5px; color: var(--accent); cursor: pointer; font-weight: 600; }
 .dp-source-note { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
 .dp-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); margin-bottom: 10px; }
-.evidence-pdf { width: 100%; height: 320px; border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; }
+/* "ดูจากเอกสารต้นฉบับ" now opens in the shared modal (bigger, but a
+   window - not fullscreen, per user request) instead of the small iframe
+   this used to embed inline in the side panel. */
+/* Two classes (not just .modal-box-lg alone) so this reliably outweighs
+   .modal-box's own width/padding regardless of which rule happens to sit
+   later in this file - the same same-specificity/source-order pitfall
+   documented near the Responsive section below. */
+.modal-box.modal-box-lg { width: min(900px, 92vw); height: min(85vh, 900px); display: flex; flex-direction: column; padding: 16px; }
+.modal-pdf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.modal-pdf-head h3 { margin: 0; font-size: 15px; }
+.evidence-pdf-modal { flex: 1; width: 100%; border: 1px solid var(--border); border-radius: 8px; }
 
 .dp-evidence-compare { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
 .dp-evidence-row {
@@ -433,6 +443,11 @@ button { font-family: inherit; }
 .dash-filter input, .dash-filter select {
   border: 0; background: transparent; color: var(--text); font: inherit; outline: none; min-height: 26px;
 }
+/* The native date input's own displayed text follows the browser/OS
+   locale (MM/DD/YYYY on an en-US system) and can't be forced via markup -
+   this label next to it is what actually guarantees a DD/MM/YYYY reading
+   regardless of the viewer's browser settings (user request). */
+.dash-filter-dmy { font-size: 11.5px; color: var(--text-faint); font-family: var(--font-data); white-space: nowrap; }
 
 /* ---------- Division detail: department sort controls ---------- */
 .sort-controls { margin-left: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; font-size: 12px; }

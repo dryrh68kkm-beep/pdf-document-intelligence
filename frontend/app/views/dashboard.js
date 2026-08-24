@@ -30,6 +30,17 @@ function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
+// DD/MM/YYYY - shown next to the native <input type="date"> below (user
+// request): that input's own displayed format follows the browser/OS
+// locale (e.g. MM/DD/YYYY on an en-US system) and can't be forced via
+// markup, so this label is the one place the date's format is actually
+// guaranteed day/month/year regardless of the viewer's browser settings.
+function fmtDateDMY(iso) {
+  if (!iso) return "—";
+  const d = new Date(`${iso}T00:00:00`);
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
 // DD/MM/YYYY HH:mm per the reference mockup's exact format (spec section 6).
 function fmtDateTime(iso) {
   if (!iso) return "—";
@@ -548,10 +559,12 @@ export function renderDashboard(container, store) {
       <div class="dash-filter">
         <label for="dashDateFrom">จาก</label>
         <input type="date" id="dashDateFrom" value="${escapeHtml(dashboardDateFrom)}" />
+        <span class="dash-filter-dmy">${fmtDateDMY(dashboardDateFrom)}</span>
       </div>
       <div class="dash-filter">
         <label for="dashDateTo">ถึง</label>
         <input type="date" id="dashDateTo" value="${escapeHtml(dashboardDateTo)}" />
+        <span class="dash-filter-dmy">${fmtDateDMY(dashboardDateTo)}</span>
       </div>
       <div class="dash-date-shortcuts">
         ${DATE_SHORTCUTS.map((s) => `<button type="button" class="dash-date-shortcut-btn" data-shortcut="${escapeHtml(s.label)}">${escapeHtml(s.label)}</button>`).join("")}
