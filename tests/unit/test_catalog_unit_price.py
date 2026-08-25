@@ -83,6 +83,38 @@ def test_unit_price_none_when_catalog_cost_unparseable(catalog_with_cost, tmp_pa
     assert flat[0]["amount"] is None
 
 
+def test_unit_price_parses_thousands_separator_and_currency_symbol(tmp_path, monkeypatch):
+    # Real exports have shown CURRENT_COST formatted as "1,234.50" or
+    # "฿1,234.50" rather than a bare Decimal-parseable "1234.50" - a plain
+    # Decimal() parse rejects both and used to silently drop the cost to
+    # None instead of importing it.
+    source = tmp_path / "external_master.csv"
+    with source.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["BARCODE", "ART_SV_NAME", "SUBCLASS_NAME", "ART_NO", "DEPARTMENT_NAME", "DIVISION_NAME", "CURRENT_COST"],
+        )
+        writer.writeheader()
+        writer.writerow({
+            "BARCODE": "BC4", "ART_SV_NAME": "Product 4", "SUBCLASS_NAME": "SUB",
+            "ART_NO": "ART4", "DEPARTMENT_NAME": "HBA", "DIVISION_NAME": "04 DRY FOOD",
+            "CURRENT_COST": "฿1,234.50",
+        })
+
+    data_dir = tmp_path / "data_dir"
+    monkeypatch.setenv("PDF_INTELLIGENCE_DATA_DIR", str(data_dir))
+    snapshot_module.import_catalog_snapshot(source, overwrite=True)
+    loader_module.get_default_catalog.cache_clear()
+    try:
+        tables = [("HBA", [make_row(0, "HBA", "BC4", "ART4", "Product 4", 10.0, 2, 20)])]
+        result = make_result("doc-1", "t.pdf", tables)
+        flat = prepare_flat_rows("doc-1", result, _repo(tmp_path))
+        assert flat[0]["unit_price"] == 1234.50
+        assert flat[0]["amount"] == 24690.00  # 1234.50 * sku_qty(20)
+    finally:
+        loader_module.get_default_catalog.cache_clear()
+
+
 def test_unit_price_none_when_barcode_not_in_catalog(catalog_with_cost, tmp_path):
     tables = [("HBA", [make_row(0, "HBA", "BC_UNKNOWN", "ART9", "Unknown", 10.0, 2, 20)])]
     result = make_result("doc-1", "t.pdf", tables)

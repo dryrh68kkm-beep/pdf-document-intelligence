@@ -104,3 +104,59 @@ def test_force_duplicate_reprocesses_existing_document(monkeypatch):
     assert len(store.list()) == 1
     assert len(submitted) == 1
     assert submitted[0][1][0] == original["id"]
+
+
+def test_reprocess_endpoint_marks_document_processing(monkeypatch):
+    """POST /api/documents/{id}/reprocess - the Documents page's dedicated
+    Reprocess button (distinct from the force=true upload-duplicate path
+    above) had no direct test coverage; a user reported it failing live
+    with a bare 500. Covers the happy path through the real endpoint."""
+    _reset_store()
+    client = TestClient(app)
+    content = b"%PDF-1.4\n%reprocess-endpoint-fixture\n"
+    doc = store.create("reprocess-me.pdf", content)
+    submitted = []
+
+    class ImmediateCaptureExecutor:
+        def submit(self, fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            return None
+
+    monkeypatch.setattr(app_module, "_executor", ImmediateCaptureExecutor())
+
+    res = client.post(f"/api/documents/{doc['id']}/reprocess")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["id"] == doc["id"]
+    assert body["status"] == "processing"
+    assert len(submitted) == 1
+    assert submitted[0][1][0] == doc["id"]
+
+
+def test_reprocess_endpoint_missing_document_returns_404():
+    _reset_store()
+    client = TestClient(app)
+    res = client.post("/api/documents/does-not-exist/reprocess")
+    assert res.status_code == 404
+
+
+def test_unhandled_exception_returns_diagnosable_json_not_bare_500(monkeypatch):
+    """A real unhandled exception must not surface as Starlette's default
+    opaque PlainTextResponse("Internal Server Error") - the frontend's
+    error dialogs show that verbatim with nothing to act on (reported
+    live via the Documents page's Reprocess button). The global handler
+    in app.py should return the exception's own type/message as JSON
+    instead, so a future failure is actually diagnosable."""
+    _reset_store()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    def _boom():
+        raise RuntimeError("synthetic failure for test coverage")
+
+    monkeypatch.setattr(app_module.store, "list", _boom)
+
+    res = client.get("/api/documents")
+    assert res.status_code == 500
+    body = res.json()
+    assert body["type"] == "RuntimeError"
+    assert "synthetic failure" in body["message"]
