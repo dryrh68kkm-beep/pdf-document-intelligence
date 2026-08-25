@@ -128,3 +128,39 @@ def test_iso8859_11_encoded_source_decodes_thai_text_correctly(tmp_path: Path):
     payload = json.loads(snapshot.read_text(encoding="utf-8"))
     assert payload["products"][0]["name"] == name + "\x81"
     assert "�" not in payload["products"][0]["name"]
+
+
+def test_import_tolerates_a_different_column_layout(tmp_path: Path):
+    # Real store master exports don't all share one exact schema (user
+    # request: "แก้ไฟล์มาสเตอร์เป็นรูปแบบนี้ให้อ่านได้แม้ไม่เหมือนกัน
+    # แค่มีข้อมูลก็อ่านได้" - import a differently-shaped file as long as
+    # the data is there). This one drops columns this importer never reads
+    # anyway (MS_NO, DIVISION_GROUP, BRAND, MODEL_NO), reorders the ones it
+    # does, and carries a stray leading space on " CURRENT_COST" - a real
+    # header seen live that a plain row.get("CURRENT_COST") would silently
+    # miss, leaving every unit cost blank.
+    source = tmp_path / "external_master_reshaped.csv"
+    snapshot = tmp_path / "master_catalog.snapshot.json"
+    source.write_text(
+        "DIVISION_NAME,DEPT_GROUP_NAME,DEPARTMENT_NAME,SUBDEPARTMENT_NAME,CLASS_NAME,"
+        "SUBCLASS_NAME,ART_SV_NAME,ART_SV_NAME_ENG,ART_NO,ART_SV_NO,BARCODE,EXTRA_INFO,"
+        "DC_SUPPL_NO,DC_SUPPL_NAME, CURRENT_COST\n"
+        "09 SYNTHETIC DIVISION,GRP,99 SYNTHETIC DEPARTMENT,SUB,CLASS,SYNTHETIC SUBCLASS,"
+        "SYNTHETIC PRODUCT,SYNTHETIC PRODUCT EN,990005,SV1,990000000005,,,,\"1,234.50\"\n",
+        encoding="utf-8",
+    )
+
+    import_catalog_snapshot(source, snapshot_path=snapshot)
+    payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert payload["products"] == [
+        {
+            "barcode": "990000000005",
+            "name": "SYNTHETIC PRODUCT",
+            "structure": "SYNTHETIC SUBCLASS",
+            "root_code": "990005",
+            "unit_cost": "1,234.50",
+        }
+    ]
+    assert payload["department_divisions"] == {
+        "99 SYNTHETIC DEPARTMENT": "09 SYNTHETIC DIVISION"
+    }

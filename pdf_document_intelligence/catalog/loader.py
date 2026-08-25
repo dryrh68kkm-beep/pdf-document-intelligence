@@ -21,6 +21,13 @@ def _parse_unit_cost(raw: object) -> Decimal | None:
     text = str(raw or "").strip()
     if not text:
         return None
+    # Real exports have shown thousands separators and a currency symbol
+    # in this column (e.g. "1,234.50", "฿1,234.50") - strip them rather
+    # than dropping the whole cost to None just because a bare Decimal()
+    # parse doesn't accept them.
+    text = text.replace(",", "").replace("฿", "").strip()
+    if not text:
+        return None
     try:
         return Decimal(text)
     except InvalidOperation:

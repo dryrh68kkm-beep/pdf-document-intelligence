@@ -44,6 +44,21 @@ def _clean(value: object) -> str:
     return str(value or "").strip()
 
 
+def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
+    """Key a CSV row by UPPERCASE, whitespace-trimmed column name.
+
+    Real store exports don't all share one exact schema - column order
+    varies, some carry extra columns this importer never reads (MS_NO,
+    DIVISION_GROUP, BRAND, MODEL_NO, ...), and a header can carry a stray
+    space (seen live: " CURRENT_COST" with a leading space from a
+    `, CURRENT_COST` in the source header line) that would otherwise never
+    match a plain `row.get("CURRENT_COST")` lookup and silently import
+    every unit cost as blank. Only the columns this module actually reads
+    (BARCODE, ART_SV_NAME, ...) need to be present - by name, not by
+    position or exact casing/spacing - for a row to import."""
+    return {(key or "").strip().upper(): value for key, value in row.items() if key is not None}
+
+
 def _detect_encoding(source_path: Path) -> str:
     raw = source_path.read_bytes()
     for encoding in CATALOG_ENCODING_CANDIDATES:
@@ -66,7 +81,8 @@ def _compile_source(source_path: Path) -> dict[str, Any]:
     encoding = _detect_encoding(source_path)
     with source_path.open("r", encoding=encoding, errors="replace", newline="") as f:
         reader = csv.DictReader(f)
-        for row in reader:
+        for raw_row in reader:
+            row = _normalize_row(raw_row)
             barcode = _clean(row.get("BARCODE"))
             name = _clean(row.get("ART_SV_NAME"))
             if barcode and name:
