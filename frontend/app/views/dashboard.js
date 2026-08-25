@@ -332,9 +332,11 @@ function renderDivisionSummaryTable(host, overview, departmentsByDivision, onRow
 const PIE_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
 const PIE_TOP_N = 6;
 
-// Secondary chart (kept from an earlier request): which Department has the
-// most product by quantity, within the current date range/Division filter.
-function renderDepartmentPie(host, rows) {
+// Secondary chart (kept from an earlier request, redrawn per user request
+// as a horizontal color-coded bar chart instead of a donut): which
+// Department has the most product by quantity, within the current date
+// range/Division filter.
+function renderDepartmentBarChart(host, rows) {
   if (!rows.length) {
     host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูล</div>`;
     return;
@@ -352,37 +354,23 @@ function renderDepartmentPie(host, rows) {
     entries = [...head, ["อื่นๆ", otherTotal]];
   }
   const total = entries.reduce((sum, [, qty]) => sum + qty, 0) || 1;
-
-  let offset = 0;
-  const segments = entries
-    .map(([, qty], i) => {
-      const pct = (qty / total) * 100;
-      const seg = `var(${PIE_COLORS[i % PIE_COLORS.length]}) ${offset}% ${offset + pct}%`;
-      offset += pct;
-      return seg;
-    })
-    .join(", ");
+  const maxQty = Math.max(...entries.map(([, qty]) => qty), 1);
 
   host.innerHTML = `
-    <div class="donut-wrap">
-      <div style="width:130px;height:130px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
-        <div style="width:84px;height:84px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;">
-          <div class="mono" style="font-size:18px;font-weight:700;">${fmtNum(total)}</div>
-          <div style="font-size:10px;color:var(--text-faint);">หน่วยรวม</div>
-        </div>
-      </div>
-      <div class="donut-legend">
-        ${entries
-          .map(
-            ([dept, qty], i) => `
-          <div class="donut-legend-row">
+    <div class="dept-bar-chart">
+      ${entries
+        .map(
+          ([dept, qty], i) => `
+        <div class="dept-bar-chart-row">
+          <div class="dept-bar-chart-label">
             <span class="donut-legend-dot" style="background:var(${PIE_COLORS[i % PIE_COLORS.length]});"></span>
-            <span class="donut-legend-name">${escapeHtml(dept)}</span>
-            <span class="donut-legend-count">${fmtNum(qty)} · ${Math.round((qty / total) * 100)}%</span>
-          </div>`
-          )
-          .join("")}
-      </div>
+            ${escapeHtml(dept)}
+          </div>
+          <div class="recon-track"><div class="recon-fill" style="width:${Math.max(2, Math.round((qty / maxQty) * 100))}%;background:var(${PIE_COLORS[i % PIE_COLORS.length]});"></div></div>
+          <div class="dept-bar-chart-value mono">${fmtNum(qty)} · ${Math.round((qty / total) * 100)}%</div>
+        </div>`
+        )
+        .join("")}
     </div>
   `;
 }
@@ -665,7 +653,7 @@ export function renderDashboard(container, store) {
     store.navigate("products", { deptFilter: depts, deptFilterLabel: name });
   });
 
-  renderDepartmentPie(container.querySelector("#dashDeptPie"), filteredRows);
+  renderDepartmentBarChart(container.querySelector("#dashDeptPie"), filteredRows);
 
   const tableHost = container.querySelector("#dashProductsTable");
   const paginationHost = container.querySelector("#dashProductsPagination");
