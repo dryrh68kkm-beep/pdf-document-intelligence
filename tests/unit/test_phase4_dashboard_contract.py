@@ -38,11 +38,12 @@ def test_dashboard_surfaces_the_three_kpis():
 def test_dashboard_surfaces_product_table_and_department_breakdown():
     source = DASHBOARD.read_text(encoding="utf-8")
     assert "รายการสินค้า" in source
-    # A pie chart of which department has the most product by quantity,
+    # A horizontal color-coded bar chart of which department has the most
+    # product by quantity (user request: changed from a donut to bars),
     # alongside the Division donut card and full summary table (user
     # request, with a reference mockup - split into two sections: a
     # compact donut+legend card, and a fuller table with an Action column).
-    assert "renderDepartmentPie" in source
+    assert "renderDepartmentBarChart" in source
     assert "renderDivisionDonutCard" in source
     assert "renderDivisionSummaryTable" in source
     # The table's columns (user request, with a reference mockup: bring
