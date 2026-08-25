@@ -13,12 +13,13 @@ all persist across process lifetimes.
 from __future__ import annotations
 
 import io
+import logging
 import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -37,8 +38,27 @@ from pdf_document_intelligence.pipeline.orchestrator import process_document
 app = FastAPI(title="PDF Document Intelligence")
 _executor = ThreadPoolExecutor(max_workers=2)
 _settings = Settings()
+_logger = logging.getLogger("pdf_document_intelligence")
 
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend" / "app"
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Starlette's own default for an uncaught exception is a bare
+    # PlainTextResponse("Internal Server Error") with no detail - the
+    # frontend's error dialogs (api.js's json() helper) show that verbatim,
+    # so a real failure here reads as an opaque "500 Internal Server
+    # Error" with nothing to diagnose from (reported live: reprocessing a
+    # document failed with exactly that message and no further clue).
+    # Logging the full traceback server-side and returning the exception's
+    # own type/message turns the next occurrence into something
+    # actionable instead of a dead end.
+    _logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal_error", "message": str(exc), "type": type(exc).__name__},
+    )
 
 
 def _run_processing(doc_id: str, pdf_bytes: bytes) -> None:
