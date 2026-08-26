@@ -257,3 +257,51 @@ def test_restore_via_api_clears_catalog_caches_so_new_snapshot_resolves(isolated
 
     # If the cache weren't cleared, this would still read 99.
     assert get_default_catalog()["8850000000001"].unit_cost == 10
+
+
+def test_restore_rejected_while_a_document_is_processing(isolated_data_dir):
+    """PR3: restore must not run concurrently with an in-flight OCR job -
+    a document freshly created via store.create() is 'processing' by
+    default (no store.set_complete() call here) until a background job
+    marks it otherwise."""
+    from pdf_document_intelligence.api.store import store
+
+    zip_bytes = backup.create_backup().read_bytes()  # valid backup of an empty install
+    doc = store.create("mid-flight.pdf", b"%PDF-1.4\n%still-processing\n")
+
+    with pytest.raises(backup.RestoreConflictError, match="processing"):
+        backup.restore_backup(zip_bytes)
+    # A rejected restore must be a true no-op - the document is still
+    # exactly as it was, still processing.
+    assert _repo().get_document(doc["id"])["status"] == "processing"
+
+
+def test_restore_allowed_once_processing_completes(isolated_data_dir):
+    """The same document that blocked restore above must no longer block
+    it once it reaches a terminal status (complete/error) - restore isn't
+    permanently stuck, only blocked while something is genuinely in
+    flight."""
+    doc = _make_document_with_pdf()  # store.set_complete() inside this helper
+    zip_bytes = backup.create_backup().read_bytes()
+
+    result = backup.restore_backup(zip_bytes)
+    assert result["restored"] is True
+    assert _repo().get_document(doc["id"]) is not None
+
+
+def test_restore_endpoint_returns_423_while_processing(isolated_data_dir):
+    """API-level: the fast up-front check in app.py's /api/restore returns
+    423 (not 409 - api.js's json() helper treats 409 as a non-error
+    special case for the upload-duplicate flow) without even reading the
+    uploaded archive."""
+    from fastapi.testclient import TestClient
+
+    from pdf_document_intelligence.api.app import app
+    from pdf_document_intelligence.api.store import store
+
+    client = TestClient(app)
+    store.create("mid-flight.pdf", b"%PDF-1.4\n%still-processing\n")
+
+    zip_bytes = backup.create_backup().read_bytes()
+    res = client.post("/api/restore", files={"file": ("b.zip", zip_bytes, "application/zip")})
+    assert res.status_code == 423

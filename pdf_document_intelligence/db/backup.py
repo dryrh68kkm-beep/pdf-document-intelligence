@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pdf_document_intelligence.catalog.snapshot import SNAPSHOT_FILENAME
-from pdf_document_intelligence.db.connection import get_connection
+from pdf_document_intelligence.db.connection import get_connection, get_write_lock
 from pdf_document_intelligence.db.migrations import SCHEMA_VERSION, current_version
 from pdf_document_intelligence.db.paths import get_data_dir, get_db_path
 
@@ -153,6 +153,17 @@ class RestoreError(Exception):
     pass
 
 
+class RestoreConflictError(RestoreError):
+    """A document is still processing - restore refused. A distinct type
+    (not just a message an API layer would have to pattern-match) so
+    api/app.py can map this specifically to 423 Locked, matching the
+    delete-while-processing convention (see delete_document), rather than
+    RestoreError's default 400. Still a RestoreError, so existing callers
+    that only catch the base class keep working."""
+
+    pass
+
+
 def _validate_member_name(name: str) -> None:
     """Every member a restore archive is allowed to contain - anything
     else (a '..' path-traversal attempt, an absolute path, an unexpected
@@ -230,73 +241,93 @@ def restore_backup(zip_bytes: bytes) -> dict:
                 f"backup schema version {candidate_version} is newer than this app supports ({SCHEMA_VERSION})"
             )
 
-        pre_restore_backup = create_backup()
+        # Everything from here on actually mutates the installation - held
+        # under the same write lock every other DB write in the app already
+        # uses (db/connection.py's get_write_lock), so this check-then-act
+        # is atomic against a concurrent upload/reprocess: either that
+        # request's mark-as-processing write happens first (this restore
+        # then sees it and refuses) or this restore's lock acquisition
+        # happens first (that request then blocks on the same lock until
+        # restore is done, so nothing can start processing mid-restore).
+        # A hard reject rather than best-effort coordination, per spec -
+        # actually cancelling an in-flight OCR job is explicitly out of
+        # scope for now.
+        with get_write_lock():
+            processing = get_connection().execute(
+                "SELECT COUNT(*) FROM documents WHERE status='processing'"
+            ).fetchone()[0]
+            if processing:
+                raise RestoreConflictError(
+                    f"cannot restore while {processing} document(s) are still processing"
+                )
 
-        data_dir = get_data_dir()
+            pre_restore_backup = create_backup()
 
-        # PDFs and the master snapshot are applied *before* the DB swap
-        # (the step below that closes and reopens the live connection) -
-        # deliberately, so that if writing one of these files fails
-        # partway (disk full, permissions, ...) the DB - and therefore
-        # the document list the running app reports - is still the
-        # original, consistent one, not swapped out from under a
-        # partially-applied restore.
-        if pdf_payloads:
-            pdfs_dir = data_dir / "pdfs"
-            pdfs_dir.mkdir(parents=True, exist_ok=True)
-            for member, data in pdf_payloads.items():
-                pdf_name = member[len(_PDF_MEMBER_PREFIX) :]
-                target = pdfs_dir / pdf_name
-                tmp_pdf = pdfs_dir / f"{pdf_name}.restore-tmp"
-                tmp_pdf.write_bytes(data)
-                tmp_pdf.replace(target)
+            data_dir = get_data_dir()
 
-        if master_snapshot_bytes is not None:
-            snap_target = data_dir / SNAPSHOT_FILENAME
-            snap_tmp = data_dir / f"{SNAPSHOT_FILENAME}.restore-tmp"
-            snap_tmp.write_bytes(master_snapshot_bytes)
-            snap_tmp.replace(snap_target)
+            # PDFs and the master snapshot are applied *before* the DB swap
+            # (the step below that closes and reopens the live connection) -
+            # deliberately, so that if writing one of these files fails
+            # partway (disk full, permissions, ...) the DB - and therefore
+            # the document list the running app reports - is still the
+            # original, consistent one, not swapped out from under a
+            # partially-applied restore.
+            if pdf_payloads:
+                pdfs_dir = data_dir / "pdfs"
+                pdfs_dir.mkdir(parents=True, exist_ok=True)
+                for member, data in pdf_payloads.items():
+                    pdf_name = member[len(_PDF_MEMBER_PREFIX) :]
+                    target = pdfs_dir / pdf_name
+                    tmp_pdf = pdfs_dir / f"{pdf_name}.restore-tmp"
+                    tmp_pdf.write_bytes(data)
+                    tmp_pdf.replace(target)
 
-        from pdf_document_intelligence.db import connection as connection_module
+            if master_snapshot_bytes is not None:
+                snap_target = data_dir / SNAPSHOT_FILENAME
+                snap_tmp = data_dir / f"{SNAPSHOT_FILENAME}.restore-tmp"
+                snap_tmp.write_bytes(master_snapshot_bytes)
+                snap_tmp.replace(snap_target)
 
-        with connection_module._lock:
-            if connection_module._conn is not None:
-                connection_module._conn.close()
-                connection_module._conn = None
-        try:
-            shutil.move(str(tmp_path), str(get_db_path()))
-        except OSError:
-            # tmp_path and get_db_path() are both under the data dir, so a
-            # same-filesystem move is an atomic rename - a failure here
-            # leaves the original DB file completely untouched. But the
-            # connection above was already closed regardless of whether the
-            # move succeeds, so without this the app would be left with no
-            # open DB connection at all - reopening against the (unchanged)
-            # original file is what "the original installation must still
-            # work after a failed restore" actually requires, not just the
-            # file being intact.
-            get_connection()
-            raise
-        restored_conn = get_connection()  # reopen + run any pending migrations
+            from pdf_document_intelligence.db import connection as connection_module
 
-        # Verify: every non-deleted document's PDF is actually present -
-        # logged, not raised, since the DB itself did restore successfully
-        # and a caller would rather see this in the response than have an
-        # otherwise-good restore fail outright over one missing file.
-        missing_pdfs = []
-        for row in restored_conn.execute("SELECT id FROM documents WHERE deleted_at IS NULL"):
-            if not (data_dir / "pdfs" / f"{row['id']}.pdf").is_file():
-                missing_pdfs.append(row["id"])
+            with connection_module._lock:
+                if connection_module._conn is not None:
+                    connection_module._conn.close()
+                    connection_module._conn = None
+            try:
+                shutil.move(str(tmp_path), str(get_db_path()))
+            except OSError:
+                # tmp_path and get_db_path() are both under the data dir, so a
+                # same-filesystem move is an atomic rename - a failure here
+                # leaves the original DB file completely untouched. But the
+                # connection above was already closed regardless of whether the
+                # move succeeds, so without this the app would be left with no
+                # open DB connection at all - reopening against the (unchanged)
+                # original file is what "the original installation must still
+                # work after a failed restore" actually requires, not just the
+                # file being intact.
+                get_connection()
+                raise
+            restored_conn = get_connection()  # reopen + run any pending migrations
 
-        return {
-            "restored": True,
-            "legacy": is_legacy,
-            "preRestoreBackup": str(pre_restore_backup),
-            "metadata": metadata,
-            "pdfsRestored": len(pdf_payloads),
-            "masterSnapshotRestored": master_snapshot_bytes is not None,
-            "missingPdfCount": len(missing_pdfs),
-        }
+            # Verify: every non-deleted document's PDF is actually present -
+            # logged, not raised, since the DB itself did restore successfully
+            # and a caller would rather see this in the response than have an
+            # otherwise-good restore fail outright over one missing file.
+            missing_pdfs = []
+            for row in restored_conn.execute("SELECT id FROM documents WHERE deleted_at IS NULL"):
+                if not (data_dir / "pdfs" / f"{row['id']}.pdf").is_file():
+                    missing_pdfs.append(row["id"])
+
+            return {
+                "restored": True,
+                "legacy": is_legacy,
+                "preRestoreBackup": str(pre_restore_backup),
+                "metadata": metadata,
+                "pdfsRestored": len(pdf_payloads),
+                "masterSnapshotRestored": master_snapshot_bytes is not None,
+                "missingPdfCount": len(missing_pdfs),
+            }
     finally:
         # Validation failures, backup failures, and interrupted restores should
         # never leave candidate DB files accumulating in the data directory.
