@@ -93,8 +93,13 @@ class DocumentStore:
                 _logger.warning("Failed to purge PDF for deleted document %s: %s", doc_id, exc)
         return removed
 
-    def mark_reprocessing(self, doc_id: str) -> None:
-        self._repo.set_document_processing(doc_id)
+    def mark_reprocessing(self, doc_id: str) -> bool:
+        """Atomically claims the document for a new processing run.
+        Returns False (and changes nothing) if a processing run for this
+        document is already in flight - the caller must not submit a
+        second worker job in that case (two workers racing to write the
+        same document's rows/status is exactly the race this guards)."""
+        return self._repo.try_start_processing(doc_id)
 
     def set_progress(self, doc_id: str, stage: str, current: int, total: int) -> None:
         self._repo.update_progress(doc_id, stage, current, total)
