@@ -1,7 +1,21 @@
 const BASE = "";
 
 async function json(res) {
-  if (!res.ok && res.status !== 409) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok && res.status !== 409) {
+    const text = await res.text();
+    let message = text;
+    let diagnosticId;
+    try {
+      const body = JSON.parse(text);
+      message = body.message || body.detail || text;
+      diagnosticId = body.diagnosticId;
+    } catch {
+      // Not a JSON body (e.g. a proxy/framework error page) - fall back to raw text.
+    }
+    const error = new Error(`${res.status} ${message}`);
+    if (diagnosticId) error.diagnosticId = diagnosticId;
+    throw error;
+  }
   return res.json();
 }
 
@@ -60,10 +74,7 @@ export const api = {
   importMasterCatalog: (file) => {
     const form = new FormData();
     form.append("file", file);
-    return fetch(`${BASE}/api/master/import`, { method: "POST", body: form }).then(async (res) => {
-      if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
-      return res.json();
-    });
+    return fetch(`${BASE}/api/master/import`, { method: "POST", body: form }).then(json);
   },
 
   health: () => fetch(`${BASE}/api/health`).then(json),

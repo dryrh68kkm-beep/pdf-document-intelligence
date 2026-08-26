@@ -6,6 +6,7 @@ empty - endpoint plumbing, not extraction correctness.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
@@ -148,8 +149,10 @@ def test_unhandled_exception_returns_diagnosable_json_not_bare_500(monkeypatch):
     opaque PlainTextResponse("Internal Server Error") - the frontend's
     error dialogs show that verbatim with nothing to act on (reported
     live via the Documents page's Reprocess button). The global handler
-    in app.py should return the exception's own type/message as JSON
-    instead, so a future failure is actually diagnosable."""
+    in app.py returns a diagnostic ID plus a generic message as JSON
+    instead: actionable (the ID matches a traceback in the server log)
+    without ever handing the client the raw exception message, which can
+    contain file paths, SQL fragments, or other server internals (PR7)."""
     _reset_store()
     client = TestClient(app, raise_server_exceptions=False)
 
@@ -162,7 +165,65 @@ def test_unhandled_exception_returns_diagnosable_json_not_bare_500(monkeypatch):
     assert res.status_code == 500
     body = res.json()
     assert body["type"] == "RuntimeError"
-    assert "synthetic failure" in body["message"]
+    assert re.match(r"^ERR-[0-9A-F]{8}$", body["diagnosticId"])
+    # The raw exception message must never reach the client - only the
+    # server-side log (asserted separately below) gets the real detail.
+    assert "synthetic failure" not in body["message"]
+
+
+def test_unhandled_exception_diagnostic_id_is_logged_with_traceback(monkeypatch, caplog):
+    """The diagnostic ID returned to the client must be findable in the
+    server log, alongside the real exception detail that was deliberately
+    kept out of the HTTP response."""
+    import logging
+
+    _reset_store()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    def _boom():
+        raise RuntimeError("synthetic failure for log coverage")
+
+    monkeypatch.setattr(app_module.store, "list", _boom)
+
+    with caplog.at_level(logging.ERROR, logger="pdf_document_intelligence"):
+        res = client.get("/api/documents")
+
+    diagnostic_id = res.json()["diagnosticId"]
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert diagnostic_id in logged
+    assert "synthetic failure for log coverage" in caplog.text
+
+
+def test_background_processing_failure_logs_diagnostic_id_and_stage(monkeypatch, caplog):
+    """_run_processing runs on a worker thread, outside the request/response
+    cycle the global exception_handler covers - it needs its own diagnostic
+    ID + traceback logging so a background OCR/parse crash is just as
+    traceable as a request-cycle one. The document's own `error` field must
+    still carry the plain message (meaningful, user-facing info about *this
+    file*, not an internal leak) - the diagnostic ID is a log-only addition,
+    not a replacement for it."""
+    import logging
+
+    _reset_store()
+    doc = store.create("boom.pdf", b"%PDF-1.4\n%background-failure-fixture\n")
+
+    def _boom(pdf_path, *, settings, on_progress):
+        on_progress("extract", 1, 3)
+        raise ValueError("synthetic pipeline failure")
+
+    monkeypatch.setattr(app_module, "process_document", _boom)
+
+    with caplog.at_level(logging.ERROR, logger="pdf_document_intelligence"):
+        app_module._run_processing(doc["id"])
+
+    updated = store.get(doc["id"])
+    assert updated["status"] == "error"
+    assert updated["error"] == "synthetic pipeline failure"
+
+    assert re.search(r"ERR-[0-9A-F]{8}", caplog.text)
+    assert "synthetic pipeline failure" in caplog.text
+    assert doc["id"] in caplog.text
+    assert "extract" in caplog.text
 
 
 def _complete_with_one_row(doc_id: str):

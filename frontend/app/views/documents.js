@@ -222,7 +222,12 @@ export function renderDocuments(container, store) {
         await store.refreshAll();
       } catch (error) {
         store.set({
-          errorDialog: { title: "ประมวลผลใหม่ไม่สำเร็จ", message: String(error?.message || error), onRetry: doReprocess },
+          errorDialog: {
+            title: "ประมวลผลใหม่ไม่สำเร็จ",
+            message: String(error?.message || error),
+            diagnosticId: error?.diagnosticId,
+            onRetry: doReprocess,
+          },
         });
         document.dispatchEvent(new CustomEvent("show-error"));
         if (btn) {
@@ -243,7 +248,11 @@ export function renderDocuments(container, store) {
               await store.refreshAll();
             } catch (error) {
               store.set({
-                errorDialog: { title: "ลบไม่สำเร็จ", message: String(error?.message || error) },
+                errorDialog: {
+                  title: "ลบไม่สำเร็จ",
+                  message: String(error?.message || error),
+                  diagnosticId: error?.diagnosticId,
+                },
               });
               document.dispatchEvent(new CustomEvent("show-error"));
             }
