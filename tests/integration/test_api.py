@@ -6,6 +6,7 @@ empty - endpoint plumbing, not extraction correctness.
 """
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
@@ -256,3 +257,113 @@ def test_local_verified_master_survives_document_deletion():
 
     entries = store.repo.list_local_master()
     assert any(e["barcode"] == "8850000000001" and e["product_name"] == "Corrected Name" for e in entries)
+
+
+# ---- PR5: streaming upload / processing memory + queue ----
+
+
+def test_upload_streams_to_disk_worker_reads_from_path(monkeypatch):
+    """The background worker must operate on the file already sitting at
+    its permanent path, not bytes handed across the thread boundary -
+    _run_processing now takes only a doc_id."""
+    _reset_store()
+    client = TestClient(app)
+    submitted = []
+
+    class ImmediateCaptureExecutor:
+        def submit(self, fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            return None
+
+    monkeypatch.setattr(app_module, "_executor", ImmediateCaptureExecutor())
+
+    content = b"%PDF-1.4\n%pr5-stream-fixture\n"
+    res = client.post("/api/documents", files={"file": ("stream.pdf", content, "application/pdf")})
+    assert res.status_code == 200
+    doc_id = res.json()["id"]
+
+    assert len(submitted) == 1
+    fn, args, kwargs = submitted[0]
+    assert fn is app_module._run_processing
+    assert args == (doc_id,)  # no pdf_bytes argument anymore
+    # The file is already at its permanent location, readable by the path
+    # _run_processing itself derives from doc_id (get_pdf_path).
+    assert get_pdf_path(doc_id).read_bytes() == content
+
+
+def test_oversized_upload_rejected_mid_stream_not_after_full_buffer(monkeypatch):
+    """>max_file_size_bytes is rejected as soon as the stream crosses the
+    limit - simulated with a tiny limit so the test doesn't need an
+    actual 200MB+ file. No document/PDF file must be left behind."""
+    _reset_store()
+    monkeypatch.setattr(app_module._settings, "max_file_size_bytes", 10)
+    client = TestClient(app)
+
+    content = b"%PDF-1.4\n" + b"x" * 100  # well over the 10-byte limit
+    res = client.post("/api/documents", files={"file": ("big.pdf", content, "application/pdf")})
+    assert res.status_code == 400
+    assert "too large" in res.json()["detail"].lower()
+    assert store.list() == []
+
+
+def test_upload_missing_pdf_magic_header_rejected():
+    _reset_store()
+    client = TestClient(app)
+    # Extension says .pdf, content does not start with %PDF- - the
+    # extension check alone (pre-existing) would have let this through.
+    res = client.post("/api/documents", files={"file": ("fake.pdf", b"not a real pdf file", "application/pdf")})
+    assert res.status_code == 400
+    assert store.list() == []
+
+
+def test_no_orphan_pdf_file_left_when_db_insert_fails(monkeypatch):
+    """If Repository.create_document() raises for a reason unrelated to
+    the known concurrent-duplicate race, the just-moved PDF file at the
+    fresh doc_id's path must not be left behind with no DB row pointing
+    at it."""
+    _reset_store()
+    client = TestClient(app, raise_server_exceptions=False)
+
+    def _boom(*args, **kwargs):
+        raise sqlite3.DatabaseError("simulated unrelated DB failure")
+
+    monkeypatch.setattr(store.repo, "create_document", _boom)
+
+    pdfs_dir = get_pdf_path("x").parent
+    before = set(pdfs_dir.glob("*.pdf"))
+
+    content = b"%PDF-1.4\n%pr5-orphan-fixture\n"
+    res = client.post("/api/documents", files={"file": ("orphan.pdf", content, "application/pdf")})
+    assert res.status_code == 500  # unrelated DB error - not the known duplicate-race message
+    # No new PDF file left behind for this failed attempt - not asserting
+    # the whole directory is empty, since other tests in this session may
+    # have legitimately left their own (DB-tracked) PDFs there.
+    assert set(pdfs_dir.glob("*.pdf")) == before
+
+
+def test_queue_full_returns_503_without_crashing(monkeypatch):
+    """A backlog of already-processing documents must produce a clear,
+    controlled rejection instead of silently queueing forever or crashing."""
+    _reset_store()
+    monkeypatch.setattr(app_module, "_MAX_QUEUED_PROCESSING_JOBS", 1)
+    store.create("already-processing.pdf", b"%PDF-1.4\n%queue-fixture\n")  # status='processing' by default
+
+    client = TestClient(app)
+    content = b"%PDF-1.4\n%pr5-queue-full-fixture\n"
+    res = client.post("/api/documents", files={"file": ("overflow.pdf", content, "application/pdf")})
+    assert res.status_code == 503
+    # Rejected before any file was ever streamed to disk for this request.
+    assert len(store.list()) == 1
+
+
+def test_duplicate_detection_still_works_via_streamed_hash(monkeypatch):
+    _reset_store()
+    client = TestClient(app)
+    content = b"%PDF-1.4\n%pr5-dup-fixture\n"
+
+    first = client.post("/api/documents", files={"file": ("a.pdf", content, "application/pdf")})
+    assert first.status_code == 200
+
+    second = client.post("/api/documents", files={"file": ("b.pdf", content, "application/pdf")})
+    assert second.status_code == 409
+    assert second.json()["existingDocument"]["id"] == first.json()["id"]

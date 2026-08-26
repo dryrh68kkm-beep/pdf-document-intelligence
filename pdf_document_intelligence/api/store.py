@@ -34,6 +34,11 @@ class DocumentStore:
         return self._repo.find_document_by_sha256(sha256)
 
     def create(self, filename: str, pdf_bytes: bytes) -> dict:
+        """Convenience path for a caller that already holds the whole file
+        in memory (tests, internal seeding). The real HTTP upload endpoint
+        (api/app.py's upload_document) does not use this - it streams
+        straight to disk instead, precisely to avoid ever holding a full
+        upload as one Python bytes object."""
         sha256 = hashlib.sha256(pdf_bytes).hexdigest()
         doc_id = new_id()
         get_pdf_path(doc_id).write_bytes(pdf_bytes)
