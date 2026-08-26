@@ -134,14 +134,25 @@ class Repository:
                 (error, _now(), doc_id),
             )
 
-    def set_document_processing(self, doc_id: str) -> None:
+    def try_start_processing(self, doc_id: str) -> bool:
+        """Atomically transition a document into 'processing' only if it
+        isn't already - the `AND status != 'processing'` guard and the
+        write lock together close the check-then-act race that a plain
+        "read status, then call set_document_processing()" would leave
+        open (two reprocess requests racing to submit a second worker for
+        the same document, exactly like the SHA-256 unique index already
+        closes the equivalent race for concurrent duplicate uploads).
+        Returns whether this call won the race and should proceed to
+        submit a processing job; False means a processing job for this
+        document is already in flight."""
         with get_write_lock(), self._conn:
-            self._conn.execute(
+            cur = self._conn.execute(
                 """UPDATE documents SET status='processing', error=NULL,
                    progress_stage='queued', progress_current=0, progress_total=0,
-                   updated_at=? WHERE id=?""",
+                   updated_at=? WHERE id=? AND status != 'processing'""",
                 (_now(), doc_id),
             )
+        return cur.rowcount > 0
 
     def soft_delete_document(self, doc_id: str) -> bool:
         with get_write_lock(), self._conn:

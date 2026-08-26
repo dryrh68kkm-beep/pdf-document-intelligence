@@ -153,10 +153,19 @@ def _reprocess_existing(existing: dict, source_path: Path) -> dict:
     path - the file already moved to a fresh doc_id's slot before the DB
     insert lost the race); it's moved into the existing document's own PDF
     path, overwriting the previous version.
+
+    mark_reprocessing() is called - and checked - before anything on disk is
+    touched: it atomically claims the document for this run, so if a job is
+    already in flight for it (another force-upload of the same file, or the
+    dedicated Reprocess button, racing this one) the newly-uploaded file is
+    discarded and the document already being processed is left completely
+    untouched, rather than overwriting its PDF out from under the running job.
     """
     doc_id = existing["id"]
+    if not store.mark_reprocessing(doc_id):
+        source_path.unlink(missing_ok=True)
+        raise HTTPException(423, "cannot reprocess a document while it is already processing")
     shutil.move(str(source_path), str(get_pdf_path(doc_id)))
-    store.mark_reprocessing(doc_id)
     _executor.submit(_run_processing, doc_id)
     response = document_summary_json(store.get(doc_id))
     response["reprocessedExisting"] = True
@@ -322,7 +331,15 @@ def reprocess_document(doc_id: str):
         raise HTTPException(404, "not found")
     if not get_pdf_path(doc_id).is_file():
         raise HTTPException(404, "pdf file missing on disk")
-    store.mark_reprocessing(doc_id)
+    # 423 (not 409, same reasoning as delete's guard above): a double
+    # click, two tabs, or this racing the force-upload duplicate path
+    # (_reprocess_existing) must not submit a second worker job for the
+    # same document - two workers concurrently writing the same
+    # document's rows/status would corrupt whichever one loses the race.
+    # mark_reprocessing() claims the "processing" transition atomically,
+    # so this check is race-free even under true concurrency.
+    if not store.mark_reprocessing(doc_id):
+        raise HTTPException(423, "cannot reprocess a document while it is already processing")
     _executor.submit(_run_processing, doc_id)
     return document_summary_json(store.get(doc_id))
 

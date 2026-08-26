@@ -88,6 +88,11 @@ def test_force_duplicate_reprocesses_existing_document(monkeypatch):
     client = TestClient(app)
     content = b"%PDF-1.4\n%fat-001-fixture\n"
     original = store.create("same.pdf", content)
+    # As above (PR9): bring the fixture out of the create()-default
+    # 'processing' status before exercising the force-duplicate path,
+    # since that path now also refuses to reprocess a genuinely
+    # in-flight document.
+    store.set_error(original["id"], "previous run failed")
     submitted = []
 
     class ImmediateCaptureExecutor:
@@ -119,6 +124,11 @@ def test_reprocess_endpoint_marks_document_processing(monkeypatch):
     client = TestClient(app)
     content = b"%PDF-1.4\n%reprocess-endpoint-fixture\n"
     doc = store.create("reprocess-me.pdf", content)
+    # store.create() starts a document as status='processing' (matching
+    # real upload behavior, where a job is submitted immediately) - bring
+    # it to a terminal state first so this test exercises reprocessing an
+    # idle document, not the new already-processing guard (PR9).
+    store.set_error(doc["id"], "previous run failed")
     submitted = []
 
     class ImmediateCaptureExecutor:
@@ -142,6 +152,82 @@ def test_reprocess_endpoint_missing_document_returns_404():
     client = TestClient(app)
     res = client.post("/api/documents/does-not-exist/reprocess")
     assert res.status_code == 404
+
+
+# ---- PR9: duplicate/reprocess safety ----
+
+
+def test_reprocess_endpoint_rejects_a_document_already_processing(monkeypatch):
+    """A double click, two open tabs, or a slow first request must not let
+    a second Reprocess call submit a second worker job for the same
+    document - two workers racing to write the same document's rows would
+    corrupt whichever one loses. store.create() already leaves a fresh
+    document in status='processing', so this is the already-in-flight case
+    directly."""
+    _reset_store()
+    client = TestClient(app)
+    doc = store.create("mid-flight.pdf", b"%PDF-1.4\n%pr9-reprocess-guard\n")
+    assert doc["status"] == "processing"
+    submitted = []
+
+    class ImmediateCaptureExecutor:
+        def submit(self, fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            return None
+
+    monkeypatch.setattr(app_module, "_executor", ImmediateCaptureExecutor())
+
+    res = client.post(f"/api/documents/{doc['id']}/reprocess")
+    assert res.status_code == 423
+    assert submitted == []
+    # The in-flight document itself is untouched by the rejected attempt.
+    assert store.get(doc["id"])["status"] == "processing"
+
+
+def test_force_duplicate_upload_rejects_while_existing_document_processing(monkeypatch, tmp_path):
+    """The other route to the same race: force=true re-upload of a file
+    whose existing document is already mid-processing must not move a new
+    PDF into place over the running job's file, and must not submit a
+    second worker - rejected with 423, original document left completely
+    untouched."""
+    _reset_store()
+    client = TestClient(app)
+    content = b"%PDF-1.4\n%pr9-force-guard\n"
+    original = store.create("mid-flight.pdf", content)
+    assert original["status"] == "processing"
+    original_pdf_bytes = get_pdf_path(original["id"]).read_bytes()
+    submitted = []
+
+    class ImmediateCaptureExecutor:
+        def submit(self, fn, *args, **kwargs):
+            submitted.append((fn, args, kwargs))
+            return None
+
+    monkeypatch.setattr(app_module, "_executor", ImmediateCaptureExecutor())
+
+    res = client.post("/api/documents?force=true", files={"file": ("mid-flight.pdf", content, "application/pdf")})
+    assert res.status_code == 423
+    assert submitted == []
+    assert store.get(original["id"])["status"] == "processing"
+    # The original PDF on disk was never overwritten by the rejected
+    # force-upload's bytes.
+    assert get_pdf_path(original["id"]).read_bytes() == original_pdf_bytes
+
+
+def test_only_one_of_two_concurrent_reprocess_claims_wins(monkeypatch):
+    """Unit-level proof of the actual race fix: mark_reprocessing() is an
+    atomic claim (repository.try_start_processing()'s conditional UPDATE
+    under the write lock), not a plain read-then-write - the second of two
+    concurrent calls for the same document must lose, deterministically,
+    with no dependence on thread scheduling to observe it."""
+    _reset_store()
+    doc = store.create("race.pdf", b"%PDF-1.4\n%pr9-atomic-claim\n")
+    store.set_error(doc["id"], "previous run failed")  # bring to a claimable state
+
+    first = store.mark_reprocessing(doc["id"])
+    second = store.mark_reprocessing(doc["id"])
+    assert first is True
+    assert second is False
 
 
 def test_unhandled_exception_returns_diagnosable_json_not_bare_500(monkeypatch):

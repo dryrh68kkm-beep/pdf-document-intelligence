@@ -152,12 +152,20 @@ function showUploadError(error) {
   modalBox.innerHTML = `
     <h3>เพิ่มไฟล์ไม่สำเร็จ</h3>
     <p>${escapeHtml(String(error?.message || error))}</p>
+    ${
+      error?.diagnosticId
+        ? `<p class="diagnostic-id">รหัสข้อผิดพลาด: <code>${escapeHtml(error.diagnosticId)}</code> <button class="btn btn-small" id="uploadErrorCopyId">คัดลอกรหัส</button></p>`
+        : ""
+    }
     <div class="modal-actions">
       <button class="btn btn-primary" id="uploadErrorOk">ตกลง</button>
     </div>
   `;
   modalBackdrop.classList.add("open");
   modalBox.querySelector("#uploadErrorOk").addEventListener("click", () => modalBackdrop.classList.remove("open"));
+  modalBox.querySelector("#uploadErrorCopyId")?.addEventListener("click", () => {
+    navigator.clipboard?.writeText(error.diagnosticId).catch(() => {});
+  });
 }
 
 async function uploadFiles(fileList) {

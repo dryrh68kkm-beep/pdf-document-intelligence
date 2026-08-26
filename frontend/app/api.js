@@ -1,21 +1,23 @@
 const BASE = "";
 
-async function json(res) {
-  if (!res.ok && res.status !== 409) {
-    const text = await res.text();
-    let message = text;
-    let diagnosticId;
-    try {
-      const body = JSON.parse(text);
-      message = body.message || body.detail || text;
-      diagnosticId = body.diagnosticId;
-    } catch {
-      // Not a JSON body (e.g. a proxy/framework error page) - fall back to raw text.
-    }
-    const error = new Error(`${res.status} ${message}`);
-    if (diagnosticId) error.diagnosticId = diagnosticId;
-    throw error;
+async function errorFromResponse(res) {
+  const text = await res.text();
+  let message = text;
+  let diagnosticId;
+  try {
+    const body = JSON.parse(text);
+    message = body.message || body.detail || text;
+    diagnosticId = body.diagnosticId;
+  } catch {
+    // Not a JSON body (e.g. a proxy/framework error page) - fall back to raw text.
   }
+  const error = new Error(`${res.status} ${message}`);
+  if (diagnosticId) error.diagnosticId = diagnosticId;
+  return error;
+}
+
+async function json(res) {
+  if (!res.ok && res.status !== 409) throw await errorFromResponse(res);
   return res.json();
 }
 
@@ -25,6 +27,11 @@ export const api = {
     form.append("file", file);
     const qs = force ? "?force=true" : "";
     return fetch(`${BASE}/api/documents${qs}`, { method: "POST", body: form }).then(async (res) => {
+      // 409 (duplicate) is a normal, expected outcome the caller branches
+      // on via `status` - every other non-2xx (400 bad file, 423 already
+      // processing, 503 queue full, ...) must throw, or the upload looks
+      // like it silently did nothing instead of surfacing why it failed.
+      if (!res.ok && res.status !== 409) throw await errorFromResponse(res);
       const body = await res.json();
       return { status: res.status, body };
     });
