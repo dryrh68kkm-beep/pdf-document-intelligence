@@ -200,7 +200,7 @@ export function renderDocuments(container, store) {
       <td class="doc-table-actions">
         ${reviewCount > 0 ? `<button class="btn btn-sm btn-primary" data-action="review">Review ${reviewCount}</button>` : ""}
         ${doc.status !== "processing" ? `<button class="btn btn-sm" data-action="reprocess">Reprocess</button>` : ""}
-        <button class="btn btn-sm" data-action="remove">Remove</button>
+        <button class="btn btn-sm" data-action="remove"${doc.status === "processing" ? ` disabled title="ไม่สามารถลบเอกสารที่กำลังประมวลผลอยู่ได้"` : ""}>Remove</button>
       </td>
     `;
 

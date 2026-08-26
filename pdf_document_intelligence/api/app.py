@@ -211,6 +211,15 @@ def reprocess_document(doc_id: str):
 
 @app.delete("/api/documents/{doc_id}")
 def delete_document(doc_id: str):
+    doc = store.get(doc_id)
+    if not doc:
+        raise HTTPException(404, "not found")
+    if doc["status"] == "processing":
+        # 423 (not 409) deliberately: api.js's json() helper treats 409 as
+        # a non-error special case (the upload-duplicate flow's contract),
+        # which would make this rejection silently look like success on
+        # the frontend instead of surfacing the error dialog.
+        raise HTTPException(423, "cannot delete a document while it is still processing")
     if not store.remove(doc_id):
         raise HTTPException(404, "not found")
     return {"ok": True}
@@ -225,7 +234,7 @@ def list_all_products():
 
 @app.get("/api/products/{row_id}")
 def get_product(row_id: str):
-    row = store.repo.get_product_row(row_id)
+    row = store.get_active_product_row(row_id)
     if not row:
         raise HTTPException(404, "not found")
     doc = store.get(row["document_id"])
@@ -234,6 +243,8 @@ def get_product(row_id: str):
 
 @app.patch("/api/products/{row_id}")
 def patch_product(row_id: str, body: dict = Body(...)):
+    if not store.get_active_product_row(row_id):
+        raise HTTPException(404, "not found")
     field_name = body.get("field")
     if not field_name:
         raise HTTPException(400, "'field' is required")
@@ -250,7 +261,7 @@ def patch_product(row_id: str, body: dict = Body(...)):
 
 @app.get("/api/products/{row_id}/history")
 def product_history(row_id: str):
-    if not store.repo.get_product_row(row_id):
+    if not store.get_active_product_row(row_id):
         raise HTTPException(404, "not found")
     return [
         {
