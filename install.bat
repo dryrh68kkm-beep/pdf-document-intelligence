@@ -9,8 +9,9 @@ REM commands, producing a wall of "'X' is not recognized" errors. Staying
 REM in plain ASCII sidesteps the codepage bug entirely instead of working
 REM around it.
 cd /d "%~dp0"
+set "APPDIR=%CD%"
 
-echo == 1/2 Checking Python ==
+echo == 1/3 Checking Python ==
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Python not found.
@@ -43,7 +44,7 @@ if errorlevel 1 (
 )
 echo [OK] Tesseract found.
 
-echo == 2/2 Installing Python dependencies ==
+echo == 2/3 Installing Python dependencies ==
 python -m venv .venv
 call .venv\Scripts\activate.bat
 pip install -q --upgrade pip
@@ -54,7 +55,27 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo == 3/3 Creating Desktop shortcut ==
+if not exist "assets\app_icon.ico.b64" (
+  echo [WARN] Desktop icon source is missing. Shortcut will not be created.
+  goto install_done
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$b=[IO.File]::ReadAllText((Join-Path $env:APPDIR 'assets\app_icon.ico.b64')); [IO.File]::WriteAllBytes((Join-Path $env:APPDIR 'assets\app_icon.ico'),[Convert]::FromBase64String($b))"
+if errorlevel 1 (
+  echo [WARN] Could not prepare the Desktop icon. Shortcut will not be created.
+  goto install_done
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$w=New-Object -ComObject WScript.Shell; $desktop=[Environment]::GetFolderPath('Desktop'); $s=$w.CreateShortcut((Join-Path $desktop 'PDF Document Intelligence.lnk')); $s.TargetPath=(Join-Path $env:WINDIR 'System32\wscript.exe'); $s.Arguments='"' + (Join-Path $env:APPDIR 'run_hidden.vbs') + '"'; $s.WorkingDirectory=$env:APPDIR; $s.IconLocation=(Join-Path $env:APPDIR 'assets\app_icon.ico') + ',0'; $s.Description='PDF Document Intelligence'; $s.Save()"
+if errorlevel 1 (
+  echo [WARN] Install finished, but the Desktop shortcut could not be created.
+) else (
+  echo [OK] Desktop shortcut created.
+)
+
+:install_done
 echo.
 echo [DONE] Install complete!
-echo Double-click run.bat to start the app.
+echo Use the "PDF Document Intelligence" shortcut on your Desktop to start the app.
 pause
