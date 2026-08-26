@@ -12,15 +12,17 @@ all persist across process lifetimes.
 """
 from __future__ import annotations
 
-import io
+import hashlib
 import logging
+import os
+import shutil
 import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
@@ -32,6 +34,8 @@ from pdf_document_intelligence.api.serialize import _row_stats, document_detail_
 from pdf_document_intelligence.api.store import store
 from pdf_document_intelligence.config.settings import Settings
 from pdf_document_intelligence.db import backup as backup_module
+from pdf_document_intelligence.db.paths import get_data_dir, get_pdf_path
+from pdf_document_intelligence.db.repository import new_id
 from pdf_document_intelligence.export.excel import export_many_to_excel
 from pdf_document_intelligence.pipeline.orchestrator import process_document
 
@@ -39,6 +43,13 @@ app = FastAPI(title="PDF Document Intelligence")
 _executor = ThreadPoolExecutor(max_workers=2)
 _settings = Settings()
 _logger = logging.getLogger("pdf_document_intelligence")
+# Not a hard concurrency limit (max_workers already caps that) - a backlog
+# cap. ThreadPoolExecutor's own work queue is unbounded by default, so
+# without this a burst of uploads would just pile up invisibly instead of
+# giving the user a clear "try again later" instead of a silently growing
+# wait.
+_MAX_QUEUED_PROCESSING_JOBS = 10
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend" / "app"
 
@@ -61,82 +72,138 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     )
 
 
-def _run_processing(doc_id: str, pdf_bytes: bytes) -> None:
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp.write(pdf_bytes)
-        tmp_path = Path(tmp.name)
+def _run_processing(doc_id: str) -> None:
+    # The upload/reprocess path always has the PDF safely on disk at its
+    # permanent location (get_pdf_path) before this is ever submitted to
+    # the executor - no bytes are handed across the thread boundary and no
+    # second temp copy needs writing/cleaning up here anymore, unlike the
+    # previous pdf_bytes-in-memory version of this function.
+    pdf_path = get_pdf_path(doc_id)
     try:
         result = process_document(
-            tmp_path,
+            pdf_path,
             settings=_settings,
             on_progress=lambda stage, current, total: store.set_progress(doc_id, stage, current, total),
         )
         store.set_complete(doc_id, result)
     except Exception as exc:  # noqa: BLE001 - a single bad PDF must not take the API down
         store.set_error(doc_id, str(exc))
-    finally:
-        tmp_path.unlink(missing_ok=True)
 
 
 def _doc_products(doc_id: str) -> list[dict]:
     return store.repo.list_product_rows(document_id=doc_id)
 
 
-def _reprocess_existing(existing: dict, pdf_bytes: bytes) -> dict:
+def _reprocess_existing(existing: dict, source_path: Path) -> dict:
     """Reprocess an already-active document without creating a duplicate row.
 
     The active-document SHA-256 unique index remains the final data-integrity
     guard.  A forced duplicate upload means "reprocess this exact document",
     not "create a second active copy that would double-count dashboard/export
-    totals".
+    totals". `source_path` is wherever the newly-uploaded bytes currently sit
+    on disk (the streamed temp file, or - on the concurrent-duplicate-race
+    path - the file already moved to a fresh doc_id's slot before the DB
+    insert lost the race); it's moved into the existing document's own PDF
+    path, overwriting the previous version.
     """
     doc_id = existing["id"]
+    shutil.move(str(source_path), str(get_pdf_path(doc_id)))
     store.mark_reprocessing(doc_id)
-    _executor.submit(_run_processing, doc_id, pdf_bytes)
+    _executor.submit(_run_processing, doc_id)
     response = document_summary_json(store.get(doc_id))
     response["reprocessedExisting"] = True
     return response
+
+
+def _count_processing_documents() -> int:
+    return sum(1 for d in store.list() if d["status"] == "processing")
+
+
+async def _stream_upload_to_temp(file: UploadFile) -> tuple[Path, str, int]:
+    """Streams the multipart upload straight to a temp file on the same
+    data-dir filesystem (so the later move into place is a same-filesystem
+    atomic rename), never holding the whole file as one Python bytes
+    object - a >200MB upload is rejected as soon as it crosses the limit
+    mid-stream, not after fully buffering it first. Computes the sha256
+    incrementally over the same chunks, and sniffs the PDF magic header
+    off the very first chunk before writing anything past it, so an
+    obviously-wrong file is rejected almost immediately rather than after
+    streaming the whole thing to disk. Returns (temp_path, sha256_hex,
+    total_bytes); the caller owns cleaning up temp_path (a move consumes
+    it; an early return must unlink it)."""
+    fd, tmp_name = tempfile.mkstemp(suffix=".pdf", prefix="upload-", dir=get_data_dir())
+    tmp_path = Path(tmp_name)
+    hasher = hashlib.sha256()
+    total = 0
+    max_size = _settings.max_file_size_bytes
+    try:
+        with os.fdopen(fd, "wb") as f:
+            first_chunk = True
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                if first_chunk:
+                    if not chunk.startswith(b"%PDF-"):
+                        raise HTTPException(400, "File does not look like a PDF (missing %PDF header)")
+                    first_chunk = False
+                total += len(chunk)
+                if total > max_size:
+                    raise HTTPException(400, f"File too large (limit {max_size // (1024 * 1024)}MB)")
+                hasher.update(chunk)
+                f.write(chunk)
+        if total == 0:
+            raise HTTPException(400, "Empty file")
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return tmp_path, hasher.hexdigest(), total
 
 
 @app.post("/api/documents")
 async def upload_document(file: UploadFile, force: bool = False):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only .pdf files are accepted")
-    pdf_bytes = await file.read()
-    if not pdf_bytes:
-        raise HTTPException(400, "Empty file")
+    if _count_processing_documents() >= _MAX_QUEUED_PROCESSING_JOBS:
+        raise HTTPException(503, "Too many documents are already processing - please try again shortly")
 
-    import hashlib
+    tmp_path, sha256, file_size = await _stream_upload_to_temp(file)
 
-    sha256 = hashlib.sha256(pdf_bytes).hexdigest()
     existing = store.find_by_hash(sha256)
     if existing:
         if force:
-            return _reprocess_existing(existing, pdf_bytes)
+            return _reprocess_existing(existing, tmp_path)
+        tmp_path.unlink(missing_ok=True)
         return JSONResponse(
             status_code=409,
             content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
         )
 
+    doc_id = new_id()
+    target = get_pdf_path(doc_id)
+    shutil.move(str(tmp_path), str(target))
     try:
-        doc = store.create(file.filename, pdf_bytes)
+        doc = store.repo.create_document(doc_id, sha256, file.filename, file_size)
     except sqlite3.DatabaseError as exc:
         # Two concurrent uploads of the same file can both pass the
         # find_by_hash check before either commits. Depending on sqlite/Python
         # timing, the unique-index violation may surface as IntegrityError or
         # its DatabaseError base class. Only normalize this known constraint.
         if "UNIQUE constraint failed: documents.sha256" not in str(exc):
+            target.unlink(missing_ok=True)
             raise
         existing = store.find_by_hash(sha256)
         if existing:
             if force:
-                return _reprocess_existing(existing, pdf_bytes)
+                return _reprocess_existing(existing, target)
+            target.unlink(missing_ok=True)
             return JSONResponse(
                 status_code=409,
                 content={"error": "duplicate", "existingDocument": document_summary_json(existing)},
             )
+        target.unlink(missing_ok=True)
         raise
-    _executor.submit(_run_processing, doc["id"], pdf_bytes)
+    _executor.submit(_run_processing, doc_id)
     return document_summary_json(doc)
 
 
@@ -190,10 +257,14 @@ def get_document_pdf(doc_id: str):
     doc = store.get(doc_id)
     if not doc:
         raise HTTPException(404, "not found")
-    pdf_bytes = store.get_pdf_bytes(doc_id)
-    if pdf_bytes is None:
+    pdf_path = get_pdf_path(doc_id)
+    if not pdf_path.is_file():
         raise HTTPException(404, "pdf file missing on disk")
-    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf")
+    # FileResponse streams straight from disk instead of get_pdf_bytes()
+    # reading the whole file into one Python bytes object first - the
+    # response is identical, just without holding a full copy in memory
+    # for however long the client takes to receive it.
+    return FileResponse(pdf_path, media_type="application/pdf")
 
 
 @app.post("/api/documents/{doc_id}/reprocess")
@@ -201,11 +272,10 @@ def reprocess_document(doc_id: str):
     doc = store.get(doc_id)
     if not doc:
         raise HTTPException(404, "not found")
-    pdf_bytes = store.get_pdf_bytes(doc_id)
-    if pdf_bytes is None:
+    if not get_pdf_path(doc_id).is_file():
         raise HTTPException(404, "pdf file missing on disk")
     store.mark_reprocessing(doc_id)
-    _executor.submit(_run_processing, doc_id, pdf_bytes)
+    _executor.submit(_run_processing, doc_id)
     return document_summary_json(store.get(doc_id))
 
 
