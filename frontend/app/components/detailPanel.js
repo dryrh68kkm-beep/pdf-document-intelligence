@@ -280,11 +280,17 @@ export function renderProductDetail(container, product, store) {
       feedback.className = "dp-save-feedback";
       try {
         let propagatedCount = 0;
+        // expectedUpdatedAt advances after each successful PATCH in this
+        // loop - our own second field-edit in the same save is not a
+        // conflict, only a change from *someone else* since the row was
+        // last loaded/saved is (PR12).
+        let expectedUpdatedAt = product.updatedAt;
         for (const [field, rawValue] of Object.entries(pendingEdits)) {
           const numeric = ["weight_qty", "pu_qty", "sku_qty", "unit_price", "amount"].includes(field);
           const value = numeric ? (rawValue === "" ? null : Number(rawValue)) : rawValue;
-          const result = await api.patchProduct(product.rowId, field, value, pendingReason || null);
+          const result = await api.patchProduct(product.rowId, field, value, pendingReason || null, expectedUpdatedAt);
           propagatedCount += result?.propagatedCount || 0;
+          expectedUpdatedAt = result?.row?.updatedAt ?? expectedUpdatedAt;
         }
         // A name correction also propagates to every other row sharing this
         // barcode (user request: fixing this name should fix the same
@@ -301,9 +307,23 @@ export function renderProductDetail(container, product, store) {
         onDirtyChange(false);
         document.dispatchEvent(new CustomEvent("product-saved", { detail: { rowId: product.rowId } }));
       } catch (err) {
-        feedback.textContent = "บันทึกไม่สำเร็จ — ไม่มีการเปลี่ยนแปลงถูกบันทึก";
-        feedback.className = "dp-save-feedback error";
-        saveBtn.disabled = false;
+        if (err?.status === 412) {
+          // Someone else's edit landed first - the local pending edits are
+          // now based on stale data and must not be silently forced through.
+          // Reuse the same refresh path a successful save takes, so the
+          // panel reopens showing the latest row instead of the stale one.
+          feedback.textContent = "มีการแก้ไขข้อมูลนี้จากที่อื่นแล้ว กำลังโหลดข้อมูลล่าสุด...";
+          feedback.className = "dp-save-feedback error";
+          editing = false;
+          pendingEdits = {};
+          pendingReason = "";
+          onDirtyChange(false);
+          document.dispatchEvent(new CustomEvent("product-saved", { detail: { rowId: product.rowId } }));
+        } else {
+          feedback.textContent = "บันทึกไม่สำเร็จ — ไม่มีการเปลี่ยนแปลงถูกบันทึก";
+          feedback.className = "dp-save-feedback error";
+          saveBtn.disabled = false;
+        }
       }
     });
   }

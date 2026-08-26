@@ -383,9 +383,26 @@ def patch_product(row_id: str, body: dict = Body(...)):
     field_name = body.get("field")
     if not field_name:
         raise HTTPException(400, "'field' is required")
-    result = review_api.apply_correction(
-        store.repo, row_id, field_name, body.get("value"), body.get("reason"), body.get("source", "LOCAL_USER"),
-    )
+    try:
+        result = review_api.apply_correction(
+            store.repo, row_id, field_name, body.get("value"), body.get("reason"),
+            body.get("source", "LOCAL_USER"), expected_updated_at=body.get("expectedUpdatedAt"),
+        )
+    except review_api.RowConflictError as exc:
+        # 412 Precondition Failed, not 409 - api.js's json() helper
+        # special-cases 409 as a non-error (the upload-duplicate flow's
+        # contract), which would make this conflict silently look like a
+        # successful save on the frontend. The current row is returned so
+        # the client can show what changed instead of just "conflict".
+        doc = store.get(exc.current_row["document_id"])
+        return JSONResponse(
+            status_code=412,
+            content={
+                "error": "conflict",
+                "message": str(exc),
+                "currentRow": product_row_json(exc.current_row, doc["filename"] if doc else ""),
+            },
+        )
     doc = store.get(result["row"]["document_id"])
     return {
         "correctionId": result["correction_id"],

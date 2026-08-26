@@ -589,3 +589,83 @@ def test_duplicate_detection_still_works_via_streamed_hash(monkeypatch):
     second = client.post("/api/documents", files={"file": ("b.pdf", content, "application/pdf")})
     assert second.status_code == 409
     assert second.json()["existingDocument"]["id"] == first.json()["id"]
+
+
+# ---- PR12: optimistic concurrency / conflict guard ----
+
+
+def test_product_row_json_exposes_updated_at():
+    """The version token a client must echo back on PATCH to prove it
+    edited from the current state, not a stale one."""
+    _reset_store()
+    doc = store.create("version-token.pdf", b"%PDF-1.4\n%pr12-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+
+    client = TestClient(app)
+    res = client.get(f"/api/products/{row_id}")
+    assert res.status_code == 200
+    assert res.json()["updatedAt"]
+
+
+def test_patch_with_correct_expected_updated_at_succeeds():
+    _reset_store()
+    doc = store.create("concurrency-happy.pdf", b"%PDF-1.4\n%pr12-happy-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+
+    current = client.get(f"/api/products/{row_id}").json()
+    res = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "Edited Name", "expectedUpdatedAt": current["updatedAt"]},
+    )
+    assert res.status_code == 200
+    assert res.json()["row"]["fields"]["name"]["value"] == "Edited Name"
+
+
+def test_patch_without_expected_updated_at_still_works():
+    """Backward-compatible: a caller that doesn't send expectedUpdatedAt
+    (an older client, a direct API call) skips the conflict check entirely
+    rather than being rejected outright."""
+    _reset_store()
+    doc = store.create("no-token-fixture.pdf", b"%PDF-1.4\n%pr12-no-token-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+
+    res = client.patch(f"/api/products/{row_id}", json={"field": "name", "value": "Edited Without Token"})
+    assert res.status_code == 200
+
+
+def test_two_concurrent_edits_second_stale_one_rejected_with_412():
+    """The actual scenario this guards: two people (or two open tabs on
+    two machines over the LAN) load the same row, one saves first, the
+    second's save is still based on the pre-save state and must be
+    rejected - not silently overwrite the first person's edit."""
+    _reset_store()
+    doc = store.create("concurrent-edit.pdf", b"%PDF-1.4\n%pr12-concurrent-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+
+    loaded_by_both_editors = client.get(f"/api/products/{row_id}").json()["updatedAt"]
+
+    first_editor = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "First Editor's Name", "expectedUpdatedAt": loaded_by_both_editors},
+    )
+    assert first_editor.status_code == 200
+
+    second_editor = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "Second Editor's Name", "expectedUpdatedAt": loaded_by_both_editors},
+    )
+    assert second_editor.status_code == 412
+    body = second_editor.json()
+    assert body["error"] == "conflict"
+    # The conflict response hands back the *actual* current state - the
+    # first editor's save, not the second editor's stale assumption -
+    # so the client can show the real value instead of just "conflict".
+    assert body["currentRow"]["fields"]["name"]["value"] == "First Editor's Name"
+
+    # And the first editor's save is genuinely intact in the DB - the
+    # rejected second PATCH changed nothing.
+    final = client.get(f"/api/products/{row_id}")
+    assert final.json()["fields"]["name"]["value"] == "First Editor's Name"

@@ -19,6 +19,20 @@ _FIELD_TO_COLUMN = FIELD_TO_COLUMN
 _NUMERIC_FIELDS = NUMERIC_FIELDS
 
 
+class RowConflictError(Exception):
+    """Raised when a PATCH's expected_updated_at doesn't match the row's
+    current updated_at - someone else's edit landed first (PR12: this app
+    is used from multiple machines on the same LAN with no per-row
+    locking, so two people editing the same row at once is a real
+    scenario, not a hypothetical). Carries the row's current state so the
+    caller (api/app.py) can hand it back to the client instead of just
+    saying "conflict" with nothing to act on."""
+
+    def __init__(self, current_row: dict) -> None:
+        self.current_row = current_row
+        super().__init__("This product row was changed by someone else since it was loaded.")
+
+
 def validate_patch(field_name: str, new_value) -> None:
     if field_name not in EDITABLE_FIELDS:
         raise HTTPException(400, f"field '{field_name}' is not editable")
@@ -36,10 +50,15 @@ def validate_patch(field_name: str, new_value) -> None:
         raise HTTPException(400, f"'{field_name}' cannot be cleared")
 
 
-def apply_correction(repo: Repository, row_id: str, field_name: str, new_value, reason: str | None, source: str = "LOCAL_USER") -> dict:
+def apply_correction(
+    repo: Repository, row_id: str, field_name: str, new_value, reason: str | None,
+    source: str = "LOCAL_USER", expected_updated_at: str | None = None,
+) -> dict:
     row = repo.get_product_row(row_id)
     if not row:
         raise HTTPException(404, "product row not found")
+    if expected_updated_at is not None and row.get("updated_at") != expected_updated_at:
+        raise RowConflictError(row)
 
     validate_patch(field_name, new_value)
     if field_name in IDENTIFIER_FIELDS and not reason:
