@@ -50,23 +50,6 @@ from pdf_document_intelligence.validate.reconciliation import check_duplicate_ro
 from pdf_document_intelligence.validate.reconciliation_bpdc import reconcile_pallet_block
 
 
-def _empty_result(doc_id: str, filename: str, settings: Settings, log: ProcessingLog) -> DocumentResult:
-    return DocumentResult(
-        id=doc_id,
-        filename=filename,
-        pages=0,
-        document_type=None,
-        engine_version=settings.engine_version,
-        ocr_engine_version=settings.ocr_engine_version,
-        parser_version=settings.parser_version,
-        template_version=None,
-        confidence=0.0,
-        status="MANUAL_REVIEW_REQUIRED",
-        validation=ValidationSummary(reconciled=False, errors=[]),
-        processing_log=log.entries,
-    )
-
-
 def process_document(
     path: Path,
     settings: Settings | None = None,
@@ -83,8 +66,22 @@ def process_document(
         try:
             preflight = run_preflight(path, settings)
         except PreflightError as exc:
+            # A preflight rejection (corrupted file, password-protected,
+            # wrong signature, too many pages, ...) means no page of this
+            # document was ever read - it is not the same situation as a
+            # document that *was* processed but scored low confidence
+            # (MANUAL_REVIEW_REQUIRED, assigned by confidence/engine.py
+            # further down this same pipeline). Returning a fake "empty but
+            # successful" DocumentResult here used to conflate the two: the
+            # document landed in the DB as status='complete' with 0 pages
+            # and 0 confidence, showing as a normal ready-to-use document
+            # in the UI instead of the actual failure. Letting PreflightError
+            # propagate lets the caller's existing failed-processing path
+            # (_run_processing -> store.set_error) mark it status='error'
+            # with the real reason, exactly like any other processing
+            # failure - no new status value or code path needed.
             log.record("preflight", f"FAILED {exc.code}: {exc}")
-            return _empty_result(doc_id, path.name, settings, log)
+            raise
 
     with log.step("text_extraction", "pdfplumber word/bbox extraction + quality scoring"):
         doc_text = extract_document_text(
