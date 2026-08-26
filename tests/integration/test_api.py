@@ -367,9 +367,69 @@ def test_deleted_document_detail_pdf_reprocess_and_row_all_404():
     assert client.post(f"/api/documents/{doc['id']}/reprocess").status_code == 404
     assert client.get(f"/api/products/{row_id}").status_code == 404
     assert client.patch(f"/api/products/{row_id}", json={"field": "name", "value": "x"}).status_code == 404
-    assert client.get(f"/api/products/{row_id}/history").status_code == 404
+    # Audit history is the one deliberate exception (PR11): still viewable
+    # after the document is deleted - see
+    # test_correction_history_survives_document_deletion below for why.
+    assert client.get(f"/api/products/{row_id}/history").status_code == 200
     # Deleting an already-deleted document must not look like success.
     assert client.delete(f"/api/documents/{doc['id']}").status_code == 404
+
+
+# ---- PR11: audit history retention ----
+
+
+def test_correction_history_survives_document_deletion():
+    """The whole reason delete is soft (PR1) rather than hard is so
+    correction history 'stays inspectable for forensic purposes' - but
+    gating the history endpoint behind an active-row check made it just
+    as unreachable as the row itself the moment the document was deleted.
+    The actual correction record (who changed what, when, why) must still
+    come back after deletion, not just a non-404 status."""
+    _reset_store()
+    client = TestClient(app)
+    doc = store.create("audit-me.pdf", b"%PDF-1.4\n%pr11-history-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+
+    patch = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "Corrected Name", "reason": "price tag mismatch"},
+    )
+    assert patch.status_code == 200
+
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 200
+
+    history = client.get(f"/api/products/{row_id}/history")
+    assert history.status_code == 200
+    entries = history.json()
+    assert len(entries) == 1
+    assert entries[0]["newValue"] == "Corrected Name"
+    assert entries[0]["reason"] == "price tag mismatch"
+
+
+def test_correction_history_survives_row_dropped_by_reprocess():
+    """The other way a row gets soft-deleted: reprocessing a document
+    whose new extraction no longer matches an old row at all (article
+    removed from the source PDF). That old row's own correction history
+    must remain retrievable too - not just the reprocess-preserved-field
+    case, which never soft-deletes the row in the first place."""
+    _reset_store()
+    client = TestClient(app)
+    doc = store.create("reprocess-drops-row.pdf", b"%PDF-1.4\n%pr11-reprocess-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+
+    patch = client.patch(f"/api/products/{row_id}", json={"field": "name", "value": "Corrected Before Reprocess"})
+    assert patch.status_code == 200
+
+    # A reprocess whose new extraction has zero rows for this document -
+    # nothing matches the existing row, so it is soft-deleted as stale.
+    empty_result = make_result(doc["id"], "reprocess-drops-row.pdf", [])
+    store.set_complete(doc["id"], empty_result)
+
+    assert store.repo.get_product_row(row_id)["deleted_at"] is not None
+    history = client.get(f"/api/products/{row_id}/history")
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+    assert history.json()[0]["newValue"] == "Corrected Before Reprocess"
 
 
 def test_delete_missing_physical_pdf_does_not_crash():

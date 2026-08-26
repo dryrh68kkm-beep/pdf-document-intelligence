@@ -67,6 +67,23 @@ class DocumentStore:
             return None
         return row
 
+    def get_any_product_row(self, row_id: str) -> dict | None:
+        """Unlike get_active_product_row, does not check deleted_at.
+
+        A row is soft-deleted either because its whole document was
+        deleted, or because a reprocess's new extraction no longer matched
+        it (repository._replace_document_rows_sql) - in both cases the
+        row's correction history is deliberately kept in the corrections
+        table rather than hard-deleted, specifically "so correction
+        history stays inspectable for forensic purposes" (see remove()'s
+        docstring). Gating every read behind an active-only check broke
+        that promise: the history became just as unreachable as the row
+        itself the moment it was soft-deleted. Used only by the read-only
+        history endpoint - every write path (patch/undo) must keep using
+        get_active_product_row, since editing or undoing a change on an
+        inactive row makes no sense."""
+        return self._repo.get_product_row(row_id)
+
     def get_pdf_bytes(self, doc_id: str) -> bytes | None:
         path = get_pdf_path(doc_id)
         return path.read_bytes() if path.exists() else None
