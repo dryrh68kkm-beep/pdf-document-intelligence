@@ -4,15 +4,21 @@ async function errorFromResponse(res) {
   const text = await res.text();
   let message = text;
   let diagnosticId;
+  let body;
   try {
-    const body = JSON.parse(text);
+    body = JSON.parse(text);
     message = body.message || body.detail || text;
     diagnosticId = body.diagnosticId;
   } catch {
     // Not a JSON body (e.g. a proxy/framework error page) - fall back to raw text.
   }
   const error = new Error(`${res.status} ${message}`);
+  error.status = res.status;
   if (diagnosticId) error.diagnosticId = diagnosticId;
+  // PR12: a 412 conflict's body carries `currentRow` (the latest server
+  // state) so the caller can show it instead of just "someone else edited
+  // this" - attach the whole parsed body, not just message/diagnosticId.
+  if (body) error.body = body;
   return error;
 }
 
@@ -51,11 +57,11 @@ export const api = {
     fetch(`${BASE}/api/analytics/documents/${docId}/divisions/${divisionCode}/departments`).then(json),
 
   getProduct: (rowId) => fetch(`${BASE}/api/products/${rowId}`).then(json),
-  patchProduct: (rowId, field, value, reason) =>
+  patchProduct: (rowId, field, value, reason, expectedUpdatedAt) =>
     fetch(`${BASE}/api/products/${rowId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ field, value, reason }),
+      body: JSON.stringify({ field, value, reason, expectedUpdatedAt }),
     }).then(json),
   productHistory: (rowId) => fetch(`${BASE}/api/products/${rowId}/history`).then(json),
   undoCorrection: (rowId, correctionId) =>

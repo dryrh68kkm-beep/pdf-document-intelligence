@@ -106,6 +106,10 @@ def product_row_json(row: dict, doc_filename: str) -> dict:
         "suspectedNonProduct": bool(row["suspected_non_product"]),
         "nonProductReasons": json.loads(row.get("non_product_reasons") or "[]"),
         "fields": fields,
+        # PR12: the version token a client echoes back on PATCH
+        # (expectedUpdatedAt) so a second editor's concurrent save on the
+        # same row is rejected instead of silently overwriting the first.
+        "updatedAt": row["updated_at"],
     }
 
 
