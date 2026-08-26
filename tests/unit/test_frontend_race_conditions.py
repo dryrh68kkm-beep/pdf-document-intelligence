@@ -60,3 +60,48 @@ def test_official_master_lookup_guards_against_out_of_order_responses():
 def test_local_master_search_guards_against_out_of_order_responses():
     source = (FRONTEND / "views" / "productMaster.js").read_text(encoding="utf-8")
     assert "myRequestId !== searchRequestId" in source
+
+
+def test_render_passes_a_staleness_check_to_the_view():
+    # renderProductMaster is the one view whose own render function does
+    # real async work (api.masterSnapshotStatus/listLocalMaster) before its
+    # first DOM write - every other view's data is already loaded by the
+    # time main.js calls it. Without an ownership token passed through,
+    # that fetch resolving after the user has navigated away (or after a
+    # second, newer render() of the same view started - a background poll
+    # re-invokes render() for whatever view is current) would overwrite
+    # #workspace out from under whatever is actually on screen.
+    source = (FRONTEND / "main.js").read_text(encoding="utf-8")
+    assert "const isStale = () => myGeneration !== renderGeneration;" in source
+    assert "await renderView(workspaceEl, store, isStale);" in source
+
+
+def test_product_master_bails_out_before_its_first_post_fetch_dom_write_if_stale():
+    source = (FRONTEND / "views" / "productMaster.js").read_text(encoding="utf-8")
+    fn_idx = source.index("export async function renderProductMaster(container, store, isStale)")
+    assert fn_idx != -1
+    body = source[fn_idx:]
+    # The check must land right after the Promise.all fetch and before any
+    # of the three branches (no snapshot / empty snapshot / has data) that
+    # follow it write to container.innerHTML.
+    fetch_idx = body.index("api.listLocalMaster()")
+    stale_check_idx = body.index("if (isStale && isStale()) return;")
+    # The loading skeleton written before the fetch also uses
+    # container.innerHTML - find the *next* write after the stale check,
+    # not that first one.
+    first_branch_write_idx = body.index("container.innerHTML", stale_check_idx)
+    assert fetch_idx < stale_check_idx < first_branch_write_idx
+
+
+def test_product_master_import_recursive_rerender_checks_staleness_first():
+    # The CSV-import success handler recursively re-invokes
+    # renderProductMaster() directly against #workspace, bypassing main.js's
+    # render() entirely - a second place a slow async op (the upload) can
+    # resolve after the user has navigated away and overwrite the wrong view.
+    source = (FRONTEND / "views" / "productMaster.js").read_text(encoding="utf-8")
+    fn_idx = source.index("function renderImportControl(container, store, isStale)")
+    body = source[fn_idx : source.index("function renderLookupControl")]
+    upload_idx = body.index("await api.importMasterCatalog(file);")
+    stale_check_idx = body.index("if (isStale && isStale()) return;")
+    recurse_idx = body.index('await renderProductMaster(document.getElementById("workspace"), store, isStale);')
+    assert upload_idx < stale_check_idx < recurse_idx
