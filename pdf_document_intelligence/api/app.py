@@ -445,7 +445,10 @@ def master_snapshot_status():
 
 @app.post("/api/master/import")
 async def import_master_catalog(file: UploadFile):
+    import json
+
     from pdf_document_intelligence.catalog import snapshot as snapshot_module
+    from pdf_document_intelligence.catalog.import_validation import MasterImportError, validate_payload
 
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only .csv files are accepted")
@@ -454,6 +457,20 @@ async def import_master_catalog(file: UploadFile):
         raise HTTPException(400, "Empty file")
     if len(csv_bytes) > _MAX_MASTER_IMPORT_BYTES:
         raise HTTPException(400, "File too large (limit 50MB)")
+
+    # Captured before the import so a validation failure below can put the
+    # catalog back exactly as it was - import_catalog_snapshot() itself
+    # stays a permissive primitive (it's also how the app imports
+    # hierarchy-only reference data with no product rows at all), so this
+    # product-master-specific validation runs after the fact instead.
+    snapshot_path = snapshot_module.get_snapshot_path()
+    previous_bytes = snapshot_path.read_bytes() if snapshot_path.is_file() else None
+    previous_payload = None
+    if previous_bytes is not None:
+        try:
+            previous_payload = json.loads(previous_bytes)
+        except json.JSONDecodeError:
+            previous_payload = None
 
     tmp_path: Path | None = None
     try:
@@ -470,8 +487,23 @@ async def import_master_catalog(file: UploadFile):
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
 
+    new_payload = snapshot_module.load_catalog_snapshot()
+    try:
+        warnings = validate_payload(new_payload, previous_payload)
+    except MasterImportError as exc:
+        # Roll back to exactly what was there before, rather than leaving
+        # the just-imported (rejected) catalog in place - the previous
+        # snapshot's bytes, or no file at all if there wasn't one.
+        if previous_bytes is not None:
+            snapshot_path.write_bytes(previous_bytes)
+        else:
+            snapshot_path.unlink(missing_ok=True)
+        raise HTTPException(400, str(exc)) from exc
+
     _clear_catalog_caches()
-    return _snapshot_status_payload()
+    response = _snapshot_status_payload()
+    response["warnings"] = warnings
+    return response
 
 
 def _clear_catalog_caches() -> None:
