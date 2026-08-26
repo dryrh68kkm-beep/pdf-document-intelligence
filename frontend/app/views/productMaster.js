@@ -61,7 +61,7 @@ function renderTable(container, entries) {
   });
 }
 
-function renderImportControl(container, store) {
+function renderImportControl(container, store, isStale) {
   container.innerHTML = `
     <input type="file" id="pmImportFile" accept=".csv" hidden />
     <button class="btn btn-primary" id="pmImportBtn" type="button">
@@ -83,10 +83,17 @@ function renderImportControl(container, store) {
     feedback.className = "dp-save-feedback";
     try {
       await api.importMasterCatalog(file);
+      // The upload can take a moment - if the user has since navigated
+      // away, main.js's render() has already moved on to a newer
+      // generation and rewritten #workspace for a different view. Without
+      // this check the recursive renderProductMaster() below would
+      // overwrite that other view's DOM out from under it.
+      if (isStale && isStale()) return;
       feedback.textContent = "✓ นำเข้าสำเร็จ";
       feedback.className = "dp-save-feedback ok";
-      await renderProductMaster(document.getElementById("workspace"), store);
+      await renderProductMaster(document.getElementById("workspace"), store, isStale);
     } catch (err) {
+      if (isStale && isStale()) return;
       feedback.textContent = `นำเข้าไม่สำเร็จ: ${String(err.message || err)}`;
       feedback.className = "dp-save-feedback error";
       importBtn.disabled = false;
@@ -154,7 +161,7 @@ function kpiIconCard(value, label, icon, tone) {
     </div>`;
 }
 
-export async function renderProductMaster(container, store) {
+export async function renderProductMaster(container, store, isStale) {
   container.innerHTML = `
     <div class="workspace-header">
       <div class="workspace-title">Product Master</div>
@@ -170,6 +177,15 @@ export async function renderProductMaster(container, store) {
     api.masterSnapshotStatus(),
     api.listLocalMaster(),
   ]);
+  // This is the one view whose own render function does real async work
+  // (everything else's data is already loaded by the time main.js calls
+  // it) - a background poll firing while this fetch is still in flight
+  // starts a second, overlapping call to this same function, and the
+  // user navigating away entirely means a *different* view now owns
+  // #workspace. Either way, this call's own await just resolved into a
+  // world where it's no longer the current render - bail out before
+  // writing DOM instead of overwriting whatever's actually on screen now.
+  if (isStale && isStale()) return;
 
   // (a) No snapshot at all - explain and offer a real working import flow.
   if (!snapshotStatus.exists) {
@@ -185,7 +201,7 @@ export async function renderProductMaster(container, store) {
         <div id="pmImportHost" style="margin-top:16px;"></div>
       </div>
     `;
-    renderImportControl(container.querySelector("#pmImportHost"), store);
+    renderImportControl(container.querySelector("#pmImportHost"), store, isStale);
     return;
   }
 
@@ -203,7 +219,7 @@ export async function renderProductMaster(container, store) {
         <div id="pmImportHost" style="margin-top:16px;"></div>
       </div>
     `;
-    renderImportControl(container.querySelector("#pmImportHost"), store);
+    renderImportControl(container.querySelector("#pmImportHost"), store, isStale);
     return;
   }
 
@@ -236,7 +252,7 @@ export async function renderProductMaster(container, store) {
       : `<div id="pmTableHost"></div><div id="pmPaginationHost"></div>`}
   `;
 
-  renderImportControl(container.querySelector("#pmImportHost"), store);
+  renderImportControl(container.querySelector("#pmImportHost"), store, isStale);
   renderLookupControl(container.querySelector("#pmOfficialLookupHost"));
 
   if (localMaster.count > 0) {

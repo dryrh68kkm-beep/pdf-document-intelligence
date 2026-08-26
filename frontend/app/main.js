@@ -43,7 +43,15 @@ async function render() {
   renderSidebar(store);
   const renderView = await VIEWS[store.state.view]();
   if (myGeneration !== renderGeneration) return; // a newer render() already started - it owns the DOM now
-  renderView(workspaceEl, store);
+  // Passed down to the view so its own post-await DOM writes (currently
+  // only productMaster.js does real async work inside its render function
+  // - every other view's data is already loaded by the time this runs)
+  // can bail out if a newer render() has since taken over #workspace,
+  // the same way this function itself just checked above. Harmless for a
+  // synchronous view to ignore.
+  const isStale = () => myGeneration !== renderGeneration;
+  await renderView(workspaceEl, store, isStale);
+  if (isStale()) return;
   renderSidePanel();
   renderBottomBar();
 }
