@@ -561,6 +561,17 @@ button { font-family: inherit; }
 .filter-chip:focus { border-color: var(--accent); outline: none; }
 .filter-chip-count { margin-left: auto; font-size: 12.5px; color: var(--text-faint); }
 
+/* ---------- Dashboard: unreconciled-totals warning ---------- */
+.dash-reconcile-warning {
+  display: flex; align-items: flex-start; gap: 10px; background: var(--warning-soft); border: 1px solid var(--warning);
+  border-radius: var(--radius); padding: 10px 14px; margin-bottom: 18px; font-size: 13px; color: var(--warning);
+}
+.dash-reconcile-warning-icon { flex: none; }
+.link-btn {
+  background: none; border: none; padding: 0; color: inherit; text-decoration: underline; cursor: pointer;
+  font: inherit;
+}
+
 /* ---------- KPI icon cards (Product Master) ---------- */
 .kpi-icon-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
 .kpi-icon-card {
