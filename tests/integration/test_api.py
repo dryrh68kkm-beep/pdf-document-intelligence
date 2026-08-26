@@ -13,6 +13,8 @@ from fastapi.testclient import TestClient
 import pdf_document_intelligence.api.app as app_module
 from pdf_document_intelligence.api.app import app
 from pdf_document_intelligence.api.store import store
+from pdf_document_intelligence.db.paths import get_pdf_path
+from tests.unit.db_helpers import make_result, make_row
 
 
 def _reset_store():
@@ -160,3 +162,97 @@ def test_unhandled_exception_returns_diagnosable_json_not_bare_500(monkeypatch):
     body = res.json()
     assert body["type"] == "RuntimeError"
     assert "synthetic failure" in body["message"]
+
+
+def _complete_with_one_row(doc_id: str):
+    """Drive a document to status='complete' with one real product row,
+    without a PDF/OCR round trip - mirrors the pattern already used by
+    tests/unit/test_persistence.py for exercising the persistence layer."""
+    rows = [make_row(0, "BAKERY", "8850000000001", "ART1", "Test Product", 5.0, 1, 10)]
+    result = make_result(doc_id, "t.pdf", [("BAKERY", rows)])
+    store.set_complete(doc_id, result)
+    row_id = store.repo.list_product_rows(document_id=doc_id)[0]["id"]
+    return row_id
+
+
+def test_delete_document_purges_pdf_file_from_disk():
+    _reset_store()
+    doc = store.create("purge-me.pdf", b"%PDF-1.4\n%purge-fixture\n")
+    _complete_with_one_row(doc["id"])
+    pdf_path = get_pdf_path(doc["id"])
+    assert pdf_path.exists()
+
+    client = TestClient(app)
+    res = client.delete(f"/api/documents/{doc['id']}")
+    assert res.status_code == 200
+    assert not pdf_path.exists()
+
+
+def test_deleted_document_detail_pdf_reprocess_and_row_all_404():
+    _reset_store()
+    doc = store.create("delete-me.pdf", b"%PDF-1.4\n%delete-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+
+    assert client.get(f"/api/products/{row_id}").status_code == 200
+
+    res = client.delete(f"/api/documents/{doc['id']}")
+    assert res.status_code == 200
+
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 404
+    assert client.get(f"/api/documents/{doc['id']}/pdf").status_code == 404
+    assert client.post(f"/api/documents/{doc['id']}/reprocess").status_code == 404
+    assert client.get(f"/api/products/{row_id}").status_code == 404
+    assert client.patch(f"/api/products/{row_id}", json={"field": "name", "value": "x"}).status_code == 404
+    assert client.get(f"/api/products/{row_id}/history").status_code == 404
+    # Deleting an already-deleted document must not look like success.
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 404
+
+
+def test_delete_missing_physical_pdf_does_not_crash():
+    """Item 7 of PR1: the file can already be gone (manual cleanup, a
+    prior partial failure, ...) - the delete flow must still succeed and
+    leave the DB in a clean deleted state instead of crashing."""
+    _reset_store()
+    doc = store.create("already-missing.pdf", b"%PDF-1.4\n%missing-fixture\n")
+    _complete_with_one_row(doc["id"])
+    get_pdf_path(doc["id"]).unlink()
+
+    client = TestClient(app)
+    res = client.delete(f"/api/documents/{doc['id']}")
+    assert res.status_code == 200
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 404
+
+
+def test_delete_document_while_processing_is_rejected(monkeypatch):
+    """A document mid-OCR must not be deletable out from under the
+    background job - rejected with 423 (not 409: api.js's json() helper
+    treats 409 as a non-error special case for the upload-duplicate flow,
+    which would make this rejection silently look like success)."""
+    _reset_store()
+    doc = store.create("still-processing.pdf", b"%PDF-1.4\n%processing-fixture\n")
+    assert doc["status"] == "processing"
+
+    client = TestClient(app)
+    res = client.delete(f"/api/documents/{doc['id']}")
+    assert res.status_code == 423
+    # Rejected, not silently deleted - the document is still there.
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 200
+    assert get_pdf_path(doc["id"]).exists()
+
+
+def test_local_verified_master_survives_document_deletion():
+    """Local Verified Master is global product knowledge keyed by
+    barcode, not per-document data - deleting the document that first
+    taught the system a barcode's name must not un-teach it."""
+    _reset_store()
+    doc = store.create("teaches-master.pdf", b"%PDF-1.4\n%master-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+    res = client.patch(f"/api/products/{row_id}", json={"field": "name", "value": "Corrected Name"})
+    assert res.status_code == 200
+
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 200
+
+    entries = store.repo.list_local_master()
+    assert any(e["barcode"] == "8850000000001" and e["product_name"] == "Corrected Name" for e in entries)
