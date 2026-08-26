@@ -443,9 +443,18 @@ def create_backup():
 async def restore_backup(file: UploadFile):
     data = await file.read()
     try:
-        return backup_module.restore_backup(data)
+        result = backup_module.restore_backup(data)
     except backup_module.RestoreError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if result.get("masterSnapshotRestored"):
+        # The restored master_catalog.snapshot.json is a different file on
+        # disk now - the lru_cache'd catalog/department readers must be
+        # invalidated the same way a live master import already does them
+        # (see _clear_catalog_caches's own docstring), or every extraction
+        # and lookup keeps matching against the pre-restore catalog still
+        # held in memory.
+        _clear_catalog_caches()
+    return result
 
 
 @app.get("/api/export.xlsx")
