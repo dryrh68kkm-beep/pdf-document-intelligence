@@ -315,6 +315,71 @@ document.getElementById("topbarRefreshBtn").addEventListener("click", () => {
   store.refreshAll();
 });
 
+// PR13: Viewer/Admin badge - hidden entirely unless the operator
+// configured an admin passphrase (api.adminStatus()'s adminRequired),
+// so a deployment that never opted into this stays exactly as it was.
+const adminBadgeBtn = document.getElementById("adminBadgeBtn");
+let adminRequired = false;
+
+function renderAdminBadge() {
+  if (!adminRequired) {
+    adminBadgeBtn.hidden = true;
+    return;
+  }
+  adminBadgeBtn.hidden = false;
+  const unlocked = api.isAdminUnlocked();
+  adminBadgeBtn.textContent = unlocked ? "🔓 Admin" : "🔒 Viewer";
+  adminBadgeBtn.title = unlocked
+    ? "คลิกเพื่อออกจากโหมด Admin (กลับเป็น Viewer)"
+    : "คลิกเพื่อปลดล็อกโหมด Admin (แก้ไข/ลบ/นำเข้าข้อมูลได้)";
+  adminBadgeBtn.classList.toggle("admin-unlocked", unlocked);
+}
+
+function showAdminUnlockDialog() {
+  modalBox.innerHTML = `
+    <h3>ปลดล็อกโหมด Admin</h3>
+    <p>ใส่รหัสผ่านร่วมเพื่อเพิ่ม/ลบ/แก้ไขข้อมูล — ถ้าไม่ปลดล็อกจะดูข้อมูลได้อย่างเดียว (Viewer)</p>
+    <input type="password" id="adminPassphraseInput" class="search-input" placeholder="รหัสผ่าน Admin" autocomplete="current-password" />
+    <div class="dp-save-feedback" id="adminUnlockFeedback"></div>
+    <div class="modal-actions">
+      <button class="btn" id="adminUnlockCancel">ยกเลิก</button>
+      <button class="btn btn-primary" id="adminUnlockSubmit">ปลดล็อก</button>
+    </div>
+  `;
+  modalBackdrop.classList.add("open");
+  const input = modalBox.querySelector("#adminPassphraseInput");
+  const feedback = modalBox.querySelector("#adminUnlockFeedback");
+  input.focus();
+  modalBox.querySelector("#adminUnlockCancel").addEventListener("click", () => modalBackdrop.classList.remove("open"));
+  const submit = async () => {
+    const passphrase = input.value;
+    feedback.textContent = "กำลังตรวจสอบ...";
+    feedback.className = "dp-save-feedback";
+    try {
+      await api.adminUnlock(passphrase);
+      api.setAdminPassphrase(passphrase);
+      modalBackdrop.classList.remove("open");
+      renderAdminBadge();
+    } catch {
+      feedback.textContent = "รหัสผ่านไม่ถูกต้อง";
+      feedback.className = "dp-save-feedback error";
+    }
+  };
+  modalBox.querySelector("#adminUnlockSubmit").addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+}
+
+adminBadgeBtn.addEventListener("click", () => {
+  if (api.isAdminUnlocked()) {
+    api.clearAdminPassphrase();
+    renderAdminBadge();
+  } else {
+    showAdminUnlockDialog();
+  }
+});
+
 let searchDebounce = null;
 document.getElementById("globalSearch").addEventListener("input", (e) => {
   clearTimeout(searchDebounce);
@@ -374,6 +439,17 @@ async function init() {
   } catch (error) {
     console.error("initial load failed", error);
     showInitError(error);
+    return;
+  }
+  try {
+    const status = await api.adminStatus();
+    adminRequired = status.adminRequired;
+    renderAdminBadge();
+  } catch (error) {
+    // Not fatal to the rest of the app - worst case the badge just never
+    // appears and every mutating action is checked (or not) purely by the
+    // backend as it already would be regardless of this UI.
+    console.error("admin status check failed", error);
   }
 }
 

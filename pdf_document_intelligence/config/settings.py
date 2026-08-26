@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     parser_version: str = "0.1.0"
     ocr_engine_version: str = "unset"
 
+    # --- Viewer/Admin permission gate (PR13) ---
+    # A single shared passphrase, not a user-account system - this app has
+    # no login. Empty (the default) means the gate is off entirely: every
+    # deployment that hasn't explicitly opted in keeps working exactly as
+    # before this PR, with unrestricted access. An operator sets
+    # PDI_ADMIN_PASSPHRASE to turn every mutating endpoint Admin-only,
+    # leaving read endpoints open to anyone on the LAN as a Viewer.
+    admin_passphrase: str = ""
+
 
 def get_settings() -> Settings:
     return Settings()

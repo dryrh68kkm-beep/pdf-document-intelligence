@@ -13,6 +13,7 @@ all persist across process lifetimes.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -22,7 +23,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -54,6 +55,41 @@ _MAX_QUEUED_PROCESSING_JOBS = 10
 _UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend" / "app"
+
+
+def _require_admin(x_admin_passphrase: str | None = Header(None)) -> None:
+    """Viewer/Admin gate (PR13) - not a login system, a single shared
+    passphrase an operator can turn on for a LAN deployment where not
+    everyone with network access should be able to upload, delete,
+    correct data, or restore a backup. `_settings.admin_passphrase` empty
+    (the default) means this is a no-op for every caller, so a deployment
+    that never configured it behaves exactly as before this PR. When it
+    is set, every mutating endpoint requires the same passphrase echoed
+    back in the X-Admin-Passphrase header - compared with hmac.compare_digest
+    to avoid a timing side-channel on the comparison."""
+    if not _settings.admin_passphrase:
+        return
+    if not x_admin_passphrase or not hmac.compare_digest(x_admin_passphrase, _settings.admin_passphrase):
+        raise HTTPException(403, "Admin access required")
+
+
+@app.get("/api/auth/admin-status")
+def admin_status():
+    return {"adminRequired": bool(_settings.admin_passphrase)}
+
+
+@app.post("/api/auth/admin-unlock")
+def admin_unlock(body: dict = Body(...)):
+    # Lets the frontend validate a passphrase once (to show a clear "wrong
+    # passphrase" message immediately) before storing it in sessionStorage
+    # for reuse on every subsequent mutating request - not a session token,
+    # so there is nothing server-side to expire or invalidate.
+    if not _settings.admin_passphrase:
+        return {"ok": True}
+    passphrase = body.get("passphrase") or ""
+    if not hmac.compare_digest(passphrase, _settings.admin_passphrase):
+        raise HTTPException(403, "Incorrect passphrase")
+    return {"ok": True}
 
 
 def _new_diagnostic_id() -> str:
@@ -217,7 +253,7 @@ async def _stream_upload_to_temp(file: UploadFile) -> tuple[Path, str, int]:
     return tmp_path, hasher.hexdigest(), total
 
 
-@app.post("/api/documents")
+@app.post("/api/documents", dependencies=[Depends(_require_admin)])
 async def upload_document(file: UploadFile, force: bool = False):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only .pdf files are accepted")
@@ -324,7 +360,7 @@ def get_document_pdf(doc_id: str):
     return FileResponse(pdf_path, media_type="application/pdf")
 
 
-@app.post("/api/documents/{doc_id}/reprocess")
+@app.post("/api/documents/{doc_id}/reprocess", dependencies=[Depends(_require_admin)])
 def reprocess_document(doc_id: str):
     doc = store.get(doc_id)
     if not doc:
@@ -344,7 +380,7 @@ def reprocess_document(doc_id: str):
     return document_summary_json(store.get(doc_id))
 
 
-@app.delete("/api/documents/{doc_id}")
+@app.delete("/api/documents/{doc_id}", dependencies=[Depends(_require_admin)])
 def delete_document(doc_id: str):
     doc = store.get(doc_id)
     if not doc:
@@ -376,7 +412,7 @@ def get_product(row_id: str):
     return product_row_json(row, doc["filename"] if doc else "")
 
 
-@app.patch("/api/products/{row_id}")
+@app.patch("/api/products/{row_id}", dependencies=[Depends(_require_admin)])
 def patch_product(row_id: str, body: dict = Body(...)):
     if not store.get_active_product_row(row_id):
         raise HTTPException(404, "not found")
@@ -431,7 +467,7 @@ def product_history(row_id: str):
     ]
 
 
-@app.post("/api/products/{row_id}/undo")
+@app.post("/api/products/{row_id}/undo", dependencies=[Depends(_require_admin)])
 def undo_product_correction(row_id: str, body: dict = Body(...)):
     correction_id = body.get("correctionId")
     if not correction_id:
@@ -447,7 +483,7 @@ def list_review_items():
     return build_dashboard_state(store.repo)["reviewItems"]
 
 
-@app.post("/api/review/{row_id}/confirm")
+@app.post("/api/review/{row_id}/confirm", dependencies=[Depends(_require_admin)])
 def confirm_review(row_id: str, body: dict = Body(default={})):
     return review_api.confirm_review_row(store.repo, row_id, body.get("source", "LOCAL_USER"))
 
@@ -458,7 +494,7 @@ def list_local_master(search: str | None = Query(default=None)):
     return {"count": len(entries), "entries": entries}
 
 
-@app.post("/api/master/local")
+@app.post("/api/master/local", dependencies=[Depends(_require_admin)])
 def add_local_master(body: dict = Body(...)):
     barcode = body.get("barcode")
     product_name = body.get("productName")
@@ -531,7 +567,7 @@ def master_snapshot_status():
     return _snapshot_status_payload()
 
 
-@app.post("/api/master/import")
+@app.post("/api/master/import", dependencies=[Depends(_require_admin)])
 async def import_master_catalog(file: UploadFile):
     import json
 
@@ -623,13 +659,13 @@ def health():
     return check_health(store.repo)
 
 
-@app.post("/api/backup")
+@app.post("/api/backup", dependencies=[Depends(_require_admin)])
 def create_backup():
     path = backup_module.create_backup()
     return FileResponse(path, media_type="application/zip", filename=path.name)
 
 
-@app.post("/api/restore")
+@app.post("/api/restore", dependencies=[Depends(_require_admin)])
 async def restore_backup(file: UploadFile):
     # Fast up-front rejection so a busy system doesn't spend time reading
     # a (possibly large) upload just to be told no - restore_backup()

@@ -1,4 +1,19 @@
 const BASE = "";
+const ADMIN_PASSPHRASE_KEY = "pdi_admin_passphrase";
+
+// PR13 (Viewer/Admin permission gate): the passphrase lives only in this
+// tab's sessionStorage - not a login session, nothing server-side to
+// expire. Every mutating request echoes it back in a header; the backend
+// no-ops the check entirely for a deployment that never configured a
+// passphrase (config/settings.py's admin_passphrase, empty by default).
+function adminHeaders() {
+  try {
+    const passphrase = sessionStorage.getItem(ADMIN_PASSPHRASE_KEY);
+    return passphrase ? { "X-Admin-Passphrase": passphrase } : {};
+  } catch {
+    return {};
+  }
+}
 
 async function errorFromResponse(res) {
   const text = await res.text();
@@ -32,7 +47,7 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     const qs = force ? "?force=true" : "";
-    return fetch(`${BASE}/api/documents${qs}`, { method: "POST", body: form }).then(async (res) => {
+    return fetch(`${BASE}/api/documents${qs}`, { method: "POST", body: form, headers: adminHeaders() }).then(async (res) => {
       // 409 (duplicate) is a normal, expected outcome the caller branches
       // on via `status` - every other non-2xx (400 bad file, 423 already
       // processing, 503 queue full, ...) must throw, or the upload looks
@@ -44,8 +59,9 @@ export const api = {
   },
   listDocuments: () => fetch(`${BASE}/api/documents`).then(json),
   getDocument: (id) => fetch(`${BASE}/api/documents/${id}`).then(json),
-  deleteDocument: (id) => fetch(`${BASE}/api/documents/${id}`, { method: "DELETE" }).then(json),
-  reprocessDocument: (id) => fetch(`${BASE}/api/documents/${id}/reprocess`, { method: "POST" }).then(json),
+  deleteDocument: (id) => fetch(`${BASE}/api/documents/${id}`, { method: "DELETE", headers: adminHeaders() }).then(json),
+  reprocessDocument: (id) =>
+    fetch(`${BASE}/api/documents/${id}/reprocess`, { method: "POST", headers: adminHeaders() }).then(json),
   pdfUrl: (id) => `${BASE}/api/documents/${id}/pdf`,
   allProducts: () => fetch(`${BASE}/api/products`).then(json),
   dashboardState: () => fetch(`${BASE}/api/state`).then(json),
@@ -60,24 +76,25 @@ export const api = {
   patchProduct: (rowId, field, value, reason, expectedUpdatedAt) =>
     fetch(`${BASE}/api/products/${rowId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
       body: JSON.stringify({ field, value, reason, expectedUpdatedAt }),
     }).then(json),
   productHistory: (rowId) => fetch(`${BASE}/api/products/${rowId}/history`).then(json),
   undoCorrection: (rowId, correctionId) =>
     fetch(`${BASE}/api/products/${rowId}/undo`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
       body: JSON.stringify({ correctionId }),
     }).then(json),
-  confirmReview: (rowId) => fetch(`${BASE}/api/review/${rowId}/confirm`, { method: "POST" }).then(json),
+  confirmReview: (rowId) =>
+    fetch(`${BASE}/api/review/${rowId}/confirm`, { method: "POST", headers: adminHeaders() }).then(json),
 
   listLocalMaster: (search = "") =>
     fetch(`${BASE}/api/master/local${search ? `?search=${encodeURIComponent(search)}` : ""}`).then(json),
   addLocalMaster: (entry) =>
     fetch(`${BASE}/api/master/local`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
       body: JSON.stringify(entry),
     }).then(json),
   officialMasterCount: () => fetch(`${BASE}/api/master/official/count`).then(json),
@@ -87,8 +104,39 @@ export const api = {
   importMasterCatalog: (file) => {
     const form = new FormData();
     form.append("file", file);
-    return fetch(`${BASE}/api/master/import`, { method: "POST", body: form }).then(json);
+    return fetch(`${BASE}/api/master/import`, { method: "POST", body: form, headers: adminHeaders() }).then(json);
   },
 
   health: () => fetch(`${BASE}/api/health`).then(json),
+
+  adminStatus: () => fetch(`${BASE}/api/auth/admin-status`).then(json),
+  adminUnlock: (passphrase) =>
+    fetch(`${BASE}/api/auth/admin-unlock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase }),
+    }).then(json),
+  isAdminUnlocked: () => {
+    try {
+      return Boolean(sessionStorage.getItem(ADMIN_PASSPHRASE_KEY));
+    } catch {
+      return false;
+    }
+  },
+  setAdminPassphrase: (passphrase) => {
+    try {
+      sessionStorage.setItem(ADMIN_PASSPHRASE_KEY, passphrase);
+    } catch {
+      // sessionStorage unavailable (private mode edge cases) - the unlock
+      // still "worked" for this request, just won't persist across a
+      // re-render; every mutating call will simply prompt again.
+    }
+  },
+  clearAdminPassphrase: () => {
+    try {
+      sessionStorage.removeItem(ADMIN_PASSPHRASE_KEY);
+    } catch {
+      // ignore
+    }
+  },
 };

@@ -669,3 +669,98 @@ def test_two_concurrent_edits_second_stale_one_rejected_with_412():
     # rejected second PATCH changed nothing.
     final = client.get(f"/api/products/{row_id}")
     assert final.json()["fields"]["name"]["value"] == "First Editor's Name"
+
+
+# ---- PR13: Viewer/Admin permission gate ----
+
+
+def test_admin_status_reflects_configured_passphrase(monkeypatch):
+    _reset_store()
+    client = TestClient(app)
+
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "")
+    assert client.get("/api/auth/admin-status").json() == {"adminRequired": False}
+
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "sekrit")
+    assert client.get("/api/auth/admin-status").json() == {"adminRequired": True}
+
+
+def test_no_passphrase_configured_mutating_endpoints_work_unrestricted(monkeypatch):
+    """Backward compatibility: a deployment that never opted into PR13
+    behaves exactly as before it - no header required anywhere."""
+    _reset_store()
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "")
+    client = TestClient(app)
+
+    content = b"%PDF-1.4\n%pr13-no-gate-fixture\n"
+    res = client.post("/api/documents", files={"file": ("no-gate.pdf", content, "application/pdf")})
+    assert res.status_code == 200
+
+
+def test_mutating_endpoint_rejected_without_correct_passphrase(monkeypatch):
+    _reset_store()
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "sekrit")
+    client = TestClient(app)
+
+    content = b"%PDF-1.4\n%pr13-gated-fixture\n"
+
+    no_header = client.post("/api/documents", files={"file": ("gated.pdf", content, "application/pdf")})
+    assert no_header.status_code == 403
+
+    wrong_header = client.post(
+        "/api/documents",
+        files={"file": ("gated.pdf", content, "application/pdf")},
+        headers={"X-Admin-Passphrase": "wrong"},
+    )
+    assert wrong_header.status_code == 403
+
+    # Rejected before any document was created.
+    assert store.list() == []
+
+    correct_header = client.post(
+        "/api/documents",
+        files={"file": ("gated.pdf", content, "application/pdf")},
+        headers={"X-Admin-Passphrase": "sekrit"},
+    )
+    assert correct_header.status_code == 200
+
+
+def test_read_endpoints_unaffected_by_admin_gate(monkeypatch):
+    """The gate only covers mutating endpoints - a Viewer with no
+    passphrase must still be able to browse everything."""
+    _reset_store()
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "sekrit")
+    client = TestClient(app)
+
+    assert client.get("/api/documents").status_code == 200
+    assert client.get("/api/state").status_code == 200
+    assert client.get("/api/products").status_code == 200
+
+
+def test_admin_unlock_endpoint_validates_passphrase(monkeypatch):
+    _reset_store()
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "sekrit")
+    client = TestClient(app)
+
+    assert client.post("/api/auth/admin-unlock", json={"passphrase": "wrong"}).status_code == 403
+    assert client.post("/api/auth/admin-unlock", json={"passphrase": "sekrit"}).status_code == 200
+
+
+def test_patch_product_gated_by_admin_passphrase(monkeypatch):
+    """A second mutating endpoint (not just upload) to confirm the gate
+    was applied broadly, not just to one route."""
+    _reset_store()
+    doc = store.create("pr13-patch-fixture.pdf", b"%PDF-1.4\n%pr13-patch-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    monkeypatch.setattr(app_module._settings, "admin_passphrase", "sekrit")
+    client = TestClient(app)
+
+    denied = client.patch(f"/api/products/{row_id}", json={"field": "name", "value": "x"})
+    assert denied.status_code == 403
+
+    allowed = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "x"},
+        headers={"X-Admin-Passphrase": "sekrit"},
+    )
+    assert allowed.status_code == 200
