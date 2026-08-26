@@ -441,9 +441,18 @@ def create_backup():
 
 @app.post("/api/restore")
 async def restore_backup(file: UploadFile):
+    # Fast up-front rejection so a busy system doesn't spend time reading
+    # a (possibly large) upload just to be told no - restore_backup()
+    # re-checks this same condition atomically under the write lock right
+    # before it mutates anything, which is the actual race-safety
+    # guarantee; this check only saves a wasted upload in the common case.
+    if any(d["status"] == "processing" for d in store.list()):
+        raise HTTPException(423, "cannot restore while a document is still processing")
     data = await file.read()
     try:
         result = backup_module.restore_backup(data)
+    except backup_module.RestoreConflictError as exc:
+        raise HTTPException(423, str(exc)) from exc
     except backup_module.RestoreError as exc:
         raise HTTPException(400, str(exc)) from exc
     if result.get("masterSnapshotRestored"):
