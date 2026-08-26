@@ -396,7 +396,13 @@ def patch_product(row_id: str, body: dict = Body(...)):
 
 @app.get("/api/products/{row_id}/history")
 def product_history(row_id: str):
-    if not store.get_active_product_row(row_id):
+    # get_any_product_row, not get_active_product_row (PR11): the row's
+    # correction history must stay retrievable even after the row itself
+    # was soft-deleted (its document was deleted, or it was superseded by
+    # a reprocess) - that is the entire point of soft-deleting rather than
+    # hard-deleting them. Only the read-only history view needs this;
+    # patch/undo above correctly still require an active row.
+    if not store.get_any_product_row(row_id):
         raise HTTPException(404, "not found")
     return [
         {
