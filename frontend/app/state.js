@@ -24,11 +24,24 @@ function buildDashboardOverview(items, divisionFilter) {
   let amountAvailable = false;
   let allRows = 0;
   let allAmount = 0;
+  // PR10 (Data Accuracy Gate): a document whose own declared Total didn't
+  // match the sum of its extracted line items (reconciled === false) still
+  // contributes to these grand totals - excluding it outright would make
+  // numbers silently vanish, which is its own kind of surprising. Instead
+  // this counts how much of the headline total came from unreconciled
+  // documents, so the Dashboard can warn instead of presenting every
+  // number as equally trustworthy.
+  let unreconciledDocumentCount = 0;
+  let unreconciledAmount = 0;
 
   items.forEach(({ document, summary }) => {
     amountAvailable = amountAvailable || Boolean(summary.amountAvailable);
     allRows += summary.documentTotals?.rowCount ?? 0;
     allAmount += summary.documentTotals?.amount ?? 0;
+    if (document.reconciled === false) {
+      unreconciledDocumentCount += 1;
+      unreconciledAmount += summary.documentTotals?.amount ?? 0;
+    }
 
     (summary.divisions || []).forEach((division) => {
       if (!divisionMap.has(division.divisionCode)) {
@@ -78,6 +91,8 @@ function buildDashboardOverview(items, divisionFilter) {
     divisions,
     amountAvailable,
     selectedDivision: selected?.divisionCode ?? "all",
+    unreconciledDocumentCount,
+    unreconciledAmount: Math.round((unreconciledAmount + Number.EPSILON) * 100) / 100,
   };
 }
 

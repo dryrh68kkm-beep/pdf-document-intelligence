@@ -584,6 +584,19 @@ export function renderDashboard(container, store) {
       ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "#9B51E0")}
     </div>
 
+    ${
+      dashboardOverview?.unreconciledDocumentCount > 0
+        ? `<div class="dash-reconcile-warning">
+            <span class="dash-reconcile-warning-icon">⚠</span>
+            <span>
+              ${fmtNum(dashboardOverview.unreconciledDocumentCount)} เอกสารมียอดรวมที่พิมพ์ในเอกสารไม่ตรงกับผลรวมที่อ่านได้จริง (ยังไม่ผ่านการตรวจสอบยอด)
+              ${dashboardOverview.amountAvailable ? ` คิดเป็นมูลค่า ฿ ${fmtBaht(dashboardOverview.unreconciledAmount)} ที่รวมอยู่ในตัวเลขด้านบน` : ""} -
+              <button type="button" class="link-btn" id="dashReconcileWarningLink">ตรวจสอบเอกสาร</button>
+            </span>
+          </div>`
+        : ""
+    }
+
     <div class="section-title">${dashboardOverview?.amountAvailable === false ? "สัดส่วนจำนวนรายการตาม Division" : "สัดส่วนมูลค่าตาม Division"}</div>
     <div class="dash-panel" id="dashDivisionDonutCard"></div>
 
@@ -621,6 +634,7 @@ export function renderDashboard(container, store) {
   container.querySelector("#dashStatusStrip").innerHTML = statusStrip(documents);
   container.querySelector('[data-strip-nav="documents"]')?.addEventListener("click", () => store.navigate("documents"));
   container.querySelector('[data-strip-nav="review"]')?.addEventListener("click", () => store.navigate("review"));
+  container.querySelector("#dashReconcileWarningLink")?.addEventListener("click", () => store.navigate("documents"));
 
   const refetch = async (patch) => {
     try {
