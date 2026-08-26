@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import secrets
 import shutil
 import sqlite3
 import tempfile
@@ -54,6 +55,15 @@ _UPLOAD_CHUNK_SIZE = 1024 * 1024
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend" / "app"
 
 
+def _new_diagnostic_id() -> str:
+    """Short, greppable-in-logs identifier for a single unhandled-exception
+    occurrence - lets a user hand the operator "ERR-A1B2C3D4" instead of a
+    vague "it just says 500" report, and lets the operator jump straight to
+    the matching traceback in the server log instead of hunting by
+    timestamp."""
+    return f"ERR-{secrets.token_hex(4).upper()}"
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     # Starlette's own default for an uncaught exception is a bare
@@ -62,13 +72,24 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     # so a real failure here reads as an opaque "500 Internal Server
     # Error" with nothing to diagnose from (reported live: reprocessing a
     # document failed with exactly that message and no further clue).
-    # Logging the full traceback server-side and returning the exception's
-    # own type/message turns the next occurrence into something
-    # actionable instead of a dead end.
-    _logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    # The previous fix (returning str(exc) to the client) made the *next*
+    # failure diagnosable but also handed the browser whatever the raw
+    # exception message happened to contain - which can include file
+    # paths, SQL fragments, or other internals never meant to leave the
+    # server. Logging the full traceback server-side (still keyed by
+    # method/path) and returning only a generic message plus a diagnostic
+    # ID keeps the client-visible response safe while keeping the server
+    # log just as actionable as before.
+    diagnostic_id = _new_diagnostic_id()
+    _logger.exception("Unhandled exception [%s] on %s %s", diagnostic_id, request.method, request.url.path)
     return JSONResponse(
         status_code=500,
-        content={"error": "internal_error", "message": str(exc), "type": type(exc).__name__},
+        content={
+            "error": "internal_error",
+            "diagnosticId": diagnostic_id,
+            "message": "An unexpected error occurred. Please try again or contact support with this diagnostic ID.",
+            "type": type(exc).__name__,
+        },
     )
 
 
@@ -79,14 +100,28 @@ def _run_processing(doc_id: str) -> None:
     # second temp copy needs writing/cleaning up here anymore, unlike the
     # previous pdf_bytes-in-memory version of this function.
     pdf_path = get_pdf_path(doc_id)
+    last_stage = "start"
+
+    def _on_progress(stage: str, current: int, total: int) -> None:
+        nonlocal last_stage
+        last_stage = stage
+        store.set_progress(doc_id, stage, current, total)
+
     try:
-        result = process_document(
-            pdf_path,
-            settings=_settings,
-            on_progress=lambda stage, current, total: store.set_progress(doc_id, stage, current, total),
-        )
+        result = process_document(pdf_path, settings=_settings, on_progress=_on_progress)
         store.set_complete(doc_id, result)
     except Exception as exc:  # noqa: BLE001 - a single bad PDF must not take the API down
+        # This runs on a worker thread, outside the request/response cycle,
+        # so the global exception_handler above never sees it - logging a
+        # diagnostic ID here too keeps a background processing failure just
+        # as traceable in the server log as a request-cycle one. The
+        # document's own `error` field still gets the plain message (a
+        # parse/OCR failure like "not a valid PDF structure" is meaningful,
+        # user-facing information about *this file*, not an internal leak).
+        diagnostic_id = _new_diagnostic_id()
+        _logger.exception(
+            "Processing failed [%s] for document %s at stage %s", diagnostic_id, doc_id, last_stage
+        )
         store.set_error(doc_id, str(exc))
 
 

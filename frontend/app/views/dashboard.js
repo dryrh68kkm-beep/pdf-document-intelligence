@@ -630,6 +630,7 @@ export function renderDashboard(container, store) {
         errorDialog: {
           title: "โหลดข้อมูลสรุปไม่สำเร็จ",
           message: String(error?.message || error),
+          diagnosticId: error?.diagnosticId,
           onRetry: () => refetch(patch),
         },
       });

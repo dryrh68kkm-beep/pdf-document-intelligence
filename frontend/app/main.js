@@ -222,6 +222,11 @@ document.addEventListener("show-error", () => {
   modalBox.innerHTML = `
     <h3>${escapeHtml(cfg.title)}</h3>
     <p>${escapeHtml(cfg.message)}</p>
+    ${
+      cfg.diagnosticId
+        ? `<p class="diagnostic-id">รหัสข้อผิดพลาด: <code>${escapeHtml(cfg.diagnosticId)}</code> <button class="btn btn-small" id="errorCopyId">คัดลอกรหัส</button></p>`
+        : ""
+    }
     <div class="modal-actions">
       ${cfg.onRetry ? `<button class="btn" id="errorCancel">ปิด</button><button class="btn btn-primary" id="errorRetry">ลองใหม่</button>` : `<button class="btn btn-primary" id="errorCancel">ตกลง</button>`}
     </div>
@@ -231,6 +236,9 @@ document.addEventListener("show-error", () => {
   modalBox.querySelector("#errorRetry")?.addEventListener("click", async () => {
     modalBackdrop.classList.remove("open");
     await cfg.onRetry();
+  });
+  modalBox.querySelector("#errorCopyId")?.addEventListener("click", () => {
+    navigator.clipboard?.writeText(cfg.diagnosticId).catch(() => {});
   });
 });
 
