@@ -226,6 +226,21 @@ def test_background_processing_failure_logs_diagnostic_id_and_stage(monkeypatch,
     assert "extract" in caplog.text
 
 
+def test_preflight_rejected_upload_marks_document_error_not_complete():
+    """PR8: a real preflight rejection (corrupted PDF) must land the
+    document in status='error' with the specific preflight code visible in
+    the message - not status='complete' with a fake empty result, which is
+    what process_document() used to silently return for this case."""
+    _reset_store()
+    doc = store.create("corrupted.pdf", b"%PDF-1.4\n" + b"\x00\x01\x02 not a real pdf body at all" * 20)
+
+    app_module._run_processing(doc["id"])
+
+    updated = store.get(doc["id"])
+    assert updated["status"] == "error"
+    assert updated["error"].startswith("PDF_CORRUPTED:")
+
+
 def _complete_with_one_row(doc_id: str):
     """Drive a document to status='complete' with one real product row,
     without a PDF/OCR round trip - mirrors the pattern already used by

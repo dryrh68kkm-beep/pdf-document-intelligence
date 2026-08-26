@@ -49,6 +49,19 @@ def test_rejects_corrupted_pdf_with_valid_header(tmp_path):
     assert exc.value.code == "PDF_CORRUPTED"
 
 
+def test_corrupted_pdf_error_message_does_not_leak_absolute_path(tmp_path):
+    """pikepdf's own exception text is prefixed with the absolute path it
+    opened (server storage layout) - PreflightError must carry only the
+    bare filename, since this message reaches the client as-is via a
+    document's `error` field (PR8)."""
+    path = tmp_path / "corrupted.pdf"
+    path.write_bytes(b"%PDF-1.4\n" + b"\x00\x01\x02 not a real pdf body at all" * 20)
+    with pytest.raises(PreflightError) as exc:
+        run_preflight(path, Settings())
+    assert str(tmp_path) not in str(exc.value)
+    assert "corrupted.pdf" in str(exc.value)
+
+
 def test_accepts_a_real_minimal_pdf(tmp_path):
     """Regression guard the other direction: a genuinely valid (if
     minimal) single-page PDF must pass preflight cleanly."""

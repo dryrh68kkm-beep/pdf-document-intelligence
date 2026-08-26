@@ -25,6 +25,10 @@ class PreflightError(Exception):
         super().__init__(message)
 
 
+def _without_path(exc: Exception, path: Path) -> str:
+    return str(exc).replace(str(path), path.name)
+
+
 @dataclass
 class PagePreflight:
     page_number: int
@@ -62,9 +66,13 @@ def run_preflight(path: Path, settings: Settings) -> DocumentPreflight:
     try:
         pdf = pikepdf.open(str(path))
     except pikepdf.PasswordError as exc:
-        raise PreflightError("PDF_PASSWORD_REQUIRED", str(exc)) from exc
+        # pikepdf's own exception message is prefixed with the absolute
+        # path it opened (e.g. "/data/pdfs/<uuid>.pdf: ..."); that path
+        # is server-internal storage layout, not something a client-visible
+        # error message should ever carry - substitute the bare filename.
+        raise PreflightError("PDF_PASSWORD_REQUIRED", _without_path(exc, path)) from exc
     except pikepdf.PdfError as exc:
-        raise PreflightError("PDF_CORRUPTED", str(exc)) from exc
+        raise PreflightError("PDF_CORRUPTED", _without_path(exc, path)) from exc
 
     warnings: list[str] = []
     try:

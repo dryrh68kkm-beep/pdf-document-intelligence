@@ -38,6 +38,7 @@ from pdf_document_intelligence.db import backup as backup_module
 from pdf_document_intelligence.db.paths import get_data_dir, get_pdf_path
 from pdf_document_intelligence.db.repository import new_id
 from pdf_document_intelligence.export.excel import export_many_to_excel
+from pdf_document_intelligence.loader.preflight import PreflightError
 from pdf_document_intelligence.pipeline.orchestrator import process_document
 
 app = FastAPI(title="PDF Document Intelligence")
@@ -110,6 +111,18 @@ def _run_processing(doc_id: str) -> None:
     try:
         result = process_document(pdf_path, settings=_settings, on_progress=_on_progress)
         store.set_complete(doc_id, result)
+    except PreflightError as exc:
+        # A rejection before any page was read (corrupted file,
+        # password-protected, wrong signature, too many pages, ...) - the
+        # exception's own `code` (e.g. PDF_PASSWORD_REQUIRED) is prefixed
+        # onto the stored message so the Documents page's error text tells
+        # the user which specific preflight check failed, not just that
+        # "something" did.
+        diagnostic_id = _new_diagnostic_id()
+        _logger.exception(
+            "Preflight rejected [%s] document %s: %s", diagnostic_id, doc_id, exc.code
+        )
+        store.set_error(doc_id, f"{exc.code}: {exc}")
     except Exception as exc:  # noqa: BLE001 - a single bad PDF must not take the API down
         # This runs on a worker thread, outside the request/response cycle,
         # so the global exception_handler above never sees it - logging a
