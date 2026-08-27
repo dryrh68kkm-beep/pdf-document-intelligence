@@ -6,7 +6,7 @@
    column definitions. */
 
 export function renderDataTable(host, pageRows, opts) {
-  const { columns, getRowId, onRowClick, selectedRowId, emptyMessage = "ไม่มีรายการ" } = opts;
+  const { columns, getRowId, onRowClick, onRowAction, selectedRowId, emptyMessage = "ไม่มีรายการ" } = opts;
 
   const wrap = document.createElement("div");
   wrap.className = "data-table-wrap";
@@ -43,6 +43,19 @@ export function renderDataTable(host, pageRows, opts) {
         onRowClick(row);
       });
       tr.addEventListener("keydown", (e) => { if (e.key === "Enter") onRowClick(row); });
+    }
+    // A [data-row-action] element was previously exempted from onRowClick
+    // (above) but never actually wired to anything - a dead button in
+    // every caller that used one (real gap found during a Products UX
+    // audit: products.js's "จัดการ" column rendered a menu icon that did
+    // nothing when clicked). onRowAction is optional so a caller with no
+    // per-row action (and no data-row-action markup) is unaffected.
+    if (onRowAction) {
+      const actionEl = tr.querySelector("[data-row-action]");
+      actionEl?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onRowAction(row, actionEl.dataset.rowAction, e);
+      });
     }
     tbody.appendChild(tr);
   });
