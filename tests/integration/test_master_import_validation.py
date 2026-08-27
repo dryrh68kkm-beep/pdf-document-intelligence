@@ -16,6 +16,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pdf_document_intelligence.api.app import app
+from pdf_document_intelligence.catalog import import_validation as import_validation_module
+from pdf_document_intelligence.catalog import loader as loader_module
 from pdf_document_intelligence.catalog import snapshot as snapshot_module
 
 
@@ -85,6 +87,43 @@ def test_bad_new_master_leaves_old_master_usable(isolated_snapshot_dir):
 
     catalog = snapshot_module.load_catalog_snapshot()
     assert len(catalog["products"]) == 20
+
+
+def test_rejected_candidate_is_never_visible_to_live_catalog_readers(isolated_snapshot_dir, monkeypatch):
+    """A bad upload must never become the active snapshot, even briefly.
+
+    Regression for the old write-then-validate implementation: the endpoint
+    replaced the live snapshot first, then validate_payload() rejected it and
+    restored the old bytes.  A processing worker (or any catalog lookup)
+    running inside that window could read and lru-cache the bad catalog; the
+    later byte rollback did not clear that cache.  Observe the live catalog
+    *during validation* to prove the old, good snapshot stays active until a
+    candidate has actually passed validation.
+    """
+    client = TestClient(app)
+    good = client.post("/api/master/import", files={"file": ("good.csv", _good_csv(20), "text/csv")})
+    assert good.status_code == 200
+
+    loader_module.get_default_catalog.cache_clear()
+    observed_live_counts: list[int] = []
+    real_validate = import_validation_module.validate_payload
+
+    def observing_validate(payload, previous_payload):
+        observed_live_counts.append(len(loader_module.get_default_catalog()))
+        return real_validate(payload, previous_payload)
+
+    monkeypatch.setattr(import_validation_module, "validate_payload", observing_validate)
+    try:
+        bad = client.post("/api/master/import", files={"file": ("bad.csv", _csv(GOOD_HEADER), "text/csv")})
+        assert bad.status_code == 400
+
+        # Validation saw the previous 20-row catalog, never the rejected
+        # zero-row candidate.  The cache also remains good afterward.
+        assert observed_live_counts == [20]
+        assert len(loader_module.get_default_catalog()) == 20
+        assert len(snapshot_module.load_catalog_snapshot()["products"]) == 20
+    finally:
+        loader_module.get_default_catalog.cache_clear()
 
 
 def test_credible_ratio_guard_rejects_a_drastically_smaller_replacement(isolated_snapshot_dir):
