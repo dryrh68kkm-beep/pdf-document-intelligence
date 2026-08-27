@@ -389,8 +389,8 @@ function statusBadge(row) {
 
 const COLUMNS = [
   { key: "name", label: "ชื่อสินค้า", render: (r) => escapeHtml(r.fields.name?.value) || "—" },
+  { key: "barcode", label: "Barcode", render: (r) => `<span class="mono" style="font-weight:600;">${escapeHtml(r.fields.barcode?.value) || "—"}</span>` },
   { key: "article", label: "Article", render: (r) => `<span class="mono">${escapeHtml(r.fields.article?.value) || "—"}</span>` },
-  { key: "barcode", label: "Barcode", render: (r) => `<span class="mono">${escapeHtml(r.fields.barcode?.value) || "—"}</span>` },
   {
     key: "dept",
     label: "Division / Department",
