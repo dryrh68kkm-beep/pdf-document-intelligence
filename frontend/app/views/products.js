@@ -1,8 +1,8 @@
-import { api } from "../api.js";
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { icons } from "../icons.js";
 import { escapeHtml } from "../escape.js";
+import { confirmMarkResolved } from "../reviewActions.js";
 
 const RESOLUTION_LABEL = {
   OFFICIAL_MASTER: "Official Master",
@@ -195,31 +195,6 @@ export function renderProducts(container, store) {
   const paginationHost = container.querySelector("#paginationHost");
   const visibleEl = container.querySelector("#visibleCount");
 
-  function resolveRow(row) {
-    store.set({
-      confirmDialog: {
-        title: "ยืนยันว่าถูกต้อง (Mark Resolved)",
-        message: `ยืนยันว่า "${row.fields.name?.value || row.fields.article?.value || "รายการนี้"}" ถูกต้อง ไม่ต้องตรวจสอบอีก?`,
-        onConfirm: async () => {
-          try {
-            await api.confirmReview(row.rowId);
-            await store.refreshAll();
-          } catch (err) {
-            store.set({
-              errorDialog: {
-                title: "ยืนยันไม่สำเร็จ",
-                message: String(err?.message || err),
-                diagnosticId: err?.diagnosticId,
-              },
-            });
-            document.dispatchEvent(new CustomEvent("show-error"));
-          }
-        },
-      },
-    });
-    document.dispatchEvent(new CustomEvent("show-confirm"));
-  }
-
   function draw(localQuery) {
     const rows = applyExtraFilters(searchedRows(products, deptFilter, localQuery));
     visibleEl.textContent = `${rows.length.toLocaleString()} รายการ`;
@@ -230,7 +205,7 @@ export function renderProducts(container, store) {
       selectedRowId: panel?.rowId,
       onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
       onRowAction: (row, action) => {
-        if (action === "resolve") resolveRow(row);
+        if (action === "resolve") confirmMarkResolved(store, row);
         else store.openPanel({ type: "product", rowId: row.rowId, data: row });
       },
       emptyMessage: "ไม่พบรายการที่ตรงกับตัวกรอง",

@@ -46,7 +46,9 @@ def test_products_view_wires_a_real_action_not_a_dead_button():
     # needing review, otherwise the same "open detail" the row click does.
     assert 'data-row-action="resolve"' in source
     assert 'data-row-action="view"' in source
-    assert "api.confirmReview" in source
+    # The actual confirm/API-call logic lives in reviewActions.js (PR17)
+    # shared with review.js, not duplicated here.
+    assert "confirmMarkResolved" in source
 
 
 def test_products_view_no_longer_renders_the_dead_more_options_button():
