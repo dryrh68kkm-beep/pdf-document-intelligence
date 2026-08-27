@@ -1,5 +1,6 @@
 import { api } from "../api.js";
 import { escapeHtml } from "../escape.js";
+import { openPdfModal } from "../pdfViewer.js";
 
 const FLAG_LABEL = {
   TEXT_LAYER_UNRELIABLE: "PDF ต้นฉบับ: font ที่ฝังมาไม่มี glyph ของสระบน/ล่างและวรรณยุกต์ไทย — ใช้ OCR อ่านจากภาพแทน",
@@ -225,25 +226,9 @@ export function renderProductDetail(container, product, store) {
   // inline iframe this used to embed directly in the side panel - user
   // request: bigger, but a window, not fullscreen. modal-box-lg is a size
   // modifier only; the dialogs elsewhere keep the normal small modal-box.
+  // PR18: extracted into pdfViewer.js, now also used by documents.js.
   container.querySelector("#dpShowPdf").addEventListener("click", () => {
-    const backdrop = document.getElementById("modalBackdrop");
-    const box = document.getElementById("modalBox");
-    box.classList.add("modal-box-lg");
-    box.innerHTML = `
-      <div class="modal-pdf-head">
-        <h3>เอกสารต้นฉบับ — หน้า ${product.page}</h3>
-        <button type="button" class="btn btn-sm" id="dpPdfModalClose">ปิด</button>
-      </div>
-      <iframe class="evidence-pdf-modal" title="เอกสารต้นฉบับ" src="${api.pdfUrl(product.docId)}#page=${product.page}&view=FitH"></iframe>
-    `;
-    backdrop.classList.add("open");
-    const close = () => {
-      backdrop.classList.remove("open");
-      box.classList.remove("modal-box-lg");
-      box.innerHTML = "";
-    };
-    box.querySelector("#dpPdfModalClose").addEventListener("click", close);
-    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); }, { once: true });
+    openPdfModal(product.docId, { page: product.page, title: `เอกสารต้นฉบับ — หน้า ${product.page}` });
   });
 
   const resolveBtn = container.querySelector("#dpMarkResolved");
