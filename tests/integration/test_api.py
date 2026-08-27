@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 import pdf_document_intelligence.api.app as app_module
 from pdf_document_intelligence.api.app import app
 from pdf_document_intelligence.api.store import store
+from pdf_document_intelligence.db.errors import RowConflictError
 from pdf_document_intelligence.db.paths import get_pdf_path
 from tests.unit.db_helpers import make_result, make_row
 
@@ -669,6 +671,154 @@ def test_two_concurrent_edits_second_stale_one_rejected_with_412():
     # rejected second PATCH changed nothing.
     final = client.get(f"/api/products/{row_id}")
     assert final.json()["fields"]["name"]["value"] == "First Editor's Name"
+
+
+def test_real_concurrent_edits_exactly_one_wins():
+    """PR12 follow-up: the sequential test above (PATCH A, then PATCH B)
+    doesn't actually exercise the race - it only proves the check works
+    when the two requests can't possibly overlap. This fires both PATCHes
+    from two threads at once (same pattern as
+    test_concurrent_duplicate_upload_returns_409_not_500 above), so the
+    old SELECT-then-compare-then-UPDATE implementation's window (both
+    threads' SELECT racing ahead of either's UPDATE) is genuinely
+    exercised, not just simulated by call order."""
+    _reset_store()
+    doc = store.create("real-race.pdf", b"%PDF-1.4\n%pr12-real-race-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+    initial_updated_at = client.get(f"/api/products/{row_id}").json()["updatedAt"]
+
+    def patch_as(editor_name: str):
+        return client.patch(
+            f"/api/products/{row_id}",
+            json={"field": "name", "value": editor_name, "expectedUpdatedAt": initial_updated_at},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(patch_as, name) for name in ("Editor A", "Editor B")]
+        responses = [f.result() for f in futures]
+
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [200, 412], f"expected exactly one success + one conflict, got {statuses}"
+
+    winner = next(r for r in responses if r.status_code == 200)
+    winning_name = winner.json()["row"]["fields"]["name"]["value"]
+
+    # The DB's final state must match the winner - not silently overwritten
+    # by the loser, and not some third value from a corrupted interleaving.
+    final = client.get(f"/api/products/{row_id}").json()
+    assert final["fields"]["name"]["value"] == winning_name
+
+    # Exactly one correction was recorded for this field - the conflicting
+    # request's write must never have reached the audit table.
+    history = client.get(f"/api/products/{row_id}/history").json()
+    name_corrections = [c for c in history if c["field"] == "name"]
+    assert len(name_corrections) == 1
+    assert name_corrections[0]["newValue"] == winning_name
+
+
+def test_repository_level_atomic_update_race():
+    """Repository-level proof, bypassing HTTP entirely: two threads call
+    the atomic conditional UPDATE directly with the same
+    expected_updated_at. Exactly one must succeed."""
+    _reset_store()
+    doc = store.create("repo-race.pdf", b"%PDF-1.4\n%pr12-repo-race-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    repo = store.repo
+    initial_row = repo.get_product_row(row_id)
+    initial_updated_at = initial_row["updated_at"]
+
+    results = {"success": 0, "conflict": 0}
+    lock = threading.Lock()
+
+    def attempt(new_name: str):
+        try:
+            repo.update_product_row_field(
+                row_id, "name", initial_row.get("resolved_product_name"), new_name,
+                {"resolved_product_name": new_name}, f"race test {new_name}", "LOCAL_USER",
+                expected_updated_at=initial_updated_at,
+            )
+            with lock:
+                results["success"] += 1
+        except RowConflictError:
+            with lock:
+                results["conflict"] += 1
+
+    barrier = threading.Barrier(2)
+
+    def run(new_name: str):
+        barrier.wait()
+        attempt(new_name)
+
+    threads = [threading.Thread(target=run, args=(f"Thread-{i}",)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert results == {"success": 1, "conflict": 1}
+
+    final_row = repo.get_product_row(row_id)
+    assert final_row["updated_at"] != initial_updated_at
+    corrections = repo.list_corrections(row_id)
+    name_corrections = [c for c in corrections if c["field_name"] == "name"]
+    assert len(name_corrections) == 1
+
+
+def test_patch_on_deleted_row_returns_404_no_conflict_no_correction():
+    """Deleted-row race (PR12): a client loaded the row, the document was
+    then deleted, and the client's PATCH (still carrying the pre-delete
+    expectedUpdatedAt) must be rejected as 404 - not 412 (it's not a
+    version conflict, the row is just gone), and must never create a
+    correction record."""
+    _reset_store()
+    doc = store.create("deleted-race.pdf", b"%PDF-1.4\n%pr12-deleted-race-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+    loaded_updated_at = client.get(f"/api/products/{row_id}").json()["updatedAt"]
+
+    assert client.delete(f"/api/documents/{doc['id']}").status_code == 200
+
+    res = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "Should Never Land", "expectedUpdatedAt": loaded_updated_at},
+    )
+    assert res.status_code == 404
+
+    corrections = store.repo.list_corrections(row_id)
+    assert not any(c["field_name"] == "name" and c["new_value"] == "Should Never Land" for c in corrections)
+
+
+def test_same_client_sequential_multi_field_save_is_not_a_false_conflict():
+    """detailPanel.js saves multiple edited fields as sequential PATCHes in
+    one save action, chaining expectedUpdatedAt forward from each
+    response (its own JS comment: "our own second field-edit in the same
+    save is not a conflict"). Must keep working: field 1's own write
+    advancing updated_at must not make field 2's PATCH (correctly using
+    the *new* updated_at) look like a conflict."""
+    _reset_store()
+    doc = store.create("multi-field.pdf", b"%PDF-1.4\n%pr12-multi-field-fixture\n")
+    row_id = _complete_with_one_row(doc["id"])
+    client = TestClient(app)
+
+    t1 = client.get(f"/api/products/{row_id}").json()["updatedAt"]
+
+    first = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "name", "value": "Renamed Product", "expectedUpdatedAt": t1},
+    )
+    assert first.status_code == 200
+    t2 = first.json()["row"]["updatedAt"]
+    assert t2 != t1
+
+    second = client.patch(
+        f"/api/products/{row_id}",
+        json={"field": "unit_price", "value": 12.5, "expectedUpdatedAt": t2},
+    )
+    assert second.status_code == 200
+    final_row = second.json()["row"]
+    assert final_row["fields"]["name"]["value"] == "Renamed Product"
+    assert final_row["fields"]["unit_price"]["value"] == 12.5
 
 
 # ---- PR13: Viewer/Admin permission gate ----

@@ -10,27 +10,21 @@ import json
 
 from fastapi import HTTPException
 
+from pdf_document_intelligence.db.errors import RowConflictError, RowNotFoundError
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN, NUMERIC_FIELDS
 from pdf_document_intelligence.db.repository import Repository
+
+# Re-exported: api/app.py catches this as `review_api.RowConflictError`. The
+# class itself lives in db/errors.py (not here) because repository.py must
+# be able to raise it from inside its atomic conditional UPDATE, and
+# repository.py can't import this module without a cycle (this module
+# already imports repository.py).
+__all__ = ["RowConflictError", "apply_correction", "confirm_review_row", "validate_patch"]
 
 IDENTIFIER_FIELDS = {"barcode", "article"}
 EDITABLE_FIELDS = set(FIELD_TO_COLUMN)
 _FIELD_TO_COLUMN = FIELD_TO_COLUMN
 _NUMERIC_FIELDS = NUMERIC_FIELDS
-
-
-class RowConflictError(Exception):
-    """Raised when a PATCH's expected_updated_at doesn't match the row's
-    current updated_at - someone else's edit landed first (PR12: this app
-    is used from multiple machines on the same LAN with no per-row
-    locking, so two people editing the same row at once is a real
-    scenario, not a hypothetical). Carries the row's current state so the
-    caller (api/app.py) can hand it back to the client instead of just
-    saying "conflict" with nothing to act on."""
-
-    def __init__(self, current_row: dict) -> None:
-        self.current_row = current_row
-        super().__init__("This product row was changed by someone else since it was loaded.")
 
 
 def validate_patch(field_name: str, new_value) -> None:
@@ -57,6 +51,12 @@ def apply_correction(
     row = repo.get_product_row(row_id)
     if not row:
         raise HTTPException(404, "product row not found")
+    # Fast-fail only - not the authoritative check. This SELECT happens
+    # outside the write lock, so a concurrent writer can still land between
+    # it and the actual UPDATE below; it just lets an obviously-stale
+    # request (and validation errors) return early without taking the
+    # write lock at all. The atomic conditional UPDATE inside
+    # repo.update_product_row_field is what actually decides conflicts.
     if expected_updated_at is not None and row.get("updated_at") != expected_updated_at:
         raise RowConflictError(row)
 
@@ -73,9 +73,13 @@ def apply_correction(
     column_updates["review_required"] = int(review_required)
     column_updates["review_reasons"] = json.dumps(review_reasons)
 
-    result = repo.update_product_row_field(
-        row_id, field_name, old_value, coerced, column_updates, reason, source,
-    )
+    try:
+        result = repo.update_product_row_field(
+            row_id, field_name, old_value, coerced, column_updates, reason, source,
+            expected_updated_at=expected_updated_at,
+        )
+    except RowNotFoundError:
+        raise HTTPException(404, "product row not found")
     propagated = 0
     if field_name == "name" and row.get("barcode") and coerced:
         propagated = _propagate_name_correction(repo, row["barcode"], coerced, row_id, row["document_id"], source)
@@ -96,16 +100,24 @@ def _propagate_name_correction(repo: Repository, barcode: str, corrected_name: s
         if sibling.get("resolved_product_name") == corrected_name:
             continue
         sibling_review_required, sibling_review_reasons = _recompute_review_flags(sibling, "resolved_product_name", corrected_name)
-        repo.update_product_row_field(
-            sibling["id"], "name", sibling.get("resolved_product_name"), corrected_name,
-            {
-                "resolved_product_name": corrected_name,
-                "review_required": int(sibling_review_required),
-                "review_reasons": json.dumps(sibling_review_reasons),
-            },
-            f"auto-applied: barcode {barcode} corrected on another document (row {source_row_id})",
-            source,
-        )
+        try:
+            repo.update_product_row_field(
+                sibling["id"], "name", sibling.get("resolved_product_name"), corrected_name,
+                {
+                    "resolved_product_name": corrected_name,
+                    "review_required": int(sibling_review_required),
+                    "review_reasons": json.dumps(sibling_review_reasons),
+                },
+                f"auto-applied: barcode {barcode} corrected on another document (row {source_row_id})",
+                source,
+            )
+        except RowNotFoundError:
+            # This sibling was soft-deleted (its document was deleted, or a
+            # reprocess dropped it) in the window between the list above
+            # and this write - nothing to propagate to any more, skip it
+            # rather than let a system-side propagation crash the whole
+            # request the user's own edit already succeeded in.
+            continue
         updated += 1
     return updated
 
@@ -147,8 +159,11 @@ def confirm_review_row(repo: Repository, row_id: str, source: str = "LOCAL_USER"
     unsafe = reasons & {"UNKNOWN_BARCODE", "AMOUNT_MISMATCH", "DEPARTMENT_CONFLICT", "INVALID_IDENTIFIER"}
     if unsafe:
         raise HTTPException(409, f"cannot bulk-confirm: unresolved {sorted(unsafe)}")
-    repo.update_product_row_field(
-        row_id, "review_required", True, False,
-        {"review_required": 0, "review_reasons": "[]"}, "confirmed", source,
-    )
+    try:
+        repo.update_product_row_field(
+            row_id, "review_required", True, False,
+            {"review_required": 0, "review_reasons": "[]"}, "confirmed", source,
+        )
+    except RowNotFoundError:
+        raise HTTPException(404, "product row not found")
     return {"confirmed": True, "row": repo.get_product_row(row_id)}
