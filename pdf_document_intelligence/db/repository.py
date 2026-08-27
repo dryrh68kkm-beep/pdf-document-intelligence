@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from pdf_document_intelligence.db.connection import get_connection, get_write_lock
+from pdf_document_intelligence.db.errors import RowConflictError, RowNotFoundError
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN, NUMERIC_FIELDS
 from pdf_document_intelligence.db.migrations import SCHEMA_VERSION, current_version
 
@@ -337,20 +338,54 @@ class Repository:
     def update_product_row_field(
         self, row_id: str, field_name: str, old_value: Any, new_value: Any,
         column_updates: dict, reason: str | None, source: str = "LOCAL_USER",
+        expected_updated_at: str | None = None,
     ) -> dict:
+        """Writes one corrected field + its audit record atomically.
+
+        PR12 fix: the caller used to SELECT the row, compare its
+        `updated_at` to `expected_updated_at` in Python, and only *then*
+        call this method to UPDATE - two concurrent callers could both
+        pass that compare (both reading the same pre-write `updated_at`)
+        before either one's UPDATE ran, so the second one to actually
+        write silently clobbered the first with no error. The conditional
+        UPDATE below (`WHERE ... AND updated_at=?`) makes the compare and
+        the write one atomic SQL statement instead of two Python steps:
+        whichever caller's UPDATE actually lands first changes `updated_at`
+        out from under the other, so the second one's own conditional
+        UPDATE matches zero rows and fails - `cursor.rowcount` is SQLite's
+        own authoritative answer, not a value this process ever had to
+        compute from a stale read. When `expected_updated_at` is None
+        (caller doesn't have a version token) this behaves exactly as
+        before: an unconditional update.
+        """
         now = _now()
         with get_write_lock(), self._conn:
             row = self.get_product_row(row_id)
+            if row is None or row.get("deleted_at") is not None:
+                raise RowNotFoundError(row_id)
+
             corrected_fields = set(json.loads(row.get("corrected_fields_json") or "[]"))
             corrected_fields.add(field_name)
 
             set_clauses = ", ".join(f"{k}=?" for k in column_updates)
             values = list(column_updates.values())
-            self._conn.execute(
+            params = [*values, json.dumps(sorted(corrected_fields)), now, row_id]
+            where = "WHERE id=? AND deleted_at IS NULL"
+            if expected_updated_at is not None:
+                where += " AND updated_at=?"
+                params.append(expected_updated_at)
+
+            cur = self._conn.execute(
                 f"""UPDATE product_rows SET {set_clauses}, corrected_fields_json=?,
-                    resolution_status='CORRECTED', updated_at=? WHERE id=?""",
-                (*values, json.dumps(sorted(corrected_fields)), now, row_id),
+                    resolution_status='CORRECTED', updated_at=? {where}""",
+                params,
             )
+            if cur.rowcount == 0:
+                current = self.get_product_row(row_id)
+                if current is None or current.get("deleted_at") is not None:
+                    raise RowNotFoundError(row_id)
+                raise RowConflictError(current)
+
             correction_id = new_id()
             self._conn.execute(
                 """INSERT INTO corrections
