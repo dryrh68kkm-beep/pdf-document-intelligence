@@ -133,6 +133,25 @@ export function renderProductDetail(container, product, store) {
   currentProduct = product;
   const f = product.fields;
 
+  // PR14 (auto refresh without state loss): this panel is rebuilt on every
+  // store.set() - including a refreshAll() triggered by something with
+  // nothing to do with the row being edited, most commonly another LAN
+  // user's unrelated upload finishing processing (main.js's poll loop calls
+  // refreshAll() the moment any document's status flips out of
+  // "processing"). pendingEdits already survives that (it's module-level
+  // state, checked before falling back to the server value - see
+  // editFieldBlock below), but destroying and recreating the <input> via
+  // innerHTML still kicks focus out and drops the cursor position
+  // mid-keystroke. Same capture-before/restore-after technique already
+  // used by products.js's local filter box and dashboard.js's product
+  // search box, applied here per-field via data-field instead of a single
+  // fixed id, since any one of several editable inputs (or the reason
+  // textarea) could be the one focused.
+  const activeEl = container.contains(document.activeElement) ? document.activeElement : null;
+  const focusedField = activeEl?.dataset?.field || (activeEl?.id === "dpReasonText" ? "dpReasonText" : null);
+  const focusedSelectionStart = focusedField && typeof activeEl.selectionStart === "number" ? activeEl.selectionStart : null;
+  const focusedSelectionEnd = focusedField && typeof activeEl.selectionEnd === "number" ? activeEl.selectionEnd : null;
+
   container.innerHTML = `
     <div class="side-panel-head">
       <div>
@@ -185,6 +204,19 @@ export function renderProductDetail(container, product, store) {
       <div id="dpHistory"></div>
     </div>
   `;
+
+  if (focusedField) {
+    const restored =
+      focusedField === "dpReasonText"
+        ? container.querySelector("#dpReasonText")
+        : container.querySelector(`.dp-edit-input[data-field="${focusedField}"]`);
+    if (restored) {
+      restored.focus();
+      if (focusedSelectionStart !== null && typeof restored.setSelectionRange === "function") {
+        restored.setSelectionRange(focusedSelectionStart, focusedSelectionEnd ?? focusedSelectionStart);
+      }
+    }
+  }
 
   renderHistory(container.querySelector("#dpHistory"), product.rowId);
 
