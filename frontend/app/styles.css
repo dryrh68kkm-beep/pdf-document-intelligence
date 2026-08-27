@@ -172,17 +172,82 @@ button { font-family: inherit; }
 .kpi-value.ok { color: var(--success); }
 .kpi-label { font-size: 14px; font-weight: 600; color: var(--text-muted); margin-top: 3px; }
 
-/* ---------- Department cards ---------- */
+/* ---------- Division / Department hierarchy ---------- */
 .section-title { font-size: 18px; font-weight: 700; margin: 22px 0 10px; color: var(--text); }
+
+.division-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.division-grid-empty { grid-column: 1 / -1; }
+.division-card {
+  --division-color: var(--accent);
+  min-height: 188px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--division-color);
+  border-radius: var(--radius);
+  padding: 17px 18px 16px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.division-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--division-color) 45%, var(--border));
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.08);
+}
+.division-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.division-card-name { display: inline-flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; }
+.division-card-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--division-color); flex: none; }
+.division-card-arrow { color: var(--text-faint); font-size: 25px; line-height: 1; }
+.division-card-meta { margin-top: 8px; color: var(--text-muted); font-size: 12.5px; }
+.division-card-value { margin-top: 19px; font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.division-card-value-label { margin-top: 1px; color: var(--text-faint); font-size: 11.5px; }
+.division-card-foot {
+  min-height: 25px;
+  margin-top: 15px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.division-detail-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+  margin: -4px 0 20px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.division-detail-summary b { color: var(--text); font-family: var(--font-data); font-weight: 600; }
+.division-detail-summary-value { margin-left: auto; }
+
 .dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .dept-card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;
   cursor: pointer; box-shadow: var(--shadow);
 }
 .dept-card:hover { border-color: var(--accent); }
-.dept-card-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.dept-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 8px; }
 .dept-card-name { font-weight: 700; font-size: 13.5px; }
+.dept-card-arrow { color: var(--text-faint); font-size: 19px; line-height: 1; }
 .dept-card-stat { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
+.dept-card-value { font-size: 17px; font-weight: 700; color: var(--text); margin-top: 8px; }
+.dept-card-value-label { font-size: 10.5px; color: var(--text-faint); margin-bottom: 7px; }
+.dept-card-review { margin-top: 8px; }
 .dept-card-badge {
   font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
   background: var(--success-soft); color: var(--success);
@@ -199,6 +264,15 @@ button { font-family: inherit; }
 .dept-subgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; padding-left: 4px; }
 .dept-subgrid .dept-card { padding: 10px 12px; }
 .dept-subgrid .dept-card-name { font-size: 12.5px; font-weight: 600; }
+
+@media (max-width: 1100px) {
+  .division-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .division-grid { grid-template-columns: 1fr; gap: 12px; }
+  .division-card { min-height: 0; }
+  .division-detail-summary-value { margin-left: 0; }
+}
 
 .bar-chart { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
 .bar-row { display: grid; grid-template-columns: 130px 1fr 90px; align-items: center; gap: 10px; font-size: 12.5px; }
