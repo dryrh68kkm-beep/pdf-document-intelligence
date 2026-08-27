@@ -1,6 +1,8 @@
 import { api } from "../api.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { escapeHtml } from "../escape.js";
+import { icons } from "../icons.js";
+import { openPdfModal } from "../pdfViewer.js";
 
 let searchQuery = "";
 let statusFilter = "all";
@@ -186,6 +188,7 @@ export function renderDocuments(container, store) {
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="status-dot ${doc.status}"></span>
           <span class="doc-name">${escapeHtml(doc.filename)}</span>
+          <button type="button" class="icon-btn-sm" data-action="view-pdf" title="ดู PDF ต้นฉบับ" aria-label="ดู PDF ต้นฉบับ">${icons.eye}</button>
         </div>
         ${doc.status === "error" ? `<div class="doc-meta">${escapeHtml(doc.error) || "unknown error"}</div>` : doc.status === "processing" ? `<div class="doc-meta">${escapeHtml(doc.progress?.stage) || "กำลังประมวลผล"} ${doc.progress?.total ? `(${doc.progress.current}/${doc.progress.total})` : ""}</div>` : ""}
       </td>
@@ -203,6 +206,18 @@ export function renderDocuments(container, store) {
         <button class="btn btn-sm" data-action="remove"${doc.status === "processing" ? ` disabled title="ไม่สามารถลบเอกสารที่กำลังประมวลผลอยู่ได้"` : ""}>Remove</button>
       </td>
     `;
+
+    // Real gap found during a Documents UX audit (PR18): there was no way
+    // at all to view the original PDF from the Documents page - only
+    // reachable indirectly, per product row, via the detail panel's own
+    // "ดูจากเอกสารต้นฉบับ" link (detailPanel.js), which needs a completed,
+    // reconciled row to exist first. The file is on disk from the moment
+    // it's uploaded (api/app.py moves it into place before any processing
+    // job is even submitted - PR5), so this works for every status.
+    tr.querySelector('[data-action="view-pdf"]')?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openPdfModal(doc.id, { title: doc.filename });
+    });
 
     tr.querySelector('[data-action="review"]')?.addEventListener("click", () => {
       store.selectDashboardDocument(doc.id).then(() => store.navigate("review"));
