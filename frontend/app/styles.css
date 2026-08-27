@@ -96,6 +96,11 @@ button { font-family: inherit; }
 }
 .search-wrap svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.5; }
 .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.admin-badge-btn {
+  font-size: 12px; padding: 5px 10px; background: var(--warning-soft); color: var(--warning);
+  border: 1px solid var(--warning); border-radius: 999px;
+}
+.admin-badge-btn.admin-unlocked { background: var(--success-soft); color: var(--success); border-color: var(--success); }
 
 .btn {
   font-family: inherit; font-size: 13px; font-weight: 600; border-radius: 7px; padding: 7px 13px;
