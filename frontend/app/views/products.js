@@ -1,3 +1,4 @@
+import { api } from "../api.js";
 import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { icons } from "../icons.js";
@@ -118,7 +119,19 @@ const COLUMNS = [
   {
     key: "actions",
     label: "จัดการ",
-    render: () => `<button type="button" class="icon-btn-sm" data-row-action="menu" aria-label="ตัวเลือกเพิ่มเติม">${icons.moreVertical}</button>`,
+    // Real gap found during a Products UX audit: this used to always
+    // render a "more options" (⋮) icon with no click handler wired
+    // anywhere - a dead button that also swallowed the click instead of
+    // opening the row (dataTable.js exempts [data-row-action] from
+    // onRowClick so a real action handler can use it). Now a single,
+    // honest action per row instead of a fake menu implying choices that
+    // never existed: resolve directly from the list for a row that needs
+    // review (saves opening the detail panel just to click one button),
+    // or open the detail panel for one that doesn't.
+    render: (r) =>
+      r.reviewRequired
+        ? `<button type="button" class="icon-btn-sm tone-accent" data-row-action="resolve" title="ยืนยันว่าถูกต้อง (Mark Resolved)" aria-label="ยืนยันว่าถูกต้อง">${icons.checkCircle}</button>`
+        : `<button type="button" class="icon-btn-sm" data-row-action="view" title="ดูรายละเอียด" aria-label="ดูรายละเอียด">${icons.eye}</button>`,
   },
 ];
 
@@ -182,6 +195,31 @@ export function renderProducts(container, store) {
   const paginationHost = container.querySelector("#paginationHost");
   const visibleEl = container.querySelector("#visibleCount");
 
+  function resolveRow(row) {
+    store.set({
+      confirmDialog: {
+        title: "ยืนยันว่าถูกต้อง (Mark Resolved)",
+        message: `ยืนยันว่า "${row.fields.name?.value || row.fields.article?.value || "รายการนี้"}" ถูกต้อง ไม่ต้องตรวจสอบอีก?`,
+        onConfirm: async () => {
+          try {
+            await api.confirmReview(row.rowId);
+            await store.refreshAll();
+          } catch (err) {
+            store.set({
+              errorDialog: {
+                title: "ยืนยันไม่สำเร็จ",
+                message: String(err?.message || err),
+                diagnosticId: err?.diagnosticId,
+              },
+            });
+            document.dispatchEvent(new CustomEvent("show-error"));
+          }
+        },
+      },
+    });
+    document.dispatchEvent(new CustomEvent("show-confirm"));
+  }
+
   function draw(localQuery) {
     const rows = applyExtraFilters(searchedRows(products, deptFilter, localQuery));
     visibleEl.textContent = `${rows.length.toLocaleString()} รายการ`;
@@ -191,6 +229,10 @@ export function renderProducts(container, store) {
       getRowId: (row) => row.rowId,
       selectedRowId: panel?.rowId,
       onRowClick: (row) => store.openPanel({ type: "product", rowId: row.rowId, data: row }),
+      onRowAction: (row, action) => {
+        if (action === "resolve") resolveRow(row);
+        else store.openPanel({ type: "product", rowId: row.rowId, data: row });
+      },
       emptyMessage: "ไม่พบรายการที่ตรงกับตัวกรอง",
     });
     renderPaginationBar(paginationHost, {
