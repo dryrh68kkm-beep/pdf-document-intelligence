@@ -2,6 +2,7 @@ import { renderDataTable } from "../components/dataTable.js";
 import { paginate, renderPaginationBar, PAGE_SIZE_OPTIONS } from "../components/pagination.js";
 import { icons } from "../icons.js";
 import { escapeHtml } from "../escape.js";
+import { confirmMarkResolved } from "../reviewActions.js";
 
 const REASON_LABELS = {
   INVALID_IDENTIFIER: "รหัสสินค้าไม่ถูกต้อง",
@@ -126,7 +127,18 @@ const COLUMNS = [
   {
     key: "actions",
     label: "จัดการ",
-    render: () => `<button type="button" class="icon-btn-sm tone-accent" data-row-action="view" aria-label="ดูรายละเอียด">${icons.eye}</button>`,
+    // Real gap found during a Review Queue UX audit (same class of bug as
+    // PR16's Products fix): this rendered an eye icon carrying the same
+    // data-row-action marker Products used, but nothing ever wired an
+    // onRowAction handler here, so it was a dead click - clicking the row itself
+    // already opens the detail panel + shows the evidence panel below
+    // (onRowClick), so a second "view" affordance would be redundant
+    // anyway. The button's real, distinct value in a triage queue is a
+    // one-click resolve without needing to open the panel first - every
+    // row here has reviewRequired=true by construction (derivedReviewItems
+    // filters on it), so the action is unconditional, unlike Products'
+    // per-row branch.
+    render: () => `<button type="button" class="icon-btn-sm tone-accent" data-row-action="resolve" title="ยืนยันว่าถูกต้อง (Mark Resolved)" aria-label="ยืนยันว่าถูกต้อง">${icons.checkCircle}</button>`,
   },
 ];
 
@@ -201,6 +213,7 @@ export function renderReview(container, store) {
         showReason(row);
         store.openPanel({ type: "product", rowId: row.rowId, data: row });
       },
+      onRowAction: (row) => confirmMarkResolved(store, row),
       emptyMessage: "ไม่มีรายการในกลุ่มนี้",
     });
     renderPaginationBar(paginationHost, {
