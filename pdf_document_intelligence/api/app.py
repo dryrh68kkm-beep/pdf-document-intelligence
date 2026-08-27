@@ -582,18 +582,19 @@ async def import_master_catalog(file: UploadFile):
     if len(csv_bytes) > _MAX_MASTER_IMPORT_BYTES:
         raise HTTPException(400, "File too large (limit 50MB)")
 
-    # Captured before the import so a validation failure below can put the
-    # catalog back exactly as it was - import_catalog_snapshot() itself
-    # stays a permissive primitive (it's also how the app imports
-    # hierarchy-only reference data with no product rows at all), so this
-    # product-master-specific validation runs after the fact instead.
+    # Compile and validate the candidate *before* replacing the live
+    # snapshot.  The previous implementation imported with overwrite=True
+    # first and only then validated/rolled back.  That left a real window
+    # where a processing worker could read (and lru-cache) a catalog that
+    # was about to be rejected.  A failed import must therefore be a true
+    # no-op for the active snapshot, not "write bad data then put the old
+    # bytes back".
     snapshot_path = snapshot_module.get_snapshot_path()
-    previous_bytes = snapshot_path.read_bytes() if snapshot_path.is_file() else None
     previous_payload = None
-    if previous_bytes is not None:
+    if snapshot_path.is_file():
         try:
-            previous_payload = json.loads(previous_bytes)
-        except json.JSONDecodeError:
+            previous_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             previous_payload = None
 
     tmp_path: Path | None = None
@@ -602,27 +603,24 @@ async def import_master_catalog(file: UploadFile):
             tmp.write(csv_bytes)
             tmp_path = Path(tmp.name)
         try:
-            snapshot_module.import_catalog_snapshot(tmp_path, overwrite=True)
+            candidate_payload = snapshot_module.compile_catalog_payload(tmp_path)
         except FileNotFoundError as exc:
             raise HTTPException(400, "Could not read uploaded file") from exc
         except (OSError, ValueError, UnicodeError) as exc:
             raise HTTPException(400, f"Failed to import catalog: {exc}") from exc
+
+        try:
+            warnings = validate_payload(candidate_payload, previous_payload)
+        except MasterImportError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+        # Only a validated candidate is allowed to cross the atomic replace
+        # boundary.  write_catalog_snapshot() writes/fsyncs a sibling temp
+        # file and then Path.replace()s it over the old snapshot.
+        snapshot_module.write_catalog_snapshot(candidate_payload, snapshot_path=snapshot_path, overwrite=True)
     finally:
         if tmp_path is not None:
             tmp_path.unlink(missing_ok=True)
-
-    new_payload = snapshot_module.load_catalog_snapshot()
-    try:
-        warnings = validate_payload(new_payload, previous_payload)
-    except MasterImportError as exc:
-        # Roll back to exactly what was there before, rather than leaving
-        # the just-imported (rejected) catalog in place - the previous
-        # snapshot's bytes, or no file at all if there wasn't one.
-        if previous_bytes is not None:
-            snapshot_path.write_bytes(previous_bytes)
-        else:
-            snapshot_path.unlink(missing_ok=True)
-        raise HTTPException(400, str(exc)) from exc
 
     _clear_catalog_caches()
     response = _snapshot_status_payload()

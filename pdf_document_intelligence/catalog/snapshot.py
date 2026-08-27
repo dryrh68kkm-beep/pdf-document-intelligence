@@ -108,6 +108,52 @@ def _compile_source(source_path: Path) -> dict[str, Any]:
     }
 
 
+def compile_catalog_payload(source_path: Path) -> dict[str, Any]:
+    """Compile an external CSV into an in-memory snapshot payload.
+
+    This deliberately performs *no write*.  The user-facing import endpoint
+    uses it to validate a candidate catalog while the currently-active
+    snapshot remains untouched, then calls :func:`write_catalog_snapshot`
+    only after validation succeeds.  Lower-level one-time imports can still
+    use :func:`import_catalog_snapshot`, which composes these two steps.
+    """
+    source_path = Path(source_path).expanduser()
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+    return _compile_source(source_path)
+
+
+def write_catalog_snapshot(
+    payload: dict[str, Any],
+    *,
+    snapshot_path: Path | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """Atomically write an already-compiled snapshot payload.
+
+    The target file is replaced only after the complete JSON payload has been
+    written and fsync'd under a sibling temporary name.  Validation belongs
+    to the caller because this primitive is also used for legitimate
+    hierarchy-only snapshots that have no product rows.
+    """
+    target = snapshot_path or get_snapshot_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and not overwrite:
+        return target
+
+    fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            f.flush()
+            os.fsync(f.fileno())
+        Path(temp_name).replace(target)
+    except Exception:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+    return target
+
+
 def import_catalog_snapshot(
     source_path: Path,
     *,
@@ -120,27 +166,11 @@ def import_catalog_snapshot(
     true one-time import. Pass ``overwrite=True`` only for an intentional
     master refresh.
     """
-    source_path = Path(source_path).expanduser()
-    if not source_path.is_file():
-        raise FileNotFoundError(source_path)
-
     target = snapshot_path or get_snapshot_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() and not overwrite:
         return target
-
-    payload = _compile_source(source_path)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-            f.flush()
-            os.fsync(f.fileno())
-        Path(temp_name).replace(target)
-    except Exception:
-        Path(temp_name).unlink(missing_ok=True)
-        raise
-    return target
+    payload = compile_catalog_payload(source_path)
+    return write_catalog_snapshot(payload, snapshot_path=target, overwrite=overwrite)
 
 
 def ensure_catalog_snapshot() -> Path | None:
