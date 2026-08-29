@@ -268,7 +268,13 @@ button { font-family: inherit; }
 }
 .dp-evidence-current { background: var(--accent-soft); border: 1px solid var(--accent); }
 .dp-evidence-mismatch { background: var(--critical-soft); border: 1px solid var(--critical); }
-.dp-evidence-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); flex: none; min-width: 100px; }
+/* flex-basis:100% forces the tag ("ค่าปัจจุบัน (ใช้จริง)", "OCR อ่านได้", ...)
+   onto its own line, so the value below always gets the full row width -
+   without this, a long unbroken value (a 13-digit barcode, an article
+   code) shares one line with the tag, gets squeezed into whatever width
+   is left, and word-break below then splits it mid-digit (reported live:
+   "49024308" / "36890" on separate lines for one barcode). */
+.dp-evidence-tag { flex: 1 0 100%; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); }
 .dp-evidence-val { font-size: 12.5px; font-weight: 600; word-break: break-word; }
 .dp-evidence-conf { font-family: var(--font-data); font-size: 11px; color: var(--text-muted); margin-left: auto; }
 .dp-resolve-feedback { font-size: 12px; color: var(--text-muted); }
@@ -770,4 +776,16 @@ button { font-family: inherit; }
 
 @media (max-width: 520px) {
   .kpi-icon-row { grid-template-columns: 1fr; }
+}
+
+/* .side-panel is min(440px, 92vw) - below ~480px viewport width it sits at
+   92vw, and a two-up .dp-row (barcode + article, each flex:1/min-width:0)
+   no longer has room for a 13-16 char code without breaking it mid-digit
+   (reported live: a barcode wrapped as "49024308" / "36890"). Stacking
+   the row's fields at this width gives each one the panel's full content
+   width instead, which is enough for any barcode/article seen in
+   practice - word-break stays on .dp-value/.dp-evidence-val as a safety
+   net for the rare case it isn't. */
+@media (max-width: 480px) {
+  .dp-row { flex-direction: column; gap: 12px; }
 }
