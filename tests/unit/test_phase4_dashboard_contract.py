@@ -17,15 +17,13 @@ INDEX = ROOT / "frontend" / "app" / "index.html"
 # which department -> how many -> how much" for one document date at a
 # time, navigable day by day.
 #
-# Most recent pass (user request, with a reference mockup): the day-by-day
-# navigator was replaced by a document-date RANGE filter plus an optional
-# Division filter, a Division-level donut + summary table (value-based,
-# falling back to a quantity-based breakdown when no document in range has
-# amount data) with a total row footing to 100%, and a header showing when
-# data was last refreshed. Quality Score / Data Quality / Reconciliation /
-# Document Type / Division Overview all remain off the page - moved into
-# one slim status strip that links into Documents/Review, where that detail
-# is actually actionable.
+# Most recent pass (user-selected Product Design option 1): the Division
+# donut and duplicate summary table were consolidated into one ranked
+# horizontal value chart. It keeps exact amount, share, and item-count
+# columns, falls back to item count when amount data is unavailable, and
+# retains the existing drill-down into Products. Date range, Division
+# filter, refresh state, KPIs, status strip, department chart, and product
+# list continue to use the existing data and behavior.
 
 
 def test_dashboard_surfaces_the_three_kpis():
@@ -39,13 +37,14 @@ def test_dashboard_surfaces_product_table_and_department_breakdown():
     source = DASHBOARD.read_text(encoding="utf-8")
     assert "รายการสินค้า" in source
     # A horizontal color-coded bar chart of which department has the most
-    # product by quantity (user request: changed from a donut to bars),
-    # alongside the Division donut card and full summary table (user
-    # request, with a reference mockup - split into two sections: a
-    # compact donut+legend card, and a fuller table with an Action column).
+    # product by quantity, plus one ranked Division value chart that
+    # replaces the previous donut and duplicate summary table.
     assert "renderDepartmentBarChart" in source
-    assert "renderDivisionDonutCard" in source
-    assert "renderDivisionSummaryTable" in source
+    assert "renderDivisionValueChart" in source
+    assert "renderDivisionDonutCard" not in source
+    assert "renderDivisionSummaryTable" not in source
+    assert "division-value-track" in source
+    assert "division-value-total" in source
     # The table's columns (user request, with a reference mockup: bring
     # back ราคาต่อหน่วย alongside the summarized total value - both sourced
     # from the same backend fields, never recomputed on the frontend):
