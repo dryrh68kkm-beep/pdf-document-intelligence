@@ -136,7 +136,8 @@ const COLUMNS = [
 ];
 
 export function renderProducts(container, store) {
-  const { products, deptFilter, deptFilterLabel, panel, searchQuery } = store.state;
+  const { deptFilter, deptFilterLabel, panel, searchQuery } = store.state;
+  const products = store.getDateScopedProducts();
   // deptFilter is either a single department string (picked from the
   // dropdown below, or a department-level click elsewhere) or an array of
   // department names (a Division-level click - e.g. the Dashboard's

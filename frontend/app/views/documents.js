@@ -82,14 +82,15 @@ function isProblemDocument(doc) {
 }
 
 export function renderDocuments(container, store) {
-  const { documents } = store.state;
+  const allDocuments = store.state.documents;
+  const documents = store.getDateScopedDocuments();
   const visible = filteredDocuments(documents);
 
   container.innerHTML = `
     <div class="workspace-header">
       <div>
         <div class="workspace-title">Documents</div>
-        <div class="workspace-sub">แสดง ${visible.length} จาก ${documents.length} ไฟล์</div>
+        <div class="workspace-sub">แสดง ${visible.length} จาก ${documents.length} ไฟล์ในช่วงวันที่ที่เลือก${documents.length !== allDocuments.length ? ` · ทั้งหมด ${allDocuments.length} ไฟล์` : ""}</div>
       </div>
     </div>
     <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">

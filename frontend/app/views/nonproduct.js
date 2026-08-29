@@ -63,7 +63,8 @@ function sortRows(rows) {
 }
 
 export function renderNonProduct(container, store) {
-  const { products, panel } = store.state;
+  const { panel } = store.state;
+  const products = store.getDateScopedProducts();
   const items = products.filter((p) => p.suspectedNonProduct);
   const counts = { freebie: items.filter(isFreebie).length, nonproduct: items.filter((p) => !isFreebie(p)).length };
 

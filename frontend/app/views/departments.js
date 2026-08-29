@@ -1,5 +1,58 @@
 import { escapeHtml } from "../escape.js";
 
+
+function buildDateScopedDepartments(products, dashboard) {
+  const majorByDepartment = new Map(
+    (dashboard?.departments || []).map((d) => [d.name, d.majorDepartment || d.name])
+  );
+  const byDepartment = new Map();
+
+  function ensure(name) {
+    if (!byDepartment.has(name)) {
+      byDepartment.set(name, {
+        name,
+        majorDepartment: majorByDepartment.get(name) || name,
+        skuSet: new Set(),
+        skuCount: 0,
+        rowCount: 0,
+        reviewCount: 0,
+        nonProductCount: 0,
+        totals: { weight_qty: 0, pu_qty: 0, sku_qty: 0 },
+      });
+    }
+    return byDepartment.get(name);
+  }
+
+  for (const product of products) {
+    const name = product.department || "ไม่ระบุแผนก";
+    const entry = ensure(name);
+
+    if (product.suspectedNonProduct) {
+      entry.nonProductCount += 1;
+      continue;
+    }
+
+    entry.rowCount += 1;
+    if (product.reviewRequired) entry.reviewCount += 1;
+
+    const identity = product.fields?.article?.value || product.fields?.barcode?.value;
+    if (identity) entry.skuSet.add(String(identity));
+
+    for (const field of ["weight_qty", "pu_qty", "sku_qty"]) {
+      const value = product.fields?.[field]?.value;
+      if (typeof value === "number" && Number.isFinite(value)) entry.totals[field] += value;
+    }
+  }
+
+  return [...byDepartment.values()]
+    .map((d) => {
+      d.skuCount = d.skuSet.size;
+      delete d.skuSet;
+      return d;
+    })
+    .sort((a, b) => (b.totals.sku_qty || 0) - (a.totals.sku_qty || 0));
+}
+
 function fmtNum(n) {
   return (n ?? 0).toLocaleString("th-TH", { maximumFractionDigits: 2 });
 }
@@ -51,8 +104,11 @@ function matchesSearch(d, q) {
 // its smaller sub-department cards, with the major department as the
 // primary heading and each sub-department secondary underneath it.
 export function renderDepartments(container, store) {
-  const { dashboard } = store.state;
-  const allDepartments = dashboard?.departments || [];
+  const { dashboard, dashboardDateFrom, dashboardDateTo } = store.state;
+  const dateScoped = Boolean(dashboardDateFrom || dashboardDateTo);
+  const allDepartments = dateScoped
+    ? buildDateScopedDepartments(store.getDateScopedProducts(), dashboard)
+    : (dashboard?.departments || []);
 
   container.innerHTML = `
     <div class="workspace-header">

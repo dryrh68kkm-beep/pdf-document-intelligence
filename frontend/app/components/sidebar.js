@@ -41,12 +41,25 @@ function logoMarkSvg() {
 
 export function renderSidebar(store) {
   const el = document.getElementById("sidebar");
-  const { view, dashboard, documents } = store.state;
+  const { view } = store.state;
+
+  // Sidebar counters follow the same document-date range selected on the
+  // Dashboard. Product Master is intentionally excluded because it is a
+  // reference catalog, not document-date-scoped operational data.
+  const documents = store.getDateScopedDocuments();
+  const scopedProducts = store.getDateScopedProducts();
+  const productRows = scopedProducts.filter((p) => !p.suspectedNonProduct);
+  const skuKeys = new Set(
+    productRows
+      .map((p) => p.fields?.barcode?.value || p.fields?.article?.value)
+      .filter(Boolean)
+      .map(String)
+  );
   const counts = {
-    departments: dashboard?.departmentCount ?? 0,
-    products: dashboard?.skuCount ?? 0,
-    review: dashboard?.reviewCount ?? 0,
-    nonproduct: dashboard?.nonProductCount ?? 0,
+    departments: new Set(scopedProducts.map((p) => p.department).filter(Boolean)).size,
+    products: skuKeys.size,
+    review: productRows.filter((p) => p.reviewRequired).length,
+    nonproduct: scopedProducts.filter((p) => p.suspectedNonProduct).length,
     documents: documents.length,
   };
 
