@@ -143,7 +143,8 @@ const COLUMNS = [
 ];
 
 export function renderReview(container, store) {
-  const { products, panel } = store.state;
+  const { panel } = store.state;
+  const products = store.getDateScopedProducts();
   const { items, counts } = derivedReviewItems(products);
 
   container.innerHTML = `
