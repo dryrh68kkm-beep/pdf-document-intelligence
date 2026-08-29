@@ -144,6 +144,20 @@ class Store {
     };
     this._listeners = [];
     this._divisionCache = new Map();
+    // Shared date scope cache. Dashboard's document-date range is the
+    // application's authoritative working date scope, not a Dashboard-only
+    // visual filter: Products / Review / Non-product / Documents /
+    // Departments and sidebar counters all consume these same selections.
+    // Cache by source-array identity + date bounds so unrelated UI renders
+    // do not refilter tens of thousands of rows.
+    this._dateScopeCache = {
+      documentsRef: null,
+      productsRef: null,
+      dateFrom: null,
+      dateTo: null,
+      documents: [],
+      products: [],
+    };
     this._refreshAllInFlight = null;
     this._refreshAllQueued = false;
   }
@@ -160,6 +174,52 @@ class Store {
 
   hasProcessing() {
     return this.state.documents.some((d) => d.status === "processing");
+  }
+
+  _dateScopedSelections() {
+    const { documents, products, dashboardDateFrom, dashboardDateTo } = this.state;
+    const cached = this._dateScopeCache;
+    if (
+      cached.documentsRef === documents &&
+      cached.productsRef === products &&
+      cached.dateFrom === dashboardDateFrom &&
+      cached.dateTo === dashboardDateTo
+    ) {
+      return cached;
+    }
+
+    // With no Dashboard date selected, return the original arrays so views
+    // keep their existing memoization/reference behavior and pay no filter
+    // cost at all.
+    let scopedDocuments = documents;
+    let scopedProducts = products;
+    if (dashboardDateFrom || dashboardDateTo) {
+      scopedDocuments = documents.filter((doc) =>
+        inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo)
+      );
+      const completedDocumentIds = new Set(
+        scopedDocuments.filter((doc) => doc.status === "complete").map((doc) => doc.id)
+      );
+      scopedProducts = products.filter((product) => completedDocumentIds.has(product.docId));
+    }
+
+    Object.assign(cached, {
+      documentsRef: documents,
+      productsRef: products,
+      dateFrom: dashboardDateFrom,
+      dateTo: dashboardDateTo,
+      documents: scopedDocuments,
+      products: scopedProducts,
+    });
+    return cached;
+  }
+
+  getDateScopedDocuments() {
+    return this._dateScopedSelections().documents;
+  }
+
+  getDateScopedProducts() {
+    return this._dateScopedSelections().products;
   }
 
   _pruneDivisionCache(documents) {
