@@ -144,7 +144,7 @@ function statusStrip(documents) {
 // color meant for SOFT LINE. The name is what a viewer actually reads, so
 // that's what stays stably paired with its color - never by render-order
 // index, so a Division keeps the same color everywhere (donut, legend,
-// summary table) regardless of sort order or which date range is selected.
+// ranked chart) regardless of sort order or which date range is selected.
 // A name outside this fixed set still gets a *stable* color via a
 // deterministic hash of the name, not array position.
 const DIVISION_COLOR_BY_NAME = {
@@ -164,12 +164,9 @@ function colorForDivision(name) {
   return DIVISION_FALLBACK_PALETTE[hash % DIVISION_FALLBACK_PALETTE.length];
 }
 
-// Shared prep for both Division sections below: the filtered/sorted
-// Division entries (narrowed to the selected Division, if any, so the
-// chart/table never disagrees with the header filter or the KPI cards),
-// plus their percentages (allocatePercentages guarantees these foot to
-// exactly 100%) and grand totals. Returns null when there's nothing to
-// show, so both render functions share one "no data" check.
+// Shared prep for the Division value chart: filtered/sorted entries
+// (narrowed to the selected Division, if any), percentages that foot to
+// exactly 100%, and the real grand totals from the authoritative overview.
 function prepareDivisionEntries(overview) {
   if (!overview) return null;
   const entries = overview.divisions.filter(
@@ -182,21 +179,16 @@ function prepareDivisionEntries(overview) {
   const percentages = allocatePercentages(sorted.map(metric));
   const grandTotal = sorted.reduce((sum, d) => sum + metric(d), 0);
   const grandRowCount = sorted.reduce((sum, d) => sum + d.rowCount, 0);
-  // Document count is NOT summed across the visible Division rows - one
-  // document can contribute rows to several Divisions, so summing would
-  // double-count it. overview.totals.documentCount is the true distinct
-  // count already used by the "จำนวนเอกสาร" KPI card, so every total here
-  // always agrees with it exactly.
-  const grandDocCount = overview.totals.documentCount;
-  return { entries: sorted, byValue, metric, percentages, grandTotal, grandRowCount, grandDocCount };
+  return { entries: sorted, byValue, metric, percentages, grandTotal, grandRowCount };
 }
 
-// "สัดส่วนมูลค่าตาม Division" (spec section 9): one card, donut left (40%)
-// / compact legend right (60%) - just Division / มูลค่า / สัดส่วน, no
-// action column (that lives in the fuller summary table below). Falls back
-// to a quantity-based breakdown, clearly labeled, when no document in
-// range carries amount data rather than hiding the chart or inventing ฿0.
-function renderDivisionDonutCard(host, overview) {
+// One decision-focused Division chart replaces the old donut + duplicate
+// summary table. Horizontal bars make magnitude directly comparable while
+// the aligned columns preserve exact value, share, and row-count reading.
+// Rows retain the existing drill-down into Products without adding an
+// extra visible action column. When amount data is unavailable, the same
+// component clearly falls back to row count rather than inventing ฿0.
+function renderDivisionValueChart(host, overview, departmentsByDivision, onRowClick) {
   const prepared = prepareDivisionEntries(overview);
   if (!prepared) {
     host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">กำลังโหลดข้อมูลสรุป...</div>`;
@@ -206,105 +198,44 @@ function renderDivisionDonutCard(host, overview) {
     host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูลสินค้าในช่วงวันที่ / ฝ่ายที่เลือก</div>`;
     return;
   }
-  const { entries, byValue, percentages, grandTotal } = prepared;
-
-  let offset = 0;
-  const segments = entries
-    .map((d, i) => {
-      const pct = percentages[i];
-      const seg = `${colorForDivision(d.divisionName)} ${offset}% ${offset + pct}%`;
-      offset += pct;
-      return seg;
-    })
-    .join(", ");
-
-  const centerValue = byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal);
-  const centerLabel = byValue ? "มูลค่ารวม (บาท)" : "จำนวนรายการรวม";
+  const { entries, byValue, metric, percentages, grandTotal, grandRowCount } = prepared;
+  const maxMetric = Math.max(...entries.map(metric), 1);
+  const metricLabel = byValue ? "มูลค่า (บาท)" : "จำนวนรายการ";
 
   host.innerHTML = `
-    <div class="dash-division-donut-grid">
-      <div class="donut-wrap">
-        <div style="width:170px;height:170px;border-radius:50%;background:conic-gradient(${segments});display:flex;align-items:center;justify-content:center;">
-          <div style="width:112px;height:112px;border-radius:50%;background:var(--surface);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
-            <div class="mono" style="font-size:16px;font-weight:700;color:var(--text);">${centerValue}</div>
-            <div style="font-size:10px;color:var(--text-faint);">${centerLabel}</div>
-          </div>
-        </div>
-      </div>
-      <div class="dash-division-legend">
-        <div class="dash-division-legend-head">
-          <span>Division</span><span class="num">${byValue ? "มูลค่า (บาท)" : "จำนวนรายการ"}</span><span class="num">สัดส่วน</span>
-        </div>
-        ${entries
-          .map(
-            (d, i) => `
-          <div class="dash-division-legend-row">
-            <span class="dash-division-legend-name"><span class="donut-legend-dot" style="background:${colorForDivision(d.divisionName)};"></span>${escapeHtml(d.divisionName)}</span>
-            <span class="num mono">${byValue ? fmtBaht(d.amount) : fmtNum(d.rowCount)}</span>
-            <span class="num mono">${percentages[i]}%</span>
-          </div>`
-          )
-          .join("")}
-        <div class="dash-division-legend-row dash-division-legend-total">
-          <span class="dash-division-legend-name">รวม</span>
-          <span class="num mono">${byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal)}</span>
-          <span class="num mono">100%</span>
-        </div>
-      </div>
-    </div>`;
-}
-
-// "สรุปมูลค่าตาม Division" (spec section 12): the fuller table - Division /
-// มูลค่า / สัดส่วน / จำนวนรายการ / จำนวนเอกสาร / Action - each row's Action
-// reuses the existing Products-page Division filter (an array of that
-// Division's departments), the same "view what's inside this Division"
-// entry point the Dashboard already had - not a new detail page.
-function renderDivisionSummaryTable(host, overview, departmentsByDivision, onRowClick) {
-  const prepared = prepareDivisionEntries(overview);
-  if (!prepared) {
-    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">กำลังโหลดข้อมูลสรุป...</div>`;
-    return;
-  }
-  if (!prepared.entries.length) {
-    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีข้อมูลสินค้าในช่วงวันที่ / ฝ่ายที่เลือก</div>`;
-    return;
-  }
-  const { entries, byValue, percentages, grandTotal, grandRowCount, grandDocCount } = prepared;
-
-  host.innerHTML = `
-    <div class="data-table-wrap">
-      <table class="data-table">
+    <div class="division-value-table-wrap">
+      <table class="division-value-table">
         <thead><tr>
           <th>Division</th>
-          <th class="num">${byValue ? "มูลค่า (บาท)" : "จำนวนรายการ"}</th>
+          <th class="division-value-bar-head" aria-label="กราฟเปรียบเทียบ"></th>
+          <th class="num">${metricLabel}</th>
           <th class="num">สัดส่วน</th>
           <th class="num">จำนวนรายการ</th>
-          <th class="num">จำนวนเอกสาร</th>
-          <th></th>
         </tr></thead>
         <tbody>
           ${entries
             .map(
               (d, i) => `
-            <tr class="division-summary-row" data-code="${escapeHtml(d.divisionCode)}" data-name="${escapeHtml(d.divisionName)}">
-              <td><span class="donut-legend-dot" style="background:${colorForDivision(d.divisionName)};display:inline-block;margin-right:7px;"></span>${escapeHtml(d.divisionName)}</td>
-              <td class="num mono">${byValue ? fmtBaht(d.amount) : fmtNum(d.rowCount)}</td>
+            <tr class="division-value-row" tabindex="0" role="link" title="ดูสินค้าใน ${escapeHtml(d.divisionName)}" data-code="${escapeHtml(d.divisionCode)}" data-name="${escapeHtml(d.divisionName)}">
+              <td><span class="division-value-name"><span class="donut-legend-dot" style="background:${colorForDivision(d.divisionName)};"></span>${escapeHtml(d.divisionName)}</span></td>
+              <td class="division-value-bar-cell">
+                <span class="division-value-track" aria-hidden="true">
+                  <span class="division-value-fill" style="width:${Math.max(1.5, (metric(d) / maxMetric) * 100)}%;background:${colorForDivision(d.divisionName)};"></span>
+                </span>
+              </td>
+              <td class="num mono division-value-amount">${byValue ? fmtBaht(d.amount) : fmtNum(d.rowCount)}</td>
               <td class="num mono">${percentages[i]}%</td>
               <td class="num mono">${fmtNum(d.rowCount)}</td>
-              <td class="num mono">${fmtNum(d.documentCount)}</td>
-              <td class="num"><button type="button" class="dash-panel-link" data-division-action="${escapeHtml(d.divisionCode)}">ดู ›</button></td>
             </tr>`
             )
             .join("")}
         </tbody>
         <tfoot>
-          <tr class="division-summary-total">
-            <td>รวม</td>
+          <tr class="division-value-total">
+            <td colspan="2">รวม</td>
             <td class="num mono">${byValue ? fmtBaht(grandTotal) : fmtNum(grandTotal)}</td>
             <td class="num mono">100%</td>
             <td class="num mono">${fmtNum(grandRowCount)}</td>
-            <td class="num mono">${fmtNum(grandDocCount)}</td>
-            <td></td>
           </tr>
         </tfoot>
       </table>
@@ -314,16 +245,13 @@ function renderDivisionSummaryTable(host, overview, departmentsByDivision, onRow
     const depts = departmentsByDivision.get(code) || [];
     onRowClick(depts, name);
   };
-  host.querySelectorAll(".division-summary-row").forEach((row) => {
+  host.querySelectorAll(".division-value-row").forEach((row) => {
     row.addEventListener("click", (e) => {
-      if (e.target.closest("[data-division-action]")) return; // handled below
       clickRow(row.dataset.code, row.dataset.name);
     });
-  });
-  host.querySelectorAll("[data-division-action]").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const row = btn.closest(".division-summary-row");
+    row.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
       clickRow(row.dataset.code, row.dataset.name);
     });
   });
@@ -597,11 +525,8 @@ export function renderDashboard(container, store) {
         : ""
     }
 
-    <div class="section-title">${dashboardOverview?.amountAvailable === false ? "สัดส่วนจำนวนรายการตาม Division" : "สัดส่วนมูลค่าตาม Division"}</div>
-    <div class="dash-panel" id="dashDivisionDonutCard"></div>
-
-    <div class="section-title">สรุปมูลค่าตาม Division</div>
-    <div id="dashDivisionSummaryTable"></div>
+    <div class="section-title">${dashboardOverview?.amountAvailable === false ? "จำนวนรายการตาม Division" : "มูลค่าตาม Division"}</div>
+    <div class="dash-panel dash-division-value-panel" id="dashDivisionValueChart"></div>
 
     <div class="section-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</div>
     <div class="dash-panel" id="dashDeptPiePanel">
@@ -663,8 +588,7 @@ export function renderDashboard(container, store) {
     });
   });
 
-  renderDivisionDonutCard(container.querySelector("#dashDivisionDonutCard"), dashboardOverview);
-  renderDivisionSummaryTable(container.querySelector("#dashDivisionSummaryTable"), dashboardOverview, departmentsByDivision, (depts, name) => {
+  renderDivisionValueChart(container.querySelector("#dashDivisionValueChart"), dashboardOverview, departmentsByDivision, (depts, name) => {
     store.navigate("products", { deptFilter: depts, deptFilterLabel: name });
   });
 
@@ -678,7 +602,7 @@ export function renderDashboard(container, store) {
   // computed once above from the date-range/Division header filter) on
   // every call - typing in the search box or changing sort only re-runs
   // this and repaints the table/pagination/count label, never the whole
-  // Dashboard (KPIs, Division donut/table, department pie all stay
+  // Dashboard (KPIs, Division value chart, department chart all stay
   // untouched), so it stays cheap even with tens of thousands of rows.
   function drawTable() {
     const searchedRows = applySearch(filteredRows);
