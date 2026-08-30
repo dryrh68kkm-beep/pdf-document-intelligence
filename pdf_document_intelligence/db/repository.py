@@ -48,6 +48,17 @@ class Repository:
     # ---------------- documents ----------------
 
     def create_document(self, doc_id: str, sha256: str, filename: str, file_size: int) -> dict:
+        # The read-back must happen inside the same write-lock-held
+        # transaction as the INSERT, not after it - two concurrent
+        # uploads each call create_document() in their own thread on the
+        # same shared connection (see db/connection.py's module docstring),
+        # and a read issued after releasing the lock can interleave with
+        # the *other* thread's still-in-flight write on that connection.
+        # Reproduced live: two concurrent POST /api/documents for the same
+        # file, the "winner" thread's post-lock get_document(doc_id) call
+        # returned None for the row it had just inserted, crashing
+        # document_summary_json() with a bare 500 instead of ever reaching
+        # the client with a 200.
         now = _now()
         with get_write_lock(), self._conn:
             self._conn.execute(
@@ -57,7 +68,8 @@ class Repository:
                    VALUES (?, ?, ?, ?, 'processing', 'queued', ?, ?, ?)""",
                 (doc_id, sha256, filename, file_size, now, now, now),
             )
-        return self.get_document(doc_id)
+            row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        return dict(row)
 
     def find_document_by_sha256(self, sha256: str) -> dict | None:
         row = self._conn.execute(
@@ -446,12 +458,22 @@ class Repository:
         self, barcode: str, product_name: str, department: str | None,
         unit: str | None, article_code: str | None, source_document_id: str | None,
     ) -> dict:
+        # Fast-fail only, same as apply_correction()'s pre-lock check in
+        # api/review.py - not authoritative. The INSERT below is what
+        # actually decides, and its (re-)read-back happens inside the same
+        # locked transaction (see create_document()'s docstring for why an
+        # unlocked read-after-write on the shared connection is unsafe).
         existing = self.find_local_master_by_barcode(barcode)
         if existing:
             return {"created": False, "entry": existing}
         now = _now()
         entry_id = new_id()
         with get_write_lock(), self._conn:
+            current = self._conn.execute(
+                "SELECT * FROM local_product_master WHERE barcode=?", (barcode,)
+            ).fetchone()
+            if current:
+                return {"created": False, "entry": dict(current)}
             self._conn.execute(
                 """INSERT INTO local_product_master
                    (id, barcode, article_code, product_name, department, unit,
@@ -460,7 +482,10 @@ class Repository:
                 (entry_id, barcode, article_code, product_name, department, unit,
                  source_document_id, now, now),
             )
-        return {"created": True, "entry": self.find_local_master_by_barcode(barcode)}
+            row = self._conn.execute(
+                "SELECT * FROM local_product_master WHERE barcode=?", (barcode,)
+            ).fetchone()
+        return {"created": True, "entry": dict(row)}
 
     def upsert_local_master_name(self, barcode: str, product_name: str, source_document_id: str | None) -> dict:
         """Unlike add_local_master() (insert-only, never overwrites), this
@@ -485,7 +510,10 @@ class Repository:
                        VALUES (?,?,?,?,?,?,?,?,?)""",
                     (new_id(), barcode, None, product_name, None, None, source_document_id, now, now),
                 )
-        return self.find_local_master_by_barcode(barcode)
+            row = self._conn.execute(
+                "SELECT * FROM local_product_master WHERE barcode=?", (barcode,)
+            ).fetchone()
+        return dict(row)
 
     def list_product_rows_by_barcode(self, barcode: str, exclude_row_id: str | None = None) -> list[dict]:
         """Every non-deleted row across every document sharing this
