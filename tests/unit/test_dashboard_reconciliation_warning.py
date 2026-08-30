@@ -28,7 +28,23 @@ NODE = shutil.which("node")
 
 def _extract_function(source: str, name: str) -> str:
     start = source.index(f"function {name}(")
-    brace_start = source.index("{", start)
+    # Find the end of the parameter list first (tracking paren depth, since a
+    # default value like `scope = {}` can itself contain balanced parens),
+    # then the function body's opening brace is the first "{" after that -
+    # a naive index("{", start) would instead match a `{}` default value
+    # inside the parameter list itself.
+    paren_start = source.index("(", start)
+    paren_depth = 0
+    i = paren_start
+    while True:
+        if source[i] == "(":
+            paren_depth += 1
+        elif source[i] == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        i += 1
+    brace_start = source.index("{", i)
     depth = 0
     i = brace_start
     while True:
@@ -41,13 +57,13 @@ def _extract_function(source: str, name: str) -> str:
         i += 1
 
 
-def _run(items, division_filter="all"):
+def _run(items, division_filter="all", scope=None):
     source = STATE.read_text(encoding="utf-8")
     fn_source = _extract_function(source, "buildDashboardOverview")
     script = f"""
 {fn_source}
 const items = {json.dumps(items)};
-console.log(JSON.stringify(buildDashboardOverview(items, {json.dumps(division_filter)})));
+console.log(JSON.stringify(buildDashboardOverview(items, {json.dumps(division_filter)}, {json.dumps(scope or {})})));
 """
     result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
@@ -97,3 +113,73 @@ def test_missing_reconciled_field_is_not_treated_as_unreconciled():
     items = [{"document": {"id": "a"}, "summary": {"amountAvailable": True, "documentTotals": {"rowCount": 1, "amount": 10.0}, "divisions": []}}]
     overview = _run(items)
     assert overview["unreconciledDocumentCount"] == 0
+
+
+# --- Dashboard/Products/Documents date-range consistency -------------------
+#
+# _computeDashboardOverview() in state.js must never silently drop a document
+# whose per-document Division summary fetch failed: documentCount/rowCount
+# are computed independently (from the same date-scoped documents/products
+# arrays Products.js and Documents use), not from summing over `items`, and
+# are passed in as `scope`. A failed summary should only shrink the
+# amount/Division breakdown, and must be surfaced via isDataIncomplete /
+# incompleteDocumentCount rather than silently vanishing.
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_scope_documentCount_and_rowCount_override_items_length():
+    """Even when `items` is missing a document (its summary failed and was
+    filtered out before calling buildDashboardOverview), the headline totals
+    must reflect the independently-computed scope, not len(items)."""
+    items = [_item("a", True, 100.0, row_count=3)]
+    overview = _run(items, scope={"documentCount": 2, "rowCount": 7, "incompleteDocumentCount": 1})
+    assert overview["totals"]["documentCount"] == 2
+    assert overview["totals"]["rowCount"] == 7
+    # The amount total still only reflects documents whose summary succeeded.
+    assert overview["totals"]["amount"] == 100.0
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_incomplete_document_count_surfaces_data_incomplete_flag():
+    items = [_item("a", True, 100.0)]
+    overview = _run(items, scope={"documentCount": 1, "rowCount": 1, "incompleteDocumentCount": 1})
+    assert overview["incompleteDocumentCount"] == 1
+    assert overview["isDataIncomplete"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_no_failures_reports_data_complete():
+    items = [_item("a", True, 100.0), _item("b", True, 50.0)]
+    overview = _run(items, scope={"documentCount": 2, "rowCount": 2, "incompleteDocumentCount": 0})
+    assert overview["incompleteDocumentCount"] == 0
+    assert overview["isDataIncomplete"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_scope_omitted_falls_back_to_items_length_for_backward_compatibility():
+    """Existing callers that don't pass a scope (e.g. these older tests) must
+    keep working exactly as before the fix."""
+    items = [_item("a", True, 100.0), _item("b", True, 50.0)]
+    overview = _run(items)
+    assert overview["totals"]["documentCount"] == 2
+    assert overview["totals"]["rowCount"] == 2
+    assert overview["isDataIncomplete"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_selected_division_totals_are_unaffected_by_scope():
+    """A single-Division slice has no alternative data source - scope must
+    not leak into it, only into the "all divisions" totals."""
+    item = {
+        "document": {"id": "a", "reconciled": True},
+        "summary": {
+            "amountAvailable": True,
+            "documentTotals": {"rowCount": 5, "amount": 100.0},
+            "divisions": [
+                {"divisionCode": "D1", "divisionName": "Div 1", "rowCount": 5, "amount": 100.0},
+            ],
+        },
+    }
+    overview = _run([item], division_filter="D1", scope={"documentCount": 99, "rowCount": 99, "incompleteDocumentCount": 1})
+    assert overview["totals"]["documentCount"] == 1
+    assert overview["totals"]["rowCount"] == 5

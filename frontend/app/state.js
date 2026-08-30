@@ -19,7 +19,18 @@ function inDocumentDateRange(documentDate, dateFrom, dateTo) {
   return true;
 }
 
-function buildDashboardOverview(items, divisionFilter) {
+// `items` covers only the documents whose per-document Division summary
+// fetch actually succeeded - a document in the selected date range whose
+// summary errored has no per-division/amount breakdown to contribute here,
+// there's no way around that. But `scope` (all-"all"-selection only)
+// carries the *real* documentCount/rowCount for the whole in-range set,
+// computed independently by the caller from the same documents/products
+// arrays Documents/Products use - so a summary failure never silently
+// shrinks the headline counts, only the money/division breakdown, and
+// `incompleteDocumentCount` says so explicitly instead of the numbers
+// just quietly not adding up (user requirement: never drop a document
+// whose Division summary errored without saying so).
+function buildDashboardOverview(items, divisionFilter, scope = {}) {
   const divisionMap = new Map();
   let amountAvailable = false;
   let allRows = 0;
@@ -74,16 +85,24 @@ function buildDashboardOverview(items, divisionFilter) {
     ? divisions.find((division) => division.divisionCode === divisionFilter) || null
     : null;
 
+  const incompleteDocumentCount = scope.incompleteDocumentCount ?? 0;
+
   const totals = selected
     ? {
+        // A single-Division slice is inherently derived from per-document
+        // Division summaries (there's no other source for "rows in this
+        // Division") - scope's independent counts don't apply here.
         rowCount: selected.rowCount,
         amount: selected.amount,
         documentCount: selected.documentCount,
       }
     : {
-        rowCount: allRows,
+        // Same source Documents/Products use (see _computeDashboardOverview),
+        // not a sum over `items` - so a Division-summary failure never
+        // shrinks these two, only the amount/division breakdown below.
+        rowCount: scope.rowCount ?? allRows,
         amount: Math.round((allAmount + Number.EPSILON) * 100) / 100,
-        documentCount: items.length,
+        documentCount: scope.documentCount ?? items.length,
       };
 
   return {
@@ -93,6 +112,8 @@ function buildDashboardOverview(items, divisionFilter) {
     selectedDivision: selected?.divisionCode ?? "all",
     unreconciledDocumentCount,
     unreconciledAmount: Math.round((unreconciledAmount + Number.EPSILON) * 100) / 100,
+    incompleteDocumentCount,
+    isDataIncomplete: incompleteDocumentCount > 0,
   };
 }
 
@@ -327,7 +348,7 @@ class Store {
     }
   }
 
-  async _computeDashboardOverview(documents = this.state.documents) {
+  async _computeDashboardOverview(documents = this.state.documents, products = this.state.products) {
     const { dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter } = this.state;
     const inRange = documents.filter(
       (doc) => doc.status === "complete" && inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo),
@@ -335,8 +356,21 @@ class Store {
     const pairs = await Promise.all(
       inRange.map(async (document) => ({ document, summary: await this._getDivisionSummary(document.id) })),
     );
+    // documentCount/rowCount come from the same date-scoped documents/products
+    // arrays Products.js and Documents use (see getDateScopedDocuments()/
+    // getDateScopedProducts()), not from summing over per-document Division
+    // summaries - so a Division-summary fetch failure below never shrinks
+    // these two headline counts, it only leaves that document out of the
+    // amount/Division breakdown and is surfaced via incompleteDocumentCount.
+    const inRangeDocIds = new Set(inRange.map((doc) => doc.id));
+    const rowCount = products.filter((p) => !p.suspectedNonProduct && inRangeDocIds.has(p.docId)).length;
+    const incompleteDocumentCount = pairs.filter((item) => !item.summary).length;
     const usable = pairs.filter((item) => item.summary);
-    return buildDashboardOverview(usable, dashboardDivisionFilter);
+    return buildDashboardOverview(usable, dashboardDivisionFilter, {
+      documentCount: inRange.length,
+      rowCount,
+      incompleteDocumentCount,
+    });
   }
 
   async refreshDashboardOverview() {

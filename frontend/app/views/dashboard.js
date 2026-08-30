@@ -513,6 +513,18 @@ export function renderDashboard(container, store) {
     </div>
 
     ${
+      dashboardOverview?.isDataIncomplete
+        ? `<div class="dash-reconcile-warning">
+            <span class="dash-reconcile-warning-icon">⚠</span>
+            <span>
+              ข้อมูลสรุปไม่สมบูรณ์ - ไม่สามารถดึงสรุป Division ของ ${fmtNum(dashboardOverview.incompleteDocumentCount)} เอกสารในช่วงวันที่นี้ได้
+              (จำนวนเอกสาร/จำนวนรายการด้านบนยังถูกต้อง แต่มูลค่ารวมและกราฟตาม Division อาจไม่รวมเอกสารดังกล่าว)
+            </span>
+          </div>`
+        : ""
+    }
+
+    ${
       dashboardOverview?.unreconciledDocumentCount > 0
         ? `<div class="dash-reconcile-warning">
             <span class="dash-reconcile-warning-icon">⚠</span>
