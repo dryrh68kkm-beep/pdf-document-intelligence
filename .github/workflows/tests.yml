@@ -71,6 +71,68 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[ocr,api,dev]"
 
+      # Required: chocolatey's tesseract package ships the binary reliably
+      # but not the Thai (tha) traineddata, so the language pack is fetched
+      # separately below. No continue-on-error - a failed install must
+      # fail the job now that Windows Thai OCR is a required gate.
+      - name: Install Tesseract OCR for Windows
+        run: choco install tesseract --no-progress -y
+
+      # Required: chocolatey's tesseract package does not reliably ship
+      # tha.traineddata, so it is fetched deterministically straight from
+      # the official tesseract-ocr/tessdata_fast repo and dropped into
+      # Tesseract's own tessdata directory. No continue-on-error - a
+      # failed/truncated download must fail the job, not silently leave
+      # Windows OCR English-only.
+      - name: Install Thai (tha) traineddata for Windows Tesseract
+        shell: pwsh
+        run: |
+          $tessdata = "C:\Program Files\Tesseract-OCR\tessdata"
+          New-Item -ItemType Directory -Force -Path $tessdata | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/tha.traineddata" `
+            -OutFile "$tessdata\tha.traineddata"
+          if (-not (Test-Path "$tessdata\tha.traineddata")) {
+            throw "tha.traineddata did not download"
+          }
+          $size = (Get-Item "$tessdata\tha.traineddata").Length
+          if ($size -lt 100000) {
+            throw "tha.traineddata looks truncated (size=$size bytes)"
+          }
+
+      # Makes the chocolatey-installed tesseract.exe visible to every
+      # later step in this job (GITHUB_PATH, not just the current shell).
+      - name: Add Tesseract-OCR to PATH
+        shell: pwsh
+        run: echo "C:\Program Files\Tesseract-OCR" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      # Lets pytesseract/tesseract find tessdata (and tha.traineddata
+      # specifically) from every later step, including the app's own
+      # health check, which shells out to `tesseract --list-langs`.
+      - name: Set TESSDATA_PREFIX
+        shell: pwsh
+        run: echo "TESSDATA_PREFIX=C:\Program Files\Tesseract-OCR\tessdata" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # Real assertion, not just log text: parses `tesseract --list-langs`
+      # output and fails the step (not just prints a warning) if either
+      # `eng` or, especially, `tha` is missing. This is the gate that
+      # makes the Thai OCR test below safe to run unconditionally instead
+      # of skipping.
+      - name: Verify Tesseract version and language packs
+        shell: pwsh
+        run: |
+          tesseract --version
+          $langsOutput = tesseract --list-langs 2>&1 | Out-String
+          Write-Host $langsOutput
+          $langs = $langsOutput -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+          if ($langs -notcontains "eng") {
+            throw "tesseract --list-langs did not report 'eng' as available"
+          }
+          if ($langs -notcontains "tha") {
+            throw "tesseract --list-langs did not report 'tha' as available"
+          }
+          Write-Host "Confirmed both 'eng' and 'tha' language packs are available."
+
       # Required, blocking: boots the real server as a subprocess on
       # 127.0.0.1 (a test-local bind, distinct from run.bat's own 0.0.0.0
       # LAN default, which this job does not touch), waits for
@@ -82,21 +144,11 @@ jobs:
       - name: Run Windows smoke/E2E tests (required)
         run: python -m pytest tests/windows/test_windows_e2e.py -v
 
-      # Best-effort only: chocolatey's tesseract package has not reliably
-      # shipped Thai (tha) traineddata in CI, so a real-OCR-on-Windows
-      # check cannot be a required gate without risking a red build for
-      # reasons unrelated to this repo's own regressions. Failing to
-      # install must not fail the job.
-      - name: Try installing Tesseract OCR for Windows (best-effort)
-        continue-on-error: true
-        run: choco install tesseract --no-progress -y
-
-      # Optional, non-blocking: only exercises real OCR if the step above
-      # actually produced a Thai-capable Tesseract; every test in this
-      # file skips itself otherwise (see the file's own docstring).
-      - name: Run optional real-OCR-on-Windows checks (non-blocking)
-        continue-on-error: true
-        run: python -m pytest tests/windows/test_windows_real_ocr_optional.py -v
+      # Required, blocking: the Thai-capable Tesseract install above is
+      # verified before this step runs, so no test in this file skips
+      # itself anymore - a real Thai OCR failure here is a real failure.
+      - name: Run Windows real Thai OCR tests (required)
+        run: python -m pytest tests/windows/test_windows_real_ocr.py -v
 
   concurrency-stress:
     name: Concurrency / LAN stress regression
