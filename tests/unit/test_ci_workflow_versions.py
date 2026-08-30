@@ -83,15 +83,25 @@ def test_windows_job_targets_windows_latest_and_runs_required_e2e_suite():
     assert len(windows_jobs) == 1, "expected exactly one windows-latest job"
     windows_job = windows_jobs[0]
 
-    required_steps = [s for s in windows_job["steps"] if not s.get("continue-on-error")]
-    required_run = " ".join(s.get("run", "") for s in required_steps)
-    assert "tests/windows" in required_run
-    assert "test_windows_real_ocr_optional" not in required_run or True  # optional step is separate, see below
-
-    # The optional real-OCR step, if present, must be marked non-blocking.
+    # No step in this job may be a non-blocking best-effort step anymore -
+    # both the smoke/E2E suite and the real Thai OCR suite are required
+    # gates, and so is every setup step that makes the Thai OCR suite
+    # deterministic (tesseract install, tha.traineddata download, PATH/
+    # TESSDATA_PREFIX, and the lang-pack verification step).
     for step in windows_job["steps"]:
-        if "real_ocr_optional" in step.get("run", ""):
-            assert step.get("continue-on-error") is True
+        assert not step.get("continue-on-error"), (
+            f"windows-e2e step {step.get('name')!r} must not be continue-on-error "
+            "- Windows Thai OCR CI is a required, non-optional gate"
+        )
+
+    run_steps = " ".join(step.get("run", "") for step in windows_job["steps"])
+    assert "tests/windows/test_windows_e2e.py" in run_steps
+    assert "tests/windows/test_windows_real_ocr.py" in run_steps
+    assert "test_windows_real_ocr_optional" not in run_steps
+
+    # The Thai traineddata download must be present and not itself marked
+    # optional/best-effort.
+    assert "tha.traineddata" in run_steps
 
 
 def test_concurrency_stress_job_exists_and_runs_required_suite():
