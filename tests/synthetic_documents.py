@@ -29,6 +29,7 @@ def make_bigc_pdf(path: Path) -> Path:
     page.insert_text((20, 75), "Consignee : SYNTHETIC STORE", fontsize=8)
     page.insert_text((20, 95), "Route : TEST-ROUTE", fontsize=8)
     page.insert_text((20, 120), "Department : SYNTHETIC FOOD", fontsize=8)
+    page.insert_text((900, 75), "Document Date : 15/08/2026", fontsize=8)
     _write_row(page, 150, xs, headers)
     _write_row(
         page,
@@ -60,6 +61,7 @@ def make_bpdc_pdf(path: Path) -> Path:
     page.insert_text((20, 55), "Packing List", fontsize=11)
     page.insert_text((20, 75), "Consignee : SYNTHETIC STORE", fontsize=8)
     page.insert_text((20, 95), "Route : TEST-ROUTE", fontsize=8)
+    page.insert_text((900, 95), "Document Date : 16/08/2026", fontsize=8)
     page.insert_text((20, 155), "Pallet no. : SYN001 Lot no. : LOT001", fontsize=8)
     _write_row(page, 185, xs, headers)
     _write_row(
