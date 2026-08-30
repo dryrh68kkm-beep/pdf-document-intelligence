@@ -86,12 +86,21 @@ export function renderDocuments(container, store) {
   const documents = store.getDateScopedDocuments();
   const visible = filteredDocuments(documents);
 
+  // "Reprocess ทั้งหมด" targets the currently filtered/visible list (not
+  // just the current page - a user filtering down to e.g. only ผิดพลาด
+  // documents expects "all" to mean everything that filter matched, not
+  // just the 10 rows on screen), same status exclusion the per-row button
+  // already applies (a document already mid-processing can't be
+  // resubmitted - the backend's mark_reprocessing() would just 423 it).
+  const reprocessableCount = visible.filter((doc) => doc.status !== "processing").length;
+
   container.innerHTML = `
     <div class="workspace-header">
       <div>
         <div class="workspace-title">Documents</div>
         <div class="workspace-sub">แสดง ${visible.length} จาก ${documents.length} ไฟล์ในช่วงวันที่ที่เลือก${documents.length !== allDocuments.length ? ` · ทั้งหมด ${allDocuments.length} ไฟล์` : ""}</div>
       </div>
+      <button type="button" class="btn btn-sm" id="reprocessAllBtn" style="margin-left:auto;"${reprocessableCount ? "" : " disabled"}>Reprocess ทั้งหมด${reprocessableCount ? ` (${reprocessableCount})` : ""}</button>
     </div>
     <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <input class="search-input" id="docSearch" type="search" placeholder="ค้นหาชื่อไฟล์ / วันที่ / ประเภท" value="${escapeHtml(searchQuery)}">
@@ -111,6 +120,47 @@ export function renderDocuments(container, store) {
     </div>
     <div id="docList"></div>
   `;
+
+  container.querySelector("#reprocessAllBtn")?.addEventListener("click", () => {
+    const targets = visible.filter((doc) => doc.status !== "processing");
+    if (!targets.length) return;
+    store.set({
+      confirmDialog: {
+        title: `Reprocess ${targets.length} เอกสาร?`,
+        message: "เอกสารทั้งหมดที่ตรงกับตัวกรองปัจจุบัน (ยกเว้นเอกสารที่กำลังประมวลผลอยู่) จะถูกส่งประมวลผลใหม่",
+        onConfirm: async () => {
+          const btn = container.querySelector("#reprocessAllBtn");
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = `กำลังเริ่ม... (0/${targets.length})`;
+          }
+          let done = 0;
+          const results = await Promise.allSettled(
+            targets.map((doc) =>
+              api.reprocessDocument(doc.id).finally(() => {
+                done += 1;
+                if (btn) btn.textContent = `กำลังเริ่ม... (${done}/${targets.length})`;
+              }),
+            ),
+          );
+          await store.refreshAll();
+          const failed = results.filter((r) => r.status === "rejected");
+          if (failed.length) {
+            store.set({
+              errorDialog: {
+                title: "เริ่มประมวลผลใหม่ไม่สำเร็จบางรายการ",
+                message: `${failed.length} จาก ${targets.length} เอกสารเริ่มประมวลผลใหม่ไม่สำเร็จ: ${failed
+                  .map((r) => String(r.reason?.message || r.reason))
+                  .join(", ")}`,
+              },
+            });
+            document.dispatchEvent(new CustomEvent("show-error"));
+          }
+        },
+      },
+    });
+    document.dispatchEvent(new CustomEvent("show-confirm"));
+  });
 
   container.querySelector("#docSearch").addEventListener("input", (event) => {
     searchQuery = event.target.value;
