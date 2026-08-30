@@ -103,11 +103,17 @@ function rowConfidence(f) {
   return value == null ? null : Math.round(value * 100);
 }
 
+function fmtDate(value) {
+  if (!value) return "—";
+  return new Date(`${value}T00:00:00`).toLocaleDateString("th-TH", { year: "numeric", month: "short", day: "numeric" });
+}
+
 const COLUMNS = [
   { key: "article", label: "ARTICLE", render: (r) => `<span class="mono">${fmt(r.fields.article?.value)}</span>` },
   { key: "barcode", label: "BARCODE", render: (r) => `<span class="mono">${fmt(r.fields.barcode?.value)}</span>` },
   { key: "name", label: "ชื่อสินค้า", render: (r) => fmt(r.fields.name?.value) },
   { key: "dept", label: "แผนก", render: (r) => fmt(r.department) },
+  { key: "documentDate", label: "วันที่เอกสาร", render: (r) => fmtDate(r.documentDate) },
   { key: "pu", label: "PU", align: "num", render: (r) => `<span class="mono">${fmt(r.fields.pu_qty?.value)}</span>` },
   { key: "sku", label: "SKU QTY", align: "num", render: (r) => `<span class="mono">${fmt(r.fields.sku_qty?.value)}</span>` },
   { key: "source", label: "แหล่งที่มา", render: (r) => RESOLUTION_LABEL[r.resolutionStatus] || r.resolutionStatus || "—" },

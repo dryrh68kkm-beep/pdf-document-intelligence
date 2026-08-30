@@ -308,7 +308,17 @@ class Store {
       api.allProducts(),
       api.getDepartmentDivisions(),
     ]);
-    const products = rawProducts.map((p) => ({ ...p, _search: buildSearchIndex(p) }));
+    // Each product row's own document is looked up once here (rather than
+    // per-render in every view) so any view can show "which document date
+    // did this row come in on" without its own documents/products join -
+    // the same documentDate field Dashboard/Products/Documents already
+    // scope by (see inDocumentDateRange() above), just carried onto the row.
+    const documentDateById = new Map(documents.map((doc) => [doc.id, doc.documentDate]));
+    const products = rawProducts.map((p) => ({
+      ...p,
+      documentDate: documentDateById.get(p.docId) ?? null,
+      _search: buildSearchIndex(p),
+    }));
     const previousDocumentId = this.state.currentDocumentId;
     const dateFilter = this.state.dashboardDateFilter;
     const visibleDocuments = dateFilter
