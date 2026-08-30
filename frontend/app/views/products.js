@@ -29,21 +29,18 @@ let lastSyncedStoreQuery = null;
 
 let cachedProductsRef = null;
 let cachedDeptFilter = null;
+let cachedDivisionFilter = null;
 let cachedBaseRows = [];
 let cachedQuery = null;
 let cachedQueryRows = [];
 
 // Extra in-view filters (department is already driven by store.state.deptFilter
-// via navigation from other views; these add resolution-status and
+// via navigation from other views; these add Division, resolution-status and
 // review-required narrowing directly on this view, entirely client-side over
 // the already-loaded product list - no new backend call).
+let divisionFilter = "all";
 let resolutionFilter = "all";
 let reviewFilter = "all";
-
-// Real pagination state (client-side, over the already-loaded product
-// list — see components/pagination.js).
-let page = 1;
-let pageSize = PAGE_SIZE_OPTIONS[0];
 
 function matchesDeptFilter(product, deptFilter) {
   if (!deptFilter) return true;
@@ -51,18 +48,33 @@ function matchesDeptFilter(product, deptFilter) {
   return product.department === deptFilter;
 }
 
-function baseRows(products, deptFilter) {
-  if (products === cachedProductsRef && deptFilter === cachedDeptFilter) return cachedBaseRows;
+function matchesDivisionFilter(product, divFilter, departmentDivisions) {
+  if (!divFilter || divFilter === "all") return true;
+  return departmentDivisions[product.department]?.code === divFilter;
+}
+
+// Real pagination state (client-side, over the already-loaded product
+// list — see components/pagination.js).
+let page = 1;
+let pageSize = PAGE_SIZE_OPTIONS[0];
+
+function baseRows(products, deptFilter, departmentDivisions) {
+  if (products === cachedProductsRef && deptFilter === cachedDeptFilter && divisionFilter === cachedDivisionFilter) {
+    return cachedBaseRows;
+  }
   cachedProductsRef = products;
   cachedDeptFilter = deptFilter;
-  cachedBaseRows = products.filter((p) => !p.suspectedNonProduct && matchesDeptFilter(p, deptFilter));
+  cachedDivisionFilter = divisionFilter;
+  cachedBaseRows = products.filter(
+    (p) => !p.suspectedNonProduct && matchesDeptFilter(p, deptFilter) && matchesDivisionFilter(p, divisionFilter, departmentDivisions),
+  );
   cachedQuery = null;
   cachedQueryRows = [];
   return cachedBaseRows;
 }
 
-function searchedRows(products, deptFilter, localQuery) {
-  const rows = baseRows(products, deptFilter);
+function searchedRows(products, deptFilter, departmentDivisions, localQuery) {
+  const rows = baseRows(products, deptFilter, departmentDivisions);
   const q = (localQuery || "").trim().toLowerCase();
   if (!q) return rows;
   if (q === cachedQuery) return cachedQueryRows;
@@ -136,7 +148,7 @@ const COLUMNS = [
 ];
 
 export function renderProducts(container, store) {
-  const { deptFilter, deptFilterLabel, panel, searchQuery } = store.state;
+  const { deptFilter, deptFilterLabel, panel, searchQuery, departmentDivisions } = store.state;
   const products = store.getDateScopedProducts();
   // deptFilter is either a single department string (picked from the
   // dropdown below, or a department-level click elsewhere) or an array of
@@ -149,7 +161,26 @@ export function renderProducts(container, store) {
     lastSyncedStoreQuery = searchQuery;
   }
 
-  const departments = [...new Set(products.map((p) => p.department).filter(Boolean))].sort();
+  // Division options come from the department->division master lookup
+  // (see api.getDepartmentDivisions()), restricted to divisions that
+  // actually have a department present in this date-scoped product set -
+  // no empty "ฝ่าย" entries with nothing under them.
+  const presentDepartments = new Set(products.map((p) => p.department).filter(Boolean));
+  const divisionMap = new Map();
+  presentDepartments.forEach((dept) => {
+    const div = departmentDivisions[dept];
+    if (div && !divisionMap.has(div.code)) divisionMap.set(div.code, div.name);
+  });
+  const divisions = [...divisionMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  // The แผนก dropdown is scoped to the selected ฝ่าย, so picking a Division
+  // first narrows which Departments are even offered - a department without
+  // a known Division (not in departmentDivisions) is only ever shown under
+  // "ทุกฝ่าย" so it never silently disappears from the list.
+  const departments = [...presentDepartments]
+    .filter((dept) => divisionFilter === "all" || departmentDivisions[dept]?.code === divisionFilter)
+    .sort();
+
   const resolutionOptions = Object.keys(RESOLUTION_LABEL)
     .filter((key) => products.some((p) => p.resolutionStatus === key))
     .map((key) => `<option value="${key}"${resolutionFilter === key ? " selected" : ""}>${RESOLUTION_LABEL[key]}</option>`)
@@ -169,6 +200,10 @@ export function renderProducts(container, store) {
     </div>
     <div class="filter-chip-bar">
       <input id="productFilter" class="search-input" type="text" placeholder="ค้นหาในตารางนี้..." value="${escapeHtml(localSearchText)}" />
+      <select id="productDivisionSelect" class="filter-chip">
+        <option value="all"${divisionFilter === "all" ? " selected" : ""}>ทุกฝ่าย</option>
+        ${divisions.map(([code, name]) => `<option value="${escapeHtml(code)}"${divisionFilter === code ? " selected" : ""}>${escapeHtml(name)}</option>`).join("")}
+      </select>
       <select id="productDeptSelect" class="filter-chip">
         <option value=""${!deptFilter ? " selected" : ""}>ทุกแผนก</option>
         ${departments.map((d) => `<option value="${escapeHtml(d)}"${deptFilter === d ? " selected" : ""}>${escapeHtml(d)}</option>`).join("")}
@@ -197,7 +232,7 @@ export function renderProducts(container, store) {
   const visibleEl = container.querySelector("#visibleCount");
 
   function draw(localQuery) {
-    const rows = applyExtraFilters(searchedRows(products, deptFilter, localQuery));
+    const rows = applyExtraFilters(searchedRows(products, deptFilter, departmentDivisions, localQuery));
     visibleEl.textContent = `${rows.length.toLocaleString()} รายการ`;
     const { pageRows, total } = paginate(rows, page, pageSize);
     renderDataTable(host, pageRows, {
@@ -233,6 +268,24 @@ export function renderProducts(container, store) {
     const val = e.target.value;
     localSearchText = val;
     debounceTimer = setTimeout(() => { page = 1; draw(val); }, 200);
+  });
+  container.querySelector("#productDivisionSelect").addEventListener("change", (e) => {
+    divisionFilter = e.target.value || "all";
+    page = 1;
+    // A department picked under the previous Division may not belong to the
+    // newly selected one - clear it rather than silently keep filtering by
+    // a department that's no longer even listed in the แผนก dropdown.
+    const currentDept = Array.isArray(deptFilter) ? null : deptFilter;
+    const stillValid =
+      divisionFilter === "all" || !currentDept || departmentDivisions[currentDept]?.code === divisionFilter;
+    if (stillValid) {
+      // The แผนก dropdown's own option list is scoped to divisionFilter, so
+      // a plain draw() (table/pagination only) would leave it showing the
+      // wrong departments - the whole view needs rebuilding, not just rows.
+      renderProducts(container, store);
+    } else {
+      store.navigate("products", { deptFilter: null, deptFilterLabel: null });
+    }
   });
   container.querySelector("#productDeptSelect").addEventListener("change", (e) => {
     page = 1;
