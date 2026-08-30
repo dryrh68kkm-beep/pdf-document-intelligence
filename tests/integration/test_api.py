@@ -551,7 +551,11 @@ def test_no_orphan_pdf_file_left_when_db_insert_fails(monkeypatch):
     def _boom(*args, **kwargs):
         raise sqlite3.DatabaseError("simulated unrelated DB failure")
 
-    monkeypatch.setattr(store.repo, "create_document", _boom)
+    # create_document_if_below_processing_cap (not the plain
+    # create_document) is the actual insert call upload_document() makes -
+    # see its docstring in db/repository.py for why the cap check moved
+    # into the same locked transaction as the insert.
+    monkeypatch.setattr(store.repo, "create_document_if_below_processing_cap", _boom)
 
     pdfs_dir = get_pdf_path("x").parent
     before = set(pdfs_dir.glob("*.pdf"))

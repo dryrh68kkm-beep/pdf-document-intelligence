@@ -276,7 +276,19 @@ async def upload_document(file: UploadFile, force: bool = False):
     target = get_pdf_path(doc_id)
     shutil.move(str(tmp_path), str(target))
     try:
-        doc = store.repo.create_document(doc_id, sha256, file.filename, file_size)
+        # create_document_if_below_processing_cap (not the plain
+        # create_document + the early _count_processing_documents() check
+        # above alone) is the actual enforcement point for the queue cap:
+        # the count and the insert happen inside one locked transaction,
+        # so a burst of concurrent uploads past the early fast-fail check
+        # above still can't all squeeze past the cap together (see that
+        # method's docstring in db/repository.py for the race it closes).
+        doc = store.repo.create_document_if_below_processing_cap(
+            doc_id, sha256, file.filename, file_size, _MAX_QUEUED_PROCESSING_JOBS
+        )
+        if doc is None:
+            target.unlink(missing_ok=True)
+            raise HTTPException(503, "Too many documents are already processing - please try again shortly")
     except sqlite3.DatabaseError as exc:
         # Two concurrent uploads of the same file can both pass the
         # find_by_hash check before either commits. Depending on sqlite/Python
