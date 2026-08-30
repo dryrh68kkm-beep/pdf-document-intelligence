@@ -71,6 +71,49 @@ class Repository:
             row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         return dict(row)
 
+    def create_document_if_below_processing_cap(
+        self, doc_id: str, sha256: str, filename: str, file_size: int, cap: int
+    ) -> dict | None:
+        """Same insert as create_document(), plus an admission check for
+        the processing-queue backlog cap (api/app.py's
+        `_MAX_QUEUED_PROCESSING_JOBS`) done in the *same* locked
+        transaction as the INSERT, not as a separate earlier read.
+
+        Hardening fix: app.py's own pre-upload `_count_processing_documents()
+        >= _MAX_QUEUED_PROCESSING_JOBS` check (kept, unchanged, as a
+        fast-fail before spending time streaming a large upload to disk)
+        is a plain read with no lock - reproduced under real thread
+        concurrency (a burst of uploads well past the cap arriving at
+        once), every one of them can observe the count as still under the
+        cap before any of their own inserts land, so the cap ends up not
+        enforced at all rather than admitting exactly `cap` in flight.
+        This method is the actual enforcement point: the COUNT and the
+        INSERT happen inside one `get_write_lock()`-held transaction, so
+        no two concurrent callers can both observe room for the last slot.
+        Returns None (nothing written) if the cap is already met at the
+        moment this call takes the lock; the created document dict
+        otherwise. The public behavior this closes the race for -
+        "too many in flight" still surfaces to the client as the same 503
+        with the same message app.py has always returned - is otherwise
+        unchanged.
+        """
+        now = _now()
+        with get_write_lock(), self._conn:
+            current = self._conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE status='processing'"
+            ).fetchone()[0]
+            if current >= cap:
+                return None
+            self._conn.execute(
+                """INSERT INTO documents
+                   (id, sha256, filename, file_size, status, progress_stage,
+                    uploaded_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 'processing', 'queued', ?, ?, ?)""",
+                (doc_id, sha256, filename, file_size, now, now, now),
+            )
+            row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        return dict(row)
+
     def find_document_by_sha256(self, sha256: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM documents WHERE sha256 = ? AND deleted_at IS NULL", (sha256,)
