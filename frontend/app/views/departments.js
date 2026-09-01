@@ -86,7 +86,12 @@ function deptCard(d, store) {
   // otherwise stick and show the WRONG department name as the Products
   // page title even though the actual filtered rows are for this
   // department - looking like the click went to the wrong place.
-  card.addEventListener("click", () => store.navigate("products", { deptFilter: d.name, deptFilterLabel: null }));
+  // deptFilterFrom: "departments" - so Products' own back-link can return
+  // here specifically, instead of just clearing the filter and staying on
+  // Products (user report: clicking a department card had no way back to
+  // the Departments summary/totals view at all - only the sidebar's own
+  // "Departments" link, easy to miss after landing on a filtered list).
+  card.addEventListener("click", () => store.navigate("products", { deptFilter: d.name, deptFilterLabel: null, deptFilterFrom: "departments" }));
   return card;
 }
 
