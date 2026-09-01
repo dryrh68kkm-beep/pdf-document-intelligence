@@ -13,6 +13,29 @@ from fastapi import HTTPException
 from pdf_document_intelligence.db.errors import RowConflictError, RowNotFoundError
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN, NUMERIC_FIELDS
 from pdf_document_intelligence.db.repository import Repository
+from pdf_document_intelligence.tables.geometry import ARTICLE_RE, BARCODE_RE
+
+# The packing-list templates (templates/packing_list_bigc.py,
+# templates/packing_list_bpdc.py) mark every editable column required
+# except remarks/unit_price/amount/unit/department - department has its own
+# MISSING_DEPARTMENT reason below. Mirrored here (not imported) because the
+# templates express "required" per raw source column, not per this table's
+# DB column name.
+_REQUIRED_COLUMNS = {"article_code", "barcode", "resolved_product_name", "weight_qty", "pu_qty", "sku_qty"}
+
+# Reasons tables/fields.py and validate/cross_validate.py attach purely to
+# describe how little the pipeline trusted its own OCR/extraction of a
+# field's raw value - not an invariant about the row's current data. Once a
+# human has typed a value into any field on the row (resolution_status
+# becomes CORRECTED), that human judgment supersedes the original
+# extraction's self-doubt: matching confirm_review_row's own "safe reasons"
+# list a few lines down (none of these appear in ITS unsafe set either), a
+# correction clears them unconditionally rather than leaving a row a human
+# already edited stuck in Review forever.
+_EXTRACTION_TRUST_REASONS = {
+    "TEXT_LAYER_UNRELIABLE", "COLUMN_OVERFLOW_SPLIT", "OCR_LOW_CONFIDENCE",
+    "SOURCE_CONFLICT", "CATALOG_NAME_MISMATCH",
+}
 
 # Re-exported: api/app.py catches this as `review_api.RowConflictError`. The
 # class itself lives in db/errors.py (not here) because repository.py must
@@ -127,10 +150,20 @@ def _recompute_review_flags(row: dict, changed_column: str, new_value) -> tuple[
     are all present, flag AMOUNT_MISMATCH if they don't reconcile; clears
     automatically once corrected values agree, by simply not re-adding the
     flag. Never fabricates the check for a document type that doesn't
-    carry these fields (all three None => no mismatch flag possible)."""
+    carry these fields (all three None => no mismatch flag possible).
+
+    A correction only ever touches one row at a time, so every flag here is
+    either re-derived fresh from the row's current (post-correction) data -
+    never trusted stale from before the edit - or, for the pipeline's own
+    extraction-trust flags, dropped outright per _EXTRACTION_TRUST_REASONS'
+    reasoning above. A row that still has a real problem after the edit
+    (still missing a required field, still an invalid barcode, still an
+    amount mismatch) keeps showing in Review - only what the correction
+    actually fixed disappears."""
     merged = dict(row)
     merged[changed_column] = new_value
     reasons = set(json.loads(row.get("review_reasons") or "[]"))
+    reasons -= _EXTRACTION_TRUST_REASONS
     reasons.discard("AMOUNT_MISMATCH")
 
     qty = merged.get("sku_qty") if merged.get("sku_qty") is not None else merged.get("pu_qty")
@@ -144,6 +177,23 @@ def _recompute_review_flags(row: dict, changed_column: str, new_value) -> tuple[
         reasons.add("MISSING_DEPARTMENT")
     else:
         reasons.discard("MISSING_DEPARTMENT")
+
+    # MISSING_FIELD/TYPE_PARSE_FAILED are per-field in origin but flattened
+    # into one row-level set - re-derived from every required column still
+    # on the row (not just the one just corrected), so fixing one required
+    # field never hides a different one that's still genuinely empty.
+    if all(merged.get(col) not in (None, "") for col in _REQUIRED_COLUMNS):
+        reasons.discard("MISSING_FIELD")
+        reasons.discard("TYPE_PARSE_FAILED")
+
+    if changed_column == "article_code":
+        article = merged.get("article_code")
+        if article and ARTICLE_RE.fullmatch(str(article)):
+            reasons.discard("INVALID_ARTICLE_FORMAT")
+    if changed_column == "barcode":
+        barcode = merged.get("barcode")
+        if barcode and BARCODE_RE.fullmatch(str(barcode)):
+            reasons.discard("INVALID_BARCODE_FORMAT")
 
     return (len(reasons) > 0), sorted(reasons)
 
