@@ -129,6 +129,12 @@ class Store {
       // (e.g. from the Dashboard's "มูลค่าตามฝ่าย" table) - a plain string
       // deptFilter doesn't need this, it's shown directly as the title.
       deptFilterLabel: null,
+      // "departments" when deptFilter was set by clicking a card on the
+      // Departments page - lets Products' back-link return there instead of
+      // just clearing the filter and staying on Products (user report:
+      // clicking a department card had no way back to the Departments
+      // summary/totals view at all).
+      deptFilterFrom: null,
       panel: null,
       searchQuery: "",
       currentDocumentId: null,

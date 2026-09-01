@@ -154,7 +154,7 @@ const COLUMNS = [
 ];
 
 export function renderProducts(container, store) {
-  const { deptFilter, deptFilterLabel, panel, searchQuery, departmentDivisions } = store.state;
+  const { deptFilter, deptFilterLabel, deptFilterFrom, panel, searchQuery, departmentDivisions } = store.state;
   const products = store.getDateScopedProducts();
   // deptFilter is either a single department string (picked from the
   // dropdown below, or a department-level click elsewhere) or an array of
@@ -198,8 +198,10 @@ export function renderProducts(container, store) {
   const hadFocus = container.querySelector("#productFilter") === document.activeElement;
   const selectionStart = hadFocus ? container.querySelector("#productFilter").selectionStart : null;
 
+  const backLinkLabel = deptFilterFrom === "departments" ? "‹ กลับไปหน้าแผนก" : "‹ ทุกแผนก";
+
   container.innerHTML = `
-    ${deptFilter ? `<div class="back-link" id="clearDept">‹ ทุกแผนก</div>` : ""}
+    ${deptFilter ? `<div class="back-link" id="clearDept">${backLinkLabel}</div>` : ""}
     <div class="workspace-header">
       <div class="workspace-title">${escapeHtml(filterTitle) || "Products"}</div>
       <div class="workspace-sub">รายการสินค้า</div>
@@ -230,7 +232,13 @@ export function renderProducts(container, store) {
   `;
 
   if (deptFilter) {
-    container.querySelector("#clearDept").addEventListener("click", () => store.navigate("products", { deptFilter: null, deptFilterLabel: null }));
+    container.querySelector("#clearDept").addEventListener("click", () => {
+      if (deptFilterFrom === "departments") {
+        store.navigate("departments");
+      } else {
+        store.navigate("products", { deptFilter: null, deptFilterLabel: null });
+      }
+    });
   }
 
   const host = container.querySelector("#tableHost");
@@ -290,12 +298,17 @@ export function renderProducts(container, store) {
       // wrong departments - the whole view needs rebuilding, not just rows.
       renderProducts(container, store);
     } else {
-      store.navigate("products", { deptFilter: null, deptFilterLabel: null });
+      // The department this Division change invalidated may have been the
+      // one that got here via a Departments-page card click - once the
+      // user's own Division choice clears it, "back" should go back to
+      // plain Products, not silently jump to Departments on a later
+      // unrelated navigation that happens to reuse this stale flag.
+      store.navigate("products", { deptFilter: null, deptFilterLabel: null, deptFilterFrom: null });
     }
   });
   container.querySelector("#productDeptSelect").addEventListener("change", (e) => {
     page = 1;
-    store.navigate("products", { deptFilter: e.target.value || null, deptFilterLabel: null });
+    store.navigate("products", { deptFilter: e.target.value || null, deptFilterLabel: null, deptFilterFrom: null });
   });
   container.querySelector("#productResolutionSelect").addEventListener("change", (e) => {
     resolutionFilter = e.target.value;
