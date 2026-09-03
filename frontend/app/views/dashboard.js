@@ -63,6 +63,58 @@ function isoMonthStart() {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`;
 }
 
+// Focus Items (user request, Loss Prevention watch-list): a card surfacing
+// only the rows an LP reviewer actually needs eyes on, out of possibly
+// thousands - high-risk categories (alcohol, milk powder, large
+// appliances) regardless of value, plus any row that's simply expensive or
+// a big-quantity line item, since either is worth a second look on its
+// own. Keyword lists and thresholds are the user's own stated criteria
+// (2026-09 request) - kept as named constants, not re-derived from
+// anything, so they can be tuned in one place without touching the
+// matching logic itself.
+const FOCUS_LIQUOR_DEPARTMENT = "LIQUOR";
+const FOCUS_NAME_KEYWORDS = {
+  liquor: ["เหล้า", "เบียร์", "วิสกี้", "ไวน์"],
+  milkPowder: ["นมผง", "milk powder"],
+  largeAppliance: ["ตู้เย็น", "ทีวี", "แอร์", "เครื่องซักผ้า"],
+};
+const FOCUS_AMOUNT_THRESHOLD = 1000;
+const FOCUS_QTY_THRESHOLD = 100;
+
+function _nameHasAnyKeyword(name, keywords) {
+  const lower = (name || "").toLowerCase();
+  return keywords.some((k) => lower.includes(k.toLowerCase()));
+}
+
+// Pure (no DOM/imports) so it's executed directly via Node in tests,
+// matching this project's established pattern for Dashboard business
+// logic (see buildDashboardOverview in state.js). Returns the matched
+// reason codes (empty array = not a focus item) rather than a plain
+// boolean, so the card can show *why* each row was flagged instead of
+// just that it was.
+function focusItemReasons(product) {
+  const reasons = [];
+  const name = product.fields?.name?.value;
+  if (product.department === FOCUS_LIQUOR_DEPARTMENT || _nameHasAnyKeyword(name, FOCUS_NAME_KEYWORDS.liquor)) {
+    reasons.push("liquor");
+  }
+  if (_nameHasAnyKeyword(name, FOCUS_NAME_KEYWORDS.milkPowder)) reasons.push("milkPowder");
+  if (_nameHasAnyKeyword(name, FOCUS_NAME_KEYWORDS.largeAppliance)) reasons.push("largeAppliance");
+  const amount = product.fields?.amount?.value;
+  if (typeof amount === "number" && amount >= FOCUS_AMOUNT_THRESHOLD) reasons.push("highAmount");
+  const qty = product.fields?.sku_qty?.value;
+  if (typeof qty === "number" && qty >= FOCUS_QTY_THRESHOLD) reasons.push("bigLot");
+  return reasons;
+}
+
+const FOCUS_REASON_LABELS = {
+  liquor: "เครื่องดื่มแอลกอฮอล์",
+  milkPowder: "นมผง",
+  largeAppliance: "เครื่องใช้ไฟฟ้าขนาดใหญ่",
+  highAmount: `มูลค่า ≥ ${FOCUS_AMOUNT_THRESHOLD.toLocaleString("th-TH")} บาท`,
+  bigLot: `จำนวน ≥ ${FOCUS_QTY_THRESHOLD.toLocaleString("th-TH")} ชิ้น`,
+};
+
 // Date-range shortcuts (spec section 2): all computed off today's real
 // calendar date, no new backend call - setDashboardOverviewFilters already
 // accepts an explicit {dateFrom, dateTo} pair.
@@ -257,6 +309,70 @@ function renderDivisionValueChart(host, overview, departmentsByDivision, onRowCl
   });
 }
 
+const FOCUS_ITEMS_DISPLAY_CAP = 30;
+
+// A card, not a full paginated table (Products already covers that): the
+// point is a quick LP scan of "what's flagged today", so this shows the
+// highest-value matches up to a cap and says plainly when more exist
+// rather than silently truncating.
+function renderFocusItemsPanel(host, focusRows, onRowClick) {
+  if (!focusRows.length) {
+    host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีรายการที่ต้องเฝ้าระวังในช่วงวันที่นี้</div>`;
+    return;
+  }
+
+  const shown = focusRows.slice(0, FOCUS_ITEMS_DISPLAY_CAP);
+  host.innerHTML = `
+    <div class="doc-table-wrap">
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>ชื่อสินค้า</th>
+            <th>Barcode</th>
+            <th>แผนก</th>
+            <th>เหตุผล</th>
+            <th class="num">จำนวน</th>
+            <th class="num">มูลค่า</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${shown
+            .map(
+              ({ product, reasons }) => `
+            <tr class="doc-table-row focus-items-row" data-row-id="${escapeHtml(product.rowId)}" tabindex="0">
+              <td>${escapeHtml(product.fields?.name?.value) || "—"}</td>
+              <td><span class="mono">${escapeHtml(product.fields?.barcode?.value) || "—"}</span></td>
+              <td>${escapeHtml(product.department) || "—"}</td>
+              <td>${reasons.map((r) => `<span class="pill pill-critical">${escapeHtml(FOCUS_REASON_LABELS[r] || r)}</span>`).join(" ")}</td>
+              <td class="num"><span class="mono">${fmtQty(product.fields?.sku_qty?.value)}</span></td>
+              <td class="num"><span class="mono">${product.fields?.amount?.value != null ? fmtBaht(product.fields.amount.value) : "—"}</span></td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+    ${
+      focusRows.length > FOCUS_ITEMS_DISPLAY_CAP
+        ? `<div class="workspace-sub" style="padding:10px 4px 0;">แสดง ${FOCUS_ITEMS_DISPLAY_CAP} จาก ${fmtNum(focusRows.length)} รายการ (เรียงตามมูลค่าสูงสุด)</div>`
+        : ""
+    }
+  `;
+
+  host.querySelectorAll(".focus-items-row").forEach((tr) => {
+    const rowId = tr.dataset.rowId;
+    const match = shown.find((f) => f.product.rowId === rowId);
+    if (!match) return;
+    const activate = () => onRowClick(match.product);
+    tr.addEventListener("click", activate);
+    tr.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      activate();
+    });
+  });
+}
+
 const PIE_COLORS = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6", "--text-faint"];
 const PIE_TOP_N = 6;
 
@@ -442,6 +558,14 @@ export function renderDashboard(container, store) {
   };
   const filteredRows = products.filter(inFilterRange);
 
+  // Focus Items: same date/Division-scoped rows the product list below
+  // uses, narrowed to the LP watch-list criteria - computed once per
+  // render (not per keystroke, nothing here depends on the search box).
+  const focusRows = filteredRows
+    .map((p) => ({ product: p, reasons: focusItemReasons(p) }))
+    .filter((f) => f.reasons.length > 0)
+    .sort((a, b) => (b.product.fields?.amount?.value ?? -1) - (a.product.fields?.amount?.value ?? -1));
+
   // Product-list's own local search box (spec section 13-14) - see
   // localSearchText/localDeptFilter/sortKey above for why this doesn't
   // trigger a full re-render on every keystroke: applySearch() is called
@@ -537,6 +661,9 @@ export function renderDashboard(container, store) {
         : ""
     }
 
+    <div class="section-title">สินค้าเฝ้าระวัง (Focus Items)${focusRows.length ? ` · ${fmtNum(focusRows.length)} รายการ` : ""}</div>
+    <div class="dash-panel" id="dashFocusItemsPanel"></div>
+
     <div class="section-title">${dashboardOverview?.amountAvailable === false ? "จำนวนรายการตาม Division" : "มูลค่าตาม Division"}</div>
     <div class="dash-panel dash-division-value-panel" id="dashDivisionValueChart"></div>
 
@@ -598,6 +725,10 @@ export function renderDashboard(container, store) {
       const [dateFrom, dateTo] = shortcut.range();
       refetch({ dateFrom, dateTo });
     });
+  });
+
+  renderFocusItemsPanel(container.querySelector("#dashFocusItemsPanel"), focusRows, (row) => {
+    store.openPanel({ type: "product", rowId: row.rowId, data: row });
   });
 
   renderDivisionValueChart(container.querySelector("#dashDivisionValueChart"), dashboardOverview, departmentsByDivision, (depts, name) => {
