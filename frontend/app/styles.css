@@ -1,34 +1,34 @@
 :root {
-  /* Botanical Premium palette (per the modern-ui-design Skill) - Soft
-     Botanical Commerce mode: warm-white background, white cards, ink
-     text, Deep Forest/Garden Green as the primary/active hues. Applied
-     globally since virtually every surface/text rule in this file already
-     reads these tokens, so the whole app adopts the same direction rather
-     than just the Dashboard page. */
-  --bg: #faf9f4;
+  /* LP Work Hub palette (per the lp-soft-modern-design Skill / attached
+     reference) - clean light-blue background, white cards, dark navy
+     text, blue/teal accents. Applied globally since virtually every
+     surface/text rule in this file already reads these tokens, so the
+     whole app adopts the same direction rather than just the Dashboard
+     page. */
+  --bg: #f4fbfd;
   --surface: #ffffff;
-  --surface-alt: #e8eee2;
-  --surface-sunken: #dfe8d9;
-  --table-row-hover: #eceee5;
-  --text: #182019;
-  --text-muted: #667064;
-  --text-faint: #a9aea5;
-  --border: #e7ebe0;
-  --border-strong: #afc2a5;
-  --accent: #4f7437;
-  --accent-strong: #1e3a25;
-  --accent-soft: #e5e9dd;
-  --purple: #667064;
-  --purple-soft: #e8e9e3;
-  --success: #1e3a25;
-  --success-soft: #e8eee2;
-  --warning: #b98a3e;
-  --warning-soft: #f2ecde;
-  --critical: #b5533f;
-  --critical-soft: #f2e5de;
-  /* Border is the primary space-divider (per spec) - shadow is a soft,
-     slightly warm-black lift per the Skill's "shadow สีเขียวอมดำแบบนุ่ม". */
-  --shadow: 0 1px 2px rgba(16, 29, 20, 0.06);
+  --surface-alt: #f7fbfc;
+  --surface-sunken: #eaf3f6;
+  --table-row-hover: #f0f8fb;
+  --text: #102a3a;
+  --text-muted: #6e8290;
+  --text-faint: #b6c0c7;
+  --border: #d6eaf0;
+  --border-strong: #b8cdd5;
+  --accent: #2499e5;
+  --accent-strong: #138fd2;
+  --accent-soft: #e5f5fd;
+  --purple: #20b8b0;
+  --purple-soft: #e3f8f6;
+  --success: #169b75;
+  --success-soft: #d9efed;
+  --warning: #d89a2b;
+  --warning-soft: #fff6dc;
+  --critical: #d84a43;
+  --critical-soft: #fdebea;
+  /* Border is the primary space-divider (per spec) - shadow is a soft
+     navy-tinted lift matching the Skill's card shadow. */
+  --shadow: 0 1px 2px rgba(16, 42, 58, 0.06);
   --radius: 10px;
   --font-ui: "IBM Plex Sans", "IBM Plex Sans Thai", -apple-system, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
@@ -36,36 +36,36 @@
   --sidebar-w-collapsed: 60px;
   --bottombar-h: 56px;
   --topbar-h: 56px;
-  --division-1: #4f7437;
-  --division-2: #1e3a25;
-  --division-3: #afc2a5;
-  --division-4: #b98a3e;
-  --division-5: #b5533f;
-  --division-6: #667064;
+  --division-1: #2499e5;
+  --division-2: #20b8b0;
+  --division-3: #138fd2;
+  --division-4: #d89a2b;
+  --division-5: #d84a43;
+  --division-6: #6e8290;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #101d14; --surface: #1e3a25; --surface-alt: #2a4530; --surface-sunken: #16291b; --table-row-hover: #24402a;
-    --text: #faf9f4; --text-muted: #afc2a5; --text-faint: #7e9078;
-    --border: #33482f; --border-strong: #46603f;
-    --accent: #4f7437; --accent-strong: #6b9450; --accent-soft: #25431f;
-    --purple: #8a9384; --purple-soft: #30352c;
-    --success: #5c8a52; --success-soft: #213620;
-    --warning: #d2a855; --warning-soft: #3d3018;
-    --critical: #cb8779; --critical-soft: #3d2620;
+    --bg: #0b1620; --surface: #102a3a; --surface-alt: #283f4e; --surface-sunken: #1a3345; --table-row-hover: #23394a;
+    --text: #f4fbfd; --text-muted: #9fb4c0; --text-faint: #6e8290;
+    --border: #24425a; --border-strong: #2f5573;
+    --accent: #2499e5; --accent-strong: #4fb6f0; --accent-soft: #133b54;
+    --purple: #5cd4cc; --purple-soft: #123b38;
+    --success: #4fbf97; --success-soft: #163a2e;
+    --warning: #e8b85c; --warning-soft: #3d2f14;
+    --critical: #e8746b; --critical-soft: #3d1e1b;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.55);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #101d14; --surface: #1e3a25; --surface-alt: #2a4530; --surface-sunken: #16291b; --table-row-hover: #24402a;
-  --text: #faf9f4; --text-muted: #afc2a5; --text-faint: #7e9078;
-  --border: #33482f; --border-strong: #46603f;
-  --accent: #6b9450; --accent-strong: #84ad68; --accent-soft: #25431f;
-  --purple: #8a9384; --purple-soft: #30352c;
-  --success: #5c8a52; --success-soft: #213620;
-  --warning: #d2a855; --warning-soft: #3d3018;
-  --critical: #cb8779; --critical-soft: #3d2620;
+  --bg: #0b1620; --surface: #102a3a; --surface-alt: #283f4e; --surface-sunken: #1a3345; --table-row-hover: #23394a;
+  --text: #f4fbfd; --text-muted: #9fb4c0; --text-faint: #6e8290;
+  --border: #24425a; --border-strong: #2f5573;
+  --accent: #2499e5; --accent-strong: #4fb6f0; --accent-soft: #133b54;
+  --purple: #5cd4cc; --purple-soft: #123b38;
+  --success: #4fbf97; --success-soft: #163a2e;
+  --warning: #e8b85c; --warning-soft: #3d2f14;
+  --critical: #e8746b; --critical-soft: #3d1e1b;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.55);
 }
 
@@ -119,14 +119,20 @@ button { font-family: inherit; }
 .body-row { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 0; }
 
 /* ---------- Sidebar ---------- */
-/* Navy per the reference mockup - kept as its own token block (not part of
-   :root's light/dark surface tokens above) since the mockup gives one fixed
-   sidebar look, not a light/dark variant. */
+/* Light per the reference mockup (LP Work Hub) - kept as its own token
+   block (not part of :root's light/dark surface tokens above) since the
+   mockup gives one fixed sidebar look, not a light/dark variant.
+   --sidebar-active-bg/--sidebar-active-text are the active nav item's own
+   soft-blue highlight, deliberately separate from --accent (which stays
+   the solid Primary Blue used for buttons) so the active pill can be a
+   soft tint instead of a solid block. */
 .sidebar {
-  --sidebar-bg: #1e3a25;
-  --sidebar-text: #afc2a5;
-  --sidebar-text-active: #ffffff;
-  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-bg: #ffffff;
+  --sidebar-text: #6e8290;
+  --sidebar-text-active: #102a3a;
+  --sidebar-hover-bg: #f0f8fb;
+  --sidebar-active-bg: #e5f5fd;
+  --sidebar-active-text: #2499e5;
   background: var(--sidebar-bg); border-right: none; padding: 14px 10px; overflow-y: auto; overflow-x: hidden; transition: width 150ms ease;
 }
 .sidebar-collapse-toggle {
@@ -139,13 +145,13 @@ button { font-family: inherit; }
   color: var(--sidebar-text); font-weight: 500; font-size: 13.5px; margin-bottom: 2px; user-select: none;
 }
 .nav-item:hover { background: var(--sidebar-hover-bg); color: var(--sidebar-text-active); }
-.nav-item.active { background: var(--accent); color: var(--sidebar-text-active); font-weight: 600; }
+.nav-item.active { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); font-weight: 600; }
 .nav-icon { display: inline-flex; flex: none; }
 .nav-item .count {
-  margin-left: auto; font-family: var(--font-data); font-size: 11px; background: rgba(255,255,255,0.12);
+  margin-left: auto; font-family: var(--font-data); font-size: 11px; background: var(--sidebar-hover-bg);
   border-radius: 999px; padding: 1px 7px; color: var(--sidebar-text);
 }
-.nav-item.active .count { background: rgba(255,255,255,0.28); color: var(--sidebar-text-active); }
+.nav-item.active .count { background: rgba(36, 153, 229, 0.14); color: var(--sidebar-active-text); }
 
 .sidebar.collapsed { width: var(--sidebar-w-collapsed); padding: 14px 8px; }
 .sidebar.collapsed .nav-item { justify-content: center; padding: 9px; }
@@ -336,7 +342,7 @@ button { font-family: inherit; }
 
 /* ---------- Drag overlay ---------- */
 .drag-overlay {
-  position: fixed; inset: 0; background: rgba(79, 116, 55, 0.1); backdrop-filter: blur(2px);
+  position: fixed; inset: 0; background: rgba(36, 153, 229, 0.1); backdrop-filter: blur(2px);
   border: 3px dashed var(--accent); z-index: 50; display: none; align-items: center; justify-content: center;
 }
 .drag-overlay.active { display: flex; }
@@ -526,7 +532,7 @@ button { font-family: inherit; }
   flex: none; width: 38px; height: 38px; border-radius: 10px;
   background: linear-gradient(160deg, var(--accent-strong), var(--accent));
   display: flex; align-items: center; justify-content: center; color: #fff;
-  box-shadow: 0 2px 6px -2px rgba(79, 116, 55, 0.5);
+  box-shadow: 0 2px 6px -2px rgba(36, 153, 229, 0.5);
 }
 .sidebar-logo-text { font-weight: 700; font-size: 13.5px; line-height: 1.25; color: #ffffff; }
 .sidebar.collapsed .sidebar-logo-text { display: none; }
@@ -542,17 +548,17 @@ button { font-family: inherit; }
 .sidebar.collapsed .sidebar-cta span.label { display: none; }
 
 /* ---------- Sidebar footer: user row ---------- */
-.sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.12); }
+.sidebar-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); }
 
 .sidebar-user { display: flex; align-items: center; gap: 9px; padding: 6px 4px; }
 .sidebar-user-avatar {
-  flex: none; width: 30px; height: 30px; border-radius: 50%; background: rgba(255, 255, 255, 0.15);
-  color: #ffffff; display: flex; align-items: center; justify-content: center;
+  flex: none; width: 30px; height: 30px; border-radius: 50%; background: #e5f5fd;
+  color: #2499e5; display: flex; align-items: center; justify-content: center;
   font-size: 11.5px; font-weight: 700;
 }
-.sidebar-user-name { font-size: 12.5px; font-weight: 600; color: #ffffff; }
-.sidebar-user-role { font-size: 11px; color: var(--sidebar-text, #afc2a5); }
-.sidebar-user-chevron { margin-left: auto; color: var(--sidebar-text, #afc2a5); display: flex; }
+.sidebar-user-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
+.sidebar-user-role { font-size: 11px; color: var(--sidebar-text, #6e8290); }
+.sidebar-user-chevron { margin-left: auto; color: var(--sidebar-text, #6e8290); display: flex; }
 .sidebar.collapsed .sidebar-user-name, .sidebar.collapsed .sidebar-user-role, .sidebar.collapsed .sidebar-user-chevron { display: none; }
 .sidebar.collapsed .sidebar-user { justify-content: center; }
 .sidebar { display: flex; flex-direction: column; }
@@ -592,6 +598,9 @@ button { font-family: inherit; }
   position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px 18px; box-shadow: var(--shadow);
 }
+.kpi-icon-card.focus-items-summary-card { cursor: pointer; }
+.kpi-icon-card.focus-items-summary-card:hover { border-color: var(--critical); }
+.kpi-icon-card.focus-items-summary-card:focus-visible { outline: 2px solid var(--critical); outline-offset: 1px; }
 .kpi-icon-badge {
   position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border-radius: 9px;
   display: flex; align-items: center; justify-content: center;
