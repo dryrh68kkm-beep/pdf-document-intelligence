@@ -756,6 +756,27 @@ button { font-family: inherit; }
 .dash-product-list-controls { display: flex; gap: 8px; flex-wrap: wrap; }
 .dash-product-list-controls .search-input { width: 240px; }
 
+/* ---------- Dashboard: Focus Items (LP watch-list) cards ---------- */
+.focus-items-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 22px 0 10px; }
+.focus-items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.focus-item-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); }
+.focus-item-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; cursor: pointer; }
+.focus-item-card-name { font-weight: 700; font-size: 13.5px; }
+.focus-item-card-meta { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.focus-item-card-chevron { flex: none; color: var(--text-faint); transition: transform 120ms ease; }
+.focus-item-card.expanded .focus-item-card-chevron { transform: rotate(180deg); }
+.focus-item-card-reasons { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 8px; }
+.focus-item-card-stats { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--text-muted); }
+.focus-item-card-grouped-note { font-size: 11px; color: var(--text-faint); margin-top: 4px; }
+.focus-item-card-detail { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.focus-item-detail-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  font: inherit; font-size: 12px; text-align: left; color: var(--text); background: var(--surface-alt);
+  border: none; border-radius: 6px; padding: 6px 9px; cursor: pointer;
+}
+.focus-item-detail-row:hover { background: var(--table-row-hover); }
+@media (prefers-reduced-motion: reduce) { .focus-item-card-chevron { transition: none; } }
+
 /* ---------- Responsive ----------
    Kept at the end of the file on purpose: several rules here (.sidebar,
    .kpi-icon-row) have an unconditional base definition later in normal
