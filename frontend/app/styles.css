@@ -1,28 +1,29 @@
 :root {
-  /* Palette per the Aug-2026 reference mockup (Dashboard UX/UI pass) -
-     applied globally since virtually every surface/text rule in this file
-     already reads these tokens, so the whole app adopts the same look
-     rather than just the Dashboard page. */
-  --bg: #f6f8fb;
+  /* Clean/Modern/Professional business-dashboard palette (Sep-2026 color
+     pass) - applied globally since virtually every surface/text rule in
+     this file already reads these tokens, so the whole app adopts the
+     same look rather than just the Dashboard page. */
+  --bg: #f5f7fa;
   --surface: #ffffff;
-  --surface-alt: #eef1f6;
-  --surface-sunken: #e4e7ec;
-  --text: #101828;
+  --surface-alt: #f8fafc;
+  --surface-sunken: #edf1f5;
+  --table-row-hover: #f3f6fa;
+  --text: #1f2937;
   --text-muted: #667085;
   --text-faint: #98a2b3;
-  --border: #e4e7ec;
-  --border-strong: #d0d5dd;
-  --accent: #2563eb;
-  --accent-strong: #1d4ed8;
-  --accent-soft: #dbeafe;
-  --purple: #9b51e0;
-  --purple-soft: #f3e8fd;
-  --success: #12b76a;
-  --success-soft: #e1f7ec;
-  --warning: #f79009;
-  --warning-soft: #fef0c7;
-  --critical: #f04438;
-  --critical-soft: #fee4e2;
+  --border: #e3e8ef;
+  --border-strong: #d0d7e2;
+  --accent: #2f6fed;
+  --accent-strong: #123b63;
+  --accent-soft: #edf4ff;
+  --purple: #8064d6;
+  --purple-soft: #f2eefc;
+  --success: #2e9d69;
+  --success-soft: #eaf7f0;
+  --warning: #d99a2b;
+  --warning-soft: #fff7e6;
+  --critical: #d95c5c;
+  --critical-soft: #fdeeee;
   /* Border is the primary space-divider (per spec) - shadow is now just a
      faint lift, not the heavier two-layer drop shadow used before. */
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
@@ -33,20 +34,20 @@
   --sidebar-w-collapsed: 60px;
   --bottombar-h: 56px;
   --topbar-h: 56px;
-  --division-1: #3478f6;
-  --division-2: #2db486;
-  --division-3: #d99a1f;
-  --division-4: #9560d8;
-  --division-5: #ef6570;
-  --division-6: #4d91a8;
+  --division-1: #2f6fed;
+  --division-2: #2e9d69;
+  --division-3: #d99a2b;
+  --division-4: #8064d6;
+  --division-5: #d95c5c;
+  --division-6: #4d8fa6;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #10151c; --surface: #1a222c; --surface-alt: #212b37; --surface-sunken: #171f28;
+    --bg: #10151c; --surface: #1a222c; --surface-alt: #212b37; --surface-sunken: #171f28; --table-row-hover: #212b37;
     --text: #e8ecf1; --text-muted: #a1abba; --text-faint: #6d7789;
     --border: #2c3746; --border-strong: #3c4a5c;
-    --accent: #60a5fa; --accent-strong: #93c5fd; --accent-soft: #1e3a5f;
+    --accent: #5b8def; --accent-strong: #9bc0fb; --accent-soft: #1e3a5f;
     --purple: #a78bfa; --purple-soft: #322254;
     --success: #5cba85; --success-soft: #1c3327;
     --warning: #dba54c; --warning-soft: #3a2e17;
@@ -55,10 +56,10 @@
   }
 }
 :root[data-theme="dark"] {
-  --bg: #10151c; --surface: #1a222c; --surface-alt: #212b37; --surface-sunken: #171f28;
+  --bg: #10151c; --surface: #1a222c; --surface-alt: #212b37; --surface-sunken: #171f28; --table-row-hover: #212b37;
   --text: #e8ecf1; --text-muted: #a1abba; --text-faint: #6d7789;
   --border: #2c3746; --border-strong: #3c4a5c;
-  --accent: #60a5fa; --accent-strong: #93c5fd; --accent-soft: #1e3a5f;
+  --accent: #5b8def; --accent-strong: #9bc0fb; --accent-soft: #1e3a5f;
   --purple: #a78bfa; --purple-soft: #322254;
   --success: #5cba85; --success-soft: #1c3327;
   --warning: #dba54c; --warning-soft: #3a2e17;
@@ -120,7 +121,7 @@ button { font-family: inherit; }
    :root's light/dark surface tokens above) since the mockup gives one fixed
    sidebar look, not a light/dark variant. */
 .sidebar {
-  --sidebar-bg: #062b55;
+  --sidebar-bg: #123b63;
   --sidebar-text: #c3d1e6;
   --sidebar-text-active: #ffffff;
   --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
@@ -333,7 +334,7 @@ button { font-family: inherit; }
 
 /* ---------- Drag overlay ---------- */
 .drag-overlay {
-  position: fixed; inset: 0; background: rgba(44, 95, 90, 0.12); backdrop-filter: blur(2px);
+  position: fixed; inset: 0; background: rgba(47, 111, 237, 0.1); backdrop-filter: blur(2px);
   border: 3px dashed var(--accent); z-index: 50; display: none; align-items: center; justify-content: center;
 }
 .drag-overlay.active { display: flex; }
@@ -366,7 +367,7 @@ button { font-family: inherit; }
 .modal-box p { margin: 0 0 16px; font-size: 13px; color: var(--text-muted); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .diagnostic-id { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.diagnostic-id code { background: var(--bg-subtle, #f1f3f5); padding: 2px 6px; border-radius: 4px; }
+.diagnostic-id code { background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; }
 .btn-small { padding: 2px 8px; font-size: 12px; }
 
 /* ---------- Review Queue: selected-row reason detail ---------- */
@@ -404,7 +405,7 @@ button { font-family: inherit; }
 .doc-table th.num, .doc-table td.num { text-align: right; }
 .doc-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .doc-table tbody tr:last-child td { border-bottom: none; }
-.doc-table tbody tr:hover { background: var(--surface-alt); }
+.doc-table tbody tr:hover { background: var(--table-row-hover); }
 .doc-table-row.problem { background: var(--critical-soft); }
 .doc-table-row.problem:hover { background: var(--critical-soft); filter: brightness(0.97); }
 .doc-table-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
@@ -521,9 +522,9 @@ button { font-family: inherit; }
 .sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 4px 8px 16px; }
 .sidebar-logo-mark {
   flex: none; width: 38px; height: 38px; border-radius: 10px;
-  background: linear-gradient(160deg, #1e3a8a, #1d4ed8);
+  background: linear-gradient(160deg, var(--accent-strong), var(--accent));
   display: flex; align-items: center; justify-content: center; color: #fff;
-  box-shadow: 0 2px 6px -2px rgba(29, 78, 216, 0.5);
+  box-shadow: 0 2px 6px -2px rgba(47, 111, 237, 0.5);
 }
 .sidebar-logo-text { font-weight: 700; font-size: 13.5px; line-height: 1.25; color: #ffffff; }
 .sidebar.collapsed .sidebar-logo-text { display: none; }
@@ -625,13 +626,13 @@ button { font-family: inherit; }
 .data-table-wrap { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); overflow-x: auto; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 760px; }
 .data-table thead th {
-  text-align: left; padding: 12px; color: #475467; font-size: 13px;
+  text-align: left; padding: 12px; color: var(--text-muted); font-size: 13px;
   font-weight: 600; background: var(--surface-alt); border-bottom: 1px solid var(--border); white-space: nowrap;
 }
 .data-table th.num, .data-table td.num { text-align: right; }
-.data-table td { padding: 14px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: #1D2939; }
+.data-table td { padding: 14px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; color: var(--text); }
 .data-table tbody tr:last-child td { border-bottom: none; }
-.data-table tbody tr:hover { background: var(--surface-alt); }
+.data-table tbody tr:hover { background: var(--table-row-hover); }
 .data-table tbody tr.selected { background: var(--accent-soft); }
 .data-table-actions { display: flex; gap: 6px; align-items: center; }
 .data-table-empty { text-align: center; color: var(--text-faint); padding: 34px 12px; }
@@ -732,7 +733,7 @@ button { font-family: inherit; }
 .division-value-table-wrap { overflow-x: auto; }
 .division-value-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; }
 .division-value-table th {
-  padding: 11px 14px; color: #475467; background: var(--surface-alt); border-bottom: 1px solid var(--border);
+  padding: 11px 14px; color: var(--text-muted); background: var(--surface-alt); border-bottom: 1px solid var(--border);
   font-size: 12.5px; font-weight: 600; text-align: left; white-space: nowrap;
 }
 .division-value-table th.num, .division-value-table td.num { text-align: right; }

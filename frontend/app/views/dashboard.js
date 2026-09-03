@@ -199,21 +199,25 @@ function statusStrip(documents) {
 // ranked chart) regardless of sort order or which date range is selected.
 // A name outside this fixed set still gets a *stable* color via a
 // deterministic hash of the name, not array position.
+// Colors are CSS variable names, not literal hex - styles.css's
+// --division-1..6 tokens are the single source of truth for Division
+// colors app-wide (see PIE_COLORS below, which reads the same six tokens
+// for the department bar chart), so this map can never drift from them.
 const DIVISION_COLOR_BY_NAME = {
-  "SOFT LINE": "#2563EB",
-  "HOME LINE": "#18B58B",
-  "DRY FOOD": "#F5A623",
-  "FRESH FOOD": "#EF6670",
-  "PHARMACY": "#9B59D0",
-  "HARD LINE": "#38A3DB",
+  "SOFT LINE": "--division-1",
+  "HOME LINE": "--division-2",
+  "DRY FOOD": "--division-3",
+  "FRESH FOOD": "--division-5",
+  "PHARMACY": "--division-4",
+  "HARD LINE": "--division-6",
 };
-const DIVISION_FALLBACK_PALETTE = ["#3478F6", "#2DB486", "#D99A1F", "#9560D8", "#EF6570", "#4D91A8"];
+const DIVISION_FALLBACK_PALETTE = ["--division-1", "--division-2", "--division-3", "--division-4", "--division-5", "--division-6"];
 function colorForDivision(name) {
   const key = (name || "?").toUpperCase().trim();
-  if (DIVISION_COLOR_BY_NAME[key]) return DIVISION_COLOR_BY_NAME[key];
+  if (DIVISION_COLOR_BY_NAME[key]) return `var(${DIVISION_COLOR_BY_NAME[key]})`;
   let hash = 0;
   for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return DIVISION_FALLBACK_PALETTE[hash % DIVISION_FALLBACK_PALETTE.length];
+  return `var(${DIVISION_FALLBACK_PALETTE[hash % DIVISION_FALLBACK_PALETTE.length]})`;
 }
 
 // Shared prep for the Division value chart: filtered/sorted entries
@@ -630,10 +634,10 @@ export function renderDashboard(container, store) {
     <div class="kpi-icon-row">
       ${kpiIconCard(
         dashboardOverview ? (dashboardOverview.amountAvailable ? "฿ " + fmtBaht(dashboardOverview.totals.amount) : "ไม่มีข้อมูลมูลค่า") : "…",
-        "มูลค่ารวม", icons.trendingUp, "#2563EB"
+        "มูลค่ารวม", icons.trendingUp, "var(--accent)"
       )}
-      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.rowCount) : "…", "จำนวนรายการ", icons.box, "#12B886")}
-      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "#9B51E0")}
+      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.rowCount) : "…", "จำนวนรายการ", icons.box, "var(--success)")}
+      ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "var(--purple)")}
     </div>
 
     ${
