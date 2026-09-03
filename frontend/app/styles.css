@@ -598,6 +598,9 @@ button { font-family: inherit; }
   position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 16px 18px; box-shadow: var(--shadow);
 }
+.kpi-icon-card.focus-items-summary-card { cursor: pointer; }
+.kpi-icon-card.focus-items-summary-card:hover { border-color: var(--critical); }
+.kpi-icon-card.focus-items-summary-card:focus-visible { outline: 2px solid var(--critical); outline-offset: 1px; }
 .kpi-icon-badge {
   position: absolute; top: 14px; right: 14px; width: 32px; height: 32px; border-radius: 9px;
   display: flex; align-items: center; justify-content: center;

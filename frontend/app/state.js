@@ -158,6 +158,12 @@ class Store {
       dashboardOverview: null,
       divisionSummary: null,
       divisionDetail: null,
+      // Snapshot of the Dashboard's grouped Focus Items list, handed over
+      // by the summary card's click handler (dashboard.js) at navigation
+      // time - same pattern as divisionDetail above. null means "no
+      // snapshot" (e.g. a direct/stale load of the focusItems view),
+      // which that view treats as a signal to bounce back to the Dashboard.
+      focusItemGroups: null,
       // Flat department->division map from the master catalog (see
       // GET /api/departments/divisions) - lets any view show Division
       // above Department per row without a document-scoped division
