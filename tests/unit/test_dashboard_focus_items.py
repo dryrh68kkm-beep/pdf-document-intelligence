@@ -148,3 +148,85 @@ def test_a_row_can_match_multiple_reasons_at_once():
 def test_missing_name_and_numeric_fields_do_not_crash():
     reasons = _run(_product(department="BAKERY"))
     assert reasons == []
+
+
+def _run_grouped(products):
+    """groupFocusItemsByBarcode() - user request: the Focus Items card must
+    combine multiple rows sharing the same barcode into one card (summed
+    qty/amount, merged reasons) instead of listing them separately."""
+    source = DASHBOARD.read_text(encoding="utf-8")
+    consts = "\n".join(
+        _extract_const(source, name)
+        for name in ["FOCUS_LIQUOR_DEPARTMENT", "FOCUS_NAME_KEYWORDS", "FOCUS_AMOUNT_THRESHOLD", "FOCUS_QTY_THRESHOLD"]
+    )
+    helper = _extract_function(source, "_nameHasAnyKeyword")
+    reasons_fn = _extract_function(source, "focusItemReasons")
+    group_fn = _extract_function(source, "groupFocusItemsByBarcode")
+    script = f"""
+{consts}
+{helper}
+{reasons_fn}
+{group_fn}
+const products = {json.dumps(products)};
+const focusRows = products.map((product, i) => ({{ product: {{ ...product, rowId: product.rowId || `row-${{i}}` }}, reasons: focusItemReasons(product) }}));
+const groups = groupFocusItemsByBarcode(focusRows);
+console.log(JSON.stringify(groups.map((g) => ({{
+  barcode: g.barcode, name: g.name, department: g.department, reasons: g.reasons,
+  qty: g.qty, amount: g.amount, amountAvailable: g.amountAvailable, rowCount: g.rows.length,
+}}))));
+"""
+    result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def _product_with_barcode(barcode, *, rowId=None, department=None, name=None, amount=None, sku_qty=None):
+    p = _product(department=department, name=name, amount=amount, sku_qty=sku_qty)
+    p["fields"]["barcode"] = {"value": barcode}
+    if rowId:
+        p["rowId"] = rowId
+    return p
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_rows_sharing_a_barcode_are_combined_into_one_group_with_summed_totals():
+    groups = _run_grouped([
+        _product_with_barcode("111", rowId="r1", department="LIQUOR", name="เบียร์สิงห์", amount=600, sku_qty=50),
+        _product_with_barcode("111", rowId="r2", department="LIQUOR", name="เบียร์สิงห์", amount=700, sku_qty=80),
+    ])
+    assert len(groups) == 1
+    g = groups[0]
+    assert g["barcode"] == "111"
+    assert g["rowCount"] == 2
+    assert g["qty"] == 130
+    assert g["amount"] == 1300
+    assert g["amountAvailable"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_reasons_from_every_contributing_row_are_merged_not_just_the_first():
+    groups = _run_grouped([
+        _product_with_barcode("222", rowId="r1", department="BAKERY", name="ธรรมดา", amount=1500),
+        _product_with_barcode("222", rowId="r2", department="BAKERY", name="ธรรมดา", sku_qty=150),
+    ])
+    assert len(groups) == 1
+    assert set(groups[0]["reasons"]) == {"highAmount", "bigLot"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_different_barcodes_stay_in_separate_groups():
+    groups = _run_grouped([
+        _product_with_barcode("111", rowId="r1", department="LIQUOR", name="เบียร์"),
+        _product_with_barcode("222", rowId="r2", department="LIQUOR", name="ไวน์"),
+    ])
+    assert len(groups) == 2
+    assert {g["barcode"] for g in groups} == {"111", "222"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_rows_with_no_barcode_at_all_are_never_merged_together():
+    groups = _run_grouped([
+        _product(department="LIQUOR", name="เบียร์ไม่ทราบรหัส A", amount=2000),
+        _product(department="LIQUOR", name="เบียร์ไม่ทราบรหัส B", amount=3000),
+    ])
+    assert len(groups) == 2
+    assert all(g["barcode"] is None for g in groups)
