@@ -52,10 +52,16 @@ def _reconciliation(doc: dict) -> dict:
 
     if doc["status"] != "complete" or not doc.get("meta_json"):
         return {"status": None, "errors": 0}
-    meta = json.loads(doc["meta_json"])
+    try:
+        meta = json.loads(doc["meta_json"])
+    except (TypeError, ValueError):
+        # A corrupted/truncated meta_json must not 500 the whole Dashboard
+        # summary for every other document too - the Division rollup below
+        # doesn't need this field at all, only the reconciliation badge does.
+        return {"status": None, "errors": 0}
     return {
         "status": "PASSED" if meta.get("reconciled") else "FAILED",
-        "errors": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "error"),
+        "errors": sum(1 for i in meta.get("validationIssues", []) if i.get("severity") == "error"),
     }
 
 
@@ -123,7 +129,26 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             continue
 
         code, _ = division
-        bucket = buckets[code]
+        bucket = buckets.get(code)
+        if bucket is None:
+            # Defensive: get_default_divisions() (which builds `buckets`)
+            # and division_for_department() (via
+            # get_default_department_to_division_code()) are both
+            # independent lru_cache(maxsize=1) readers over the same
+            # on-disk master snapshot, populated lazily on first call -
+            # every code division_for_department() can return is always
+            # present in a freshly-built `buckets` in normal operation
+            # (_clear_catalog_caches() always clears all of them together
+            # on a Product Master reimport), but a code appearing in one
+            # and not the other must still never turn one unusual row into
+            # a 500 that fails this document's *entire* Division summary -
+            # fold it into "unmapped" instead, the same bucket a department
+            # with no division mapping at all already uses.
+            unmapped_departments.add(row["department"])
+            unmapped_row_count += 1
+            if row_amount is not None:
+                unmapped_amount += row_amount
+            continue
         bucket["rowCount"] += 1
         bucket["departments"].add(row["department"])
         if row["review_required"]:
