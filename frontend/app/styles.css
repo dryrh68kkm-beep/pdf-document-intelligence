@@ -1,32 +1,34 @@
 :root {
-  /* Clean/Modern/Professional business-dashboard palette (Sep-2026 color
-     pass) - applied globally since virtually every surface/text rule in
-     this file already reads these tokens, so the whole app adopts the
-     same look rather than just the Dashboard page. */
-  --bg: #f5f7fa;
+  /* Botanical Premium palette (per the modern-ui-design Skill) - Soft
+     Botanical Commerce mode: warm-white background, white cards, ink
+     text, Deep Forest/Garden Green as the primary/active hues. Applied
+     globally since virtually every surface/text rule in this file already
+     reads these tokens, so the whole app adopts the same direction rather
+     than just the Dashboard page. */
+  --bg: #faf9f4;
   --surface: #ffffff;
-  --surface-alt: #f8fafc;
-  --surface-sunken: #edf1f5;
-  --table-row-hover: #f3f6fa;
-  --text: #1f2937;
-  --text-muted: #667085;
-  --text-faint: #98a2b3;
-  --border: #e3e8ef;
-  --border-strong: #d0d7e2;
-  --accent: #2f6fed;
-  --accent-strong: #123b63;
-  --accent-soft: #edf4ff;
-  --purple: #8064d6;
-  --purple-soft: #f2eefc;
-  --success: #2e9d69;
-  --success-soft: #eaf7f0;
-  --warning: #d99a2b;
-  --warning-soft: #fff7e6;
-  --critical: #d95c5c;
-  --critical-soft: #fdeeee;
-  /* Border is the primary space-divider (per spec) - shadow is now just a
-     faint lift, not the heavier two-layer drop shadow used before. */
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --surface-alt: #e8eee2;
+  --surface-sunken: #dfe8d9;
+  --table-row-hover: #eceee5;
+  --text: #182019;
+  --text-muted: #667064;
+  --text-faint: #a9aea5;
+  --border: #e7ebe0;
+  --border-strong: #afc2a5;
+  --accent: #4f7437;
+  --accent-strong: #1e3a25;
+  --accent-soft: #e5e9dd;
+  --purple: #667064;
+  --purple-soft: #e8e9e3;
+  --success: #1e3a25;
+  --success-soft: #e8eee2;
+  --warning: #b98a3e;
+  --warning-soft: #f2ecde;
+  --critical: #b5533f;
+  --critical-soft: #f2e5de;
+  /* Border is the primary space-divider (per spec) - shadow is a soft,
+     slightly warm-black lift per the Skill's "shadow สีเขียวอมดำแบบนุ่ม". */
+  --shadow: 0 1px 2px rgba(16, 29, 20, 0.06);
   --radius: 10px;
   --font-ui: "IBM Plex Sans", "IBM Plex Sans Thai", -apple-system, sans-serif;
   --font-data: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
@@ -34,36 +36,36 @@
   --sidebar-w-collapsed: 60px;
   --bottombar-h: 56px;
   --topbar-h: 56px;
-  --division-1: #2f6fed;
-  --division-2: #2e9d69;
-  --division-3: #d99a2b;
-  --division-4: #8064d6;
-  --division-5: #d95c5c;
-  --division-6: #4d8fa6;
+  --division-1: #4f7437;
+  --division-2: #1e3a25;
+  --division-3: #afc2a5;
+  --division-4: #b98a3e;
+  --division-5: #b5533f;
+  --division-6: #667064;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #10151c; --surface: #1a222c; --surface-alt: #212b37; --surface-sunken: #171f28; --table-row-hover: #212b37;
-    --text: #e8ecf1; --text-muted: #a1abba; --text-faint: #6d7789;
-    --border: #2c3746; --border-strong: #3c4a5c;
-    --accent: #5b8def; --accent-strong: #9bc0fb; --accent-soft: #1e3a5f;
-    --purple: #a78bfa; --purple-soft: #322254;
-    --success: #5cba85; --success-soft: #1c3327;
-    --warning: #dba54c; --warning-soft: #3a2e17;
-    --critical: #e08080; --critical-soft: #3a2222;
+    --bg: #101d14; --surface: #1e3a25; --surface-alt: #2a4530; --surface-sunken: #16291b; --table-row-hover: #24402a;
+    --text: #faf9f4; --text-muted: #afc2a5; --text-faint: #7e9078;
+    --border: #33482f; --border-strong: #46603f;
+    --accent: #4f7437; --accent-strong: #6b9450; --accent-soft: #25431f;
+    --purple: #8a9384; --purple-soft: #30352c;
+    --success: #5c8a52; --success-soft: #213620;
+    --warning: #d2a855; --warning-soft: #3d3018;
+    --critical: #cb8779; --critical-soft: #3d2620;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.55);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #10151c; --surface: #1a222c; --surface-alt: #212b37; --surface-sunken: #171f28; --table-row-hover: #212b37;
-  --text: #e8ecf1; --text-muted: #a1abba; --text-faint: #6d7789;
-  --border: #2c3746; --border-strong: #3c4a5c;
-  --accent: #5b8def; --accent-strong: #9bc0fb; --accent-soft: #1e3a5f;
-  --purple: #a78bfa; --purple-soft: #322254;
-  --success: #5cba85; --success-soft: #1c3327;
-  --warning: #dba54c; --warning-soft: #3a2e17;
-  --critical: #e08080; --critical-soft: #3a2222;
+  --bg: #101d14; --surface: #1e3a25; --surface-alt: #2a4530; --surface-sunken: #16291b; --table-row-hover: #24402a;
+  --text: #faf9f4; --text-muted: #afc2a5; --text-faint: #7e9078;
+  --border: #33482f; --border-strong: #46603f;
+  --accent: #6b9450; --accent-strong: #84ad68; --accent-soft: #25431f;
+  --purple: #8a9384; --purple-soft: #30352c;
+  --success: #5c8a52; --success-soft: #213620;
+  --warning: #d2a855; --warning-soft: #3d3018;
+  --critical: #cb8779; --critical-soft: #3d2620;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -10px rgba(0, 0, 0, 0.55);
 }
 
@@ -121,8 +123,8 @@ button { font-family: inherit; }
    :root's light/dark surface tokens above) since the mockup gives one fixed
    sidebar look, not a light/dark variant. */
 .sidebar {
-  --sidebar-bg: #123b63;
-  --sidebar-text: #c3d1e6;
+  --sidebar-bg: #1e3a25;
+  --sidebar-text: #afc2a5;
   --sidebar-text-active: #ffffff;
   --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
   background: var(--sidebar-bg); border-right: none; padding: 14px 10px; overflow-y: auto; overflow-x: hidden; transition: width 150ms ease;
@@ -334,7 +336,7 @@ button { font-family: inherit; }
 
 /* ---------- Drag overlay ---------- */
 .drag-overlay {
-  position: fixed; inset: 0; background: rgba(47, 111, 237, 0.1); backdrop-filter: blur(2px);
+  position: fixed; inset: 0; background: rgba(79, 116, 55, 0.1); backdrop-filter: blur(2px);
   border: 3px dashed var(--accent); z-index: 50; display: none; align-items: center; justify-content: center;
 }
 .drag-overlay.active { display: flex; }
@@ -524,7 +526,7 @@ button { font-family: inherit; }
   flex: none; width: 38px; height: 38px; border-radius: 10px;
   background: linear-gradient(160deg, var(--accent-strong), var(--accent));
   display: flex; align-items: center; justify-content: center; color: #fff;
-  box-shadow: 0 2px 6px -2px rgba(47, 111, 237, 0.5);
+  box-shadow: 0 2px 6px -2px rgba(79, 116, 55, 0.5);
 }
 .sidebar-logo-text { font-weight: 700; font-size: 13.5px; line-height: 1.25; color: #ffffff; }
 .sidebar.collapsed .sidebar-logo-text { display: none; }
@@ -549,8 +551,8 @@ button { font-family: inherit; }
   font-size: 11.5px; font-weight: 700;
 }
 .sidebar-user-name { font-size: 12.5px; font-weight: 600; color: #ffffff; }
-.sidebar-user-role { font-size: 11px; color: var(--sidebar-text, #c3d1e6); }
-.sidebar-user-chevron { margin-left: auto; color: var(--sidebar-text, #c3d1e6); display: flex; }
+.sidebar-user-role { font-size: 11px; color: var(--sidebar-text, #afc2a5); }
+.sidebar-user-chevron { margin-left: auto; color: var(--sidebar-text, #afc2a5); display: flex; }
 .sidebar.collapsed .sidebar-user-name, .sidebar.collapsed .sidebar-user-role, .sidebar.collapsed .sidebar-user-chevron { display: none; }
 .sidebar.collapsed .sidebar-user { justify-content: center; }
 .sidebar { display: flex; flex-direction: column; }
