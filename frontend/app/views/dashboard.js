@@ -115,6 +115,91 @@ const FOCUS_REASON_LABELS = {
   bigLot: `จำนวน ≥ ${FOCUS_QTY_THRESHOLD.toLocaleString("th-TH")} ชิ้น`,
 };
 
+// User request: the same product (same barcode) showing up as several
+// separate rows - once per document/line it appears on - made the watch
+// list noisy and inflated its count. One card per barcode instead, with
+// quantity/amount summed across every contributing row and the reasons
+// merged (a row flagged only for "highAmount" and another only for
+// "liquor" under the same barcode still shows both on the one card). A
+// row with no barcode at all can't be matched to anything else, so it
+// gets its own group keyed by rowId rather than being silently dropped or
+// wrongly merged with other barcode-less rows.
+function groupFocusItemsByBarcode(focusRows) {
+  const groups = new Map();
+  for (const entry of focusRows) {
+    const { product, reasons } = entry;
+    const barcode = product.fields?.barcode?.value;
+    const hasBarcode = barcode !== null && barcode !== undefined && barcode !== "";
+    const key = hasBarcode ? `b:${barcode}` : `r:${product.rowId}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        barcode: hasBarcode ? String(barcode) : null,
+        name: product.fields?.name?.value,
+        department: product.department,
+        reasons: new Set(),
+        qty: 0,
+        amount: 0,
+        amountAvailable: false,
+        rows: [],
+      });
+    }
+    const g = groups.get(key);
+    reasons.forEach((r) => g.reasons.add(r));
+    const qty = product.fields?.sku_qty?.value;
+    if (typeof qty === "number") g.qty += qty;
+    const amount = product.fields?.amount?.value;
+    if (typeof amount === "number") {
+      g.amount += amount;
+      g.amountAvailable = true;
+    }
+    g.rows.push(entry);
+  }
+  return [...groups.values()]
+    .map((g) => ({ ...g, reasons: [...g.reasons] }))
+    .sort((a, b) => (b.amountAvailable ? b.amount : -1) - (a.amountAvailable ? a.amount : -1));
+}
+
+function csvField(value) {
+  const s = value === null || value === undefined ? "" : String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function focusItemsToCsv(focusGroups) {
+  const header = ["Barcode", "ชื่อสินค้า", "แผนก", "เหตุผล", "จำนวนรวม", "มูลค่ารวม", "จำนวนรายการที่รวม"];
+  const lines = [header.map(csvField).join(",")];
+  for (const g of focusGroups) {
+    lines.push(
+      [
+        g.barcode || "",
+        g.name || "",
+        g.department || "",
+        g.reasons.map((r) => FOCUS_REASON_LABELS[r] || r).join(" / "),
+        g.qty,
+        g.amountAvailable ? g.amount : "",
+        g.rows.length,
+      ]
+        .map(csvField)
+        .join(","),
+    );
+  }
+  return lines.join("\r\n");
+}
+
+// "﻿" (UTF-8 BOM) so Excel on Windows - the primary user of this
+// export, per the rest of this app's Thai-locale/DD-MM-YYYY conventions -
+// reads the Thai text correctly instead of mojibake.
+function downloadTextFile(filename, content, mimeType) {
+  const blob = new Blob(["﻿" + content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Date-range shortcuts (spec section 2): all computed off today's real
 // calendar date, no new backend call - setDashboardOverviewFilters already
 // accepts an explicit {dateFrom, dateTo} pair.
@@ -319,60 +404,83 @@ const FOCUS_ITEMS_DISPLAY_CAP = 30;
 // point is a quick LP scan of "what's flagged today", so this shows the
 // highest-value matches up to a cap and says plainly when more exist
 // rather than silently truncating.
-function renderFocusItemsPanel(host, focusRows, onRowClick) {
-  if (!focusRows.length) {
+// Cards, not a table: a card per barcode (see groupFocusItemsByBarcode)
+// summing quantity/amount across every row that shares it, so the same
+// product appearing on several document lines shows once with a combined
+// total instead of as separate rows. Clicking a card's head expands it in
+// place to show the individual contributing rows (document + page +
+// qty/amount each) - each of those still opens the real product detail
+// side panel via onRowClick, unchanged from before.
+function renderFocusItemsPanel(host, focusGroups, onRowClick) {
+  if (!focusGroups.length) {
     host.innerHTML = `<div class="workspace-sub" style="padding:20px 0;text-align:center;">ไม่มีรายการที่ต้องเฝ้าระวังในช่วงวันที่นี้</div>`;
     return;
   }
 
-  const shown = focusRows.slice(0, FOCUS_ITEMS_DISPLAY_CAP);
+  const shown = focusGroups.slice(0, FOCUS_ITEMS_DISPLAY_CAP);
   host.innerHTML = `
-    <div class="doc-table-wrap">
-      <table class="doc-table">
-        <thead>
-          <tr>
-            <th>ชื่อสินค้า</th>
-            <th>Barcode</th>
-            <th>แผนก</th>
-            <th>เหตุผล</th>
-            <th class="num">จำนวน</th>
-            <th class="num">มูลค่า</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${shown
-            .map(
-              ({ product, reasons }) => `
-            <tr class="doc-table-row focus-items-row" data-row-id="${escapeHtml(product.rowId)}" tabindex="0">
-              <td>${escapeHtml(product.fields?.name?.value) || "—"}</td>
-              <td><span class="mono">${escapeHtml(product.fields?.barcode?.value) || "—"}</span></td>
-              <td>${escapeHtml(product.department) || "—"}</td>
-              <td>${reasons.map((r) => `<span class="pill pill-critical">${escapeHtml(FOCUS_REASON_LABELS[r] || r)}</span>`).join(" ")}</td>
-              <td class="num"><span class="mono">${fmtQty(product.fields?.sku_qty?.value)}</span></td>
-              <td class="num"><span class="mono">${product.fields?.amount?.value != null ? fmtBaht(product.fields.amount.value) : "—"}</span></td>
-            </tr>`
-            )
-            .join("")}
-        </tbody>
-      </table>
+    <div class="focus-items-grid">
+      ${shown
+        .map(
+          (g, i) => `
+        <div class="focus-item-card" data-group-index="${i}">
+          <div class="focus-item-card-head" tabindex="0">
+            <div class="focus-item-card-headtext">
+              <div class="focus-item-card-name">${escapeHtml(g.name) || "—"}</div>
+              <div class="focus-item-card-meta">${g.barcode ? `<span class="mono">${escapeHtml(g.barcode)}</span>` : "ไม่มี Barcode"} · ${escapeHtml(g.department) || "ไม่ระบุแผนก"}</div>
+            </div>
+            <span class="focus-item-card-chevron" aria-hidden="true">${icons.chevronDown}</span>
+          </div>
+          <div class="focus-item-card-reasons">
+            ${g.reasons.map((r) => `<span class="pill pill-critical">${escapeHtml(FOCUS_REASON_LABELS[r] || r)}</span>`).join("")}
+          </div>
+          <div class="focus-item-card-stats">
+            <span>จำนวนรวม <b class="mono">${fmtQty(g.qty)}</b></span>
+            <span>มูลค่ารวม <b class="mono">${g.amountAvailable ? fmtBaht(g.amount) : "—"}</b></span>
+          </div>
+          ${g.rows.length > 1 ? `<div class="focus-item-card-grouped-note">รวม ${g.rows.length} รายการ (Barcode เดียวกัน)</div>` : ""}
+          <div class="focus-item-card-detail" hidden>
+            ${g.rows
+              .map(
+                ({ product }) => `
+              <button type="button" class="focus-item-detail-row" data-row-id="${escapeHtml(product.rowId)}">
+                <span>${escapeHtml(product.docFilename) || "—"} · หน้า ${product.page ?? "—"}</span>
+                <span class="mono">${fmtQty(product.fields?.sku_qty?.value)} · ${product.fields?.amount?.value != null ? fmtBaht(product.fields.amount.value) : "—"}</span>
+              </button>`
+              )
+              .join("")}
+          </div>
+        </div>`
+        )
+        .join("")}
     </div>
     ${
-      focusRows.length > FOCUS_ITEMS_DISPLAY_CAP
-        ? `<div class="workspace-sub" style="padding:10px 4px 0;">แสดง ${FOCUS_ITEMS_DISPLAY_CAP} จาก ${fmtNum(focusRows.length)} รายการ (เรียงตามมูลค่าสูงสุด)</div>`
+      focusGroups.length > FOCUS_ITEMS_DISPLAY_CAP
+        ? `<div class="workspace-sub" style="padding:10px 4px 0;">แสดง ${FOCUS_ITEMS_DISPLAY_CAP} จาก ${fmtNum(focusGroups.length)} รายการ (เรียงตามมูลค่าสูงสุด)</div>`
         : ""
     }
   `;
 
-  host.querySelectorAll(".focus-items-row").forEach((tr) => {
-    const rowId = tr.dataset.rowId;
-    const match = shown.find((f) => f.product.rowId === rowId);
-    if (!match) return;
-    const activate = () => onRowClick(match.product);
-    tr.addEventListener("click", activate);
-    tr.addEventListener("keydown", (e) => {
+  host.querySelectorAll(".focus-item-card").forEach((card) => {
+    const group = shown[Number(card.dataset.groupIndex)];
+    const detail = card.querySelector(".focus-item-card-detail");
+    const toggle = () => {
+      const willShow = detail.hidden;
+      detail.hidden = !willShow;
+      card.classList.toggle("expanded", willShow);
+    };
+    const head = card.querySelector(".focus-item-card-head");
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
-      activate();
+      toggle();
+    });
+    detail.querySelectorAll(".focus-item-detail-row").forEach((rowBtn) => {
+      rowBtn.addEventListener("click", () => {
+        const match = group.rows.find((r) => r.product.rowId === rowBtn.dataset.rowId);
+        if (match) onRowClick(match.product);
+      });
     });
   });
 }
@@ -569,6 +677,7 @@ export function renderDashboard(container, store) {
     .map((p) => ({ product: p, reasons: focusItemReasons(p) }))
     .filter((f) => f.reasons.length > 0)
     .sort((a, b) => (b.product.fields?.amount?.value ?? -1) - (a.product.fields?.amount?.value ?? -1));
+  const focusGroups = groupFocusItemsByBarcode(focusRows);
 
   // Product-list's own local search box (spec section 13-14) - see
   // localSearchText/localDeptFilter/sortKey above for why this doesn't
@@ -665,7 +774,10 @@ export function renderDashboard(container, store) {
         : ""
     }
 
-    <div class="section-title">สินค้าเฝ้าระวัง (Focus Items)${focusRows.length ? ` · ${fmtNum(focusRows.length)} รายการ` : ""}</div>
+    <div class="focus-items-head">
+      <div class="section-title" style="margin:0;">สินค้าเฝ้าระวัง (Focus Items)${focusGroups.length ? ` · ${fmtNum(focusGroups.length)} รายการ` : ""}</div>
+      <button type="button" class="btn btn-sm" id="focusItemsExportBtn"${focusGroups.length ? "" : " disabled"}>${icons.download} Export CSV</button>
+    </div>
     <div class="dash-panel" id="dashFocusItemsPanel"></div>
 
     <div class="section-title">${dashboardOverview?.amountAvailable === false ? "จำนวนรายการตาม Division" : "มูลค่าตาม Division"}</div>
@@ -731,8 +843,11 @@ export function renderDashboard(container, store) {
     });
   });
 
-  renderFocusItemsPanel(container.querySelector("#dashFocusItemsPanel"), focusRows, (row) => {
+  renderFocusItemsPanel(container.querySelector("#dashFocusItemsPanel"), focusGroups, (row) => {
     store.openPanel({ type: "product", rowId: row.rowId, data: row });
+  });
+  container.querySelector("#focusItemsExportBtn")?.addEventListener("click", () => {
+    downloadTextFile(`focus-items-${todayIso()}.csv`, focusItemsToCsv(focusGroups), "text/csv;charset=utf-8;");
   });
 
   renderDivisionValueChart(container.querySelector("#dashDivisionValueChart"), dashboardOverview, departmentsByDivision, (depts, name) => {
