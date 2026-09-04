@@ -73,13 +73,29 @@ function isoMonthStart() {
 // anything, so they can be tuned in one place without touching the
 // matching logic itself.
 const FOCUS_LIQUOR_DEPARTMENT = "LIQUOR";
+// User request (2026-09 rule update): large appliances are now also
+// caught by department, the same way liquor already is - a MAJOR
+// APPLIANCE-department row is flagged regardless of what its name says,
+// on top of the existing name-keyword match (a large appliance sold from
+// a different department, e.g. a promotional bundle, still gets a look).
+const FOCUS_LARGE_APPLIANCE_DEPARTMENT = "MAJOR APPLIANCE";
 const FOCUS_NAME_KEYWORDS = {
   liquor: ["เหล้า", "เบียร์", "วิสกี้", "ไวน์"],
   milkPowder: ["นมผง", "milk powder"],
-  largeAppliance: ["ตู้เย็น", "ทีวี", "แอร์", "เครื่องซักผ้า"],
+  // "แอร์" removed (user report, live screenshot): it false-matched
+  // non-appliance products whose name/brand merely contains that
+  // substring (e.g. "P_ แอร์เอ็กซ์ ดรอป" - an air-freshener spray, not
+  // an air conditioner). Real air conditioners are still caught via
+  // FOCUS_LARGE_APPLIANCE_DEPARTMENT ("MAJOR APPLIANCE") instead.
+  largeAppliance: ["ตู้เย็น", "ทีวี", "เครื่องซักผ้า"],
 };
 const FOCUS_AMOUNT_THRESHOLD = 1000;
 const FOCUS_QTY_THRESHOLD = 100;
+// User request (2026-09 rule update): a big-lot row (qty >= 100) is only
+// worth flagging on its own if it's also actually worth something - a
+// 100-piece line of a low-value item no longer counts. Both thresholds
+// must hold on the same row (not just qty alone as before).
+const FOCUS_BIG_LOT_AMOUNT_THRESHOLD = 5000;
 
 function _nameHasAnyKeyword(name, keywords) {
   const lower = (name || "").toLowerCase();
@@ -99,11 +115,23 @@ function focusItemReasons(product) {
     reasons.push("liquor");
   }
   if (_nameHasAnyKeyword(name, FOCUS_NAME_KEYWORDS.milkPowder)) reasons.push("milkPowder");
-  if (_nameHasAnyKeyword(name, FOCUS_NAME_KEYWORDS.largeAppliance)) reasons.push("largeAppliance");
+  if (
+    product.department === FOCUS_LARGE_APPLIANCE_DEPARTMENT ||
+    _nameHasAnyKeyword(name, FOCUS_NAME_KEYWORDS.largeAppliance)
+  ) {
+    reasons.push("largeAppliance");
+  }
   const amount = product.fields?.amount?.value;
   if (typeof amount === "number" && amount >= FOCUS_AMOUNT_THRESHOLD) reasons.push("highAmount");
   const qty = product.fields?.sku_qty?.value;
-  if (typeof qty === "number" && qty >= FOCUS_QTY_THRESHOLD) reasons.push("bigLot");
+  if (
+    typeof qty === "number" &&
+    qty >= FOCUS_QTY_THRESHOLD &&
+    typeof amount === "number" &&
+    amount > FOCUS_BIG_LOT_AMOUNT_THRESHOLD
+  ) {
+    reasons.push("bigLot");
+  }
   return reasons;
 }
 
@@ -112,7 +140,7 @@ export const FOCUS_REASON_LABELS = {
   milkPowder: "นมผง",
   largeAppliance: "เครื่องใช้ไฟฟ้าขนาดใหญ่",
   highAmount: `มูลค่า ≥ ${FOCUS_AMOUNT_THRESHOLD.toLocaleString("th-TH")} บาท`,
-  bigLot: `จำนวน ≥ ${FOCUS_QTY_THRESHOLD.toLocaleString("th-TH")} ชิ้น`,
+  bigLot: `จำนวน ≥ ${FOCUS_QTY_THRESHOLD.toLocaleString("th-TH")} ชิ้น และมูลค่า > ${FOCUS_BIG_LOT_AMOUNT_THRESHOLD.toLocaleString("th-TH")} บาท`,
 };
 
 // User request: the same product (same barcode) showing up as several
