@@ -66,12 +66,12 @@ function isoMonthStart() {
 // Focus Items (user request, Loss Prevention watch-list): a card surfacing
 // only the rows an LP reviewer actually needs eyes on, out of possibly
 // thousands - high-risk categories (alcohol, milk powder, large
-// appliances) regardless of value, plus any row that's simply expensive or
-// a big-quantity line item, since either is worth a second look on its
-// own. Keyword lists and thresholds are the user's own stated criteria
-// (2026-09 request) - kept as named constants, not re-derived from
-// anything, so they can be tuned in one place without touching the
-// matching logic itself.
+// appliances) regardless of value, plus any big-quantity line item that's
+// also actually worth something (a standalone "just expensive" rule was
+// removed - too noisy on its own). Keyword lists and thresholds are the
+// user's own stated criteria (2026-09 request) - kept as named constants,
+// not re-derived from anything, so they can be tuned in one place without
+// touching the matching logic itself.
 const FOCUS_LIQUOR_DEPARTMENT = "LIQUOR";
 // User request (2026-09 rule update): large appliances are now also
 // caught by department, the same way liquor already is - a MAJOR
@@ -89,7 +89,6 @@ const FOCUS_NAME_KEYWORDS = {
   // FOCUS_LARGE_APPLIANCE_DEPARTMENT ("MAJOR APPLIANCE") instead.
   largeAppliance: ["ตู้เย็น", "ทีวี", "เครื่องซักผ้า"],
 };
-const FOCUS_AMOUNT_THRESHOLD = 1000;
 const FOCUS_QTY_THRESHOLD = 100;
 // User request (2026-09 rule update): a big-lot row (qty >= 100) is only
 // worth flagging on its own if it's also actually worth something - a
@@ -121,8 +120,11 @@ function focusItemReasons(product) {
   ) {
     reasons.push("largeAppliance");
   }
+  // User request: the standalone "amount >= 1,000 baht" rule (with no
+  // quantity requirement) was removed - flagging every moderately-priced
+  // single-unit row was too noisy. A high-value row is still caught
+  // together with quantity via the bigLot rule below.
   const amount = product.fields?.amount?.value;
-  if (typeof amount === "number" && amount >= FOCUS_AMOUNT_THRESHOLD) reasons.push("highAmount");
   const qty = product.fields?.sku_qty?.value;
   if (
     typeof qty === "number" &&
@@ -139,7 +141,6 @@ export const FOCUS_REASON_LABELS = {
   liquor: "เครื่องดื่มแอลกอฮอล์",
   milkPowder: "นมผง",
   largeAppliance: "เครื่องใช้ไฟฟ้าขนาดใหญ่",
-  highAmount: `มูลค่า ≥ ${FOCUS_AMOUNT_THRESHOLD.toLocaleString("th-TH")} บาท`,
   bigLot: `จำนวน ≥ ${FOCUS_QTY_THRESHOLD.toLocaleString("th-TH")} ชิ้น และมูลค่า > ${FOCUS_BIG_LOT_AMOUNT_THRESHOLD.toLocaleString("th-TH")} บาท`,
 };
 
@@ -147,7 +148,7 @@ export const FOCUS_REASON_LABELS = {
 // separate rows - once per document/line it appears on - made the watch
 // list noisy and inflated its count. One card per barcode instead, with
 // quantity/amount summed across every contributing row and the reasons
-// merged (a row flagged only for "highAmount" and another only for
+// merged (a row flagged only for "bigLot" and another only for
 // "liquor" under the same barcode still shows both on the one card). A
 // row with no barcode at all can't be matched to anything else, so it
 // gets its own group keyed by rowId rather than being silently dropped or
