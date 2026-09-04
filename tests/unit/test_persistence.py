@@ -326,6 +326,29 @@ def test_bulk_confirm_clears_a_safe_review_item(db_path):
     assert repo.get_product_row(row["id"])["review_required"] == 0
 
 
+def test_bulk_confirm_is_idempotent_and_does_not_duplicate_history(db_path):
+    """User report (live screenshot): a row's edit history showed several
+    "review_required: True -> False" entries for what was really one
+    click's worth of work - the resolve button can reach this endpoint
+    twice for the same row (a re-render un-disables it while the first
+    request is still in flight, or the row's other "Mark Resolved" entry
+    point in the Products/Review table fires too). Confirming an
+    already-resolved row must be a no-op: no new correction record, no
+    misleading second True->False transition in the history."""
+    repo = _repo_at(db_path)
+    _seed_document(repo)
+    row = next(r for r in repo.list_product_rows() if r["review_required"])
+
+    confirm_review_row(repo, row["id"])
+    history_after_first_confirm = repo.list_corrections(row["id"])
+
+    confirm_review_row(repo, row["id"])
+    confirm_review_row(repo, row["id"])
+
+    assert repo.get_product_row(row["id"])["review_required"] == 0
+    assert repo.list_corrections(row["id"]) == history_after_first_confirm
+
+
 # --- Local product master (items 16-19) ---
 
 def test_local_master_add_and_duplicate_protection(db_path):

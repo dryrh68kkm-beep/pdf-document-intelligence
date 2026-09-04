@@ -3,16 +3,19 @@ only "focus items" - rows worth a reviewer's attention out of possibly
 thousands - so LP staff don't have to scan the full Products table by
 hand every day.
 
-Criteria are the user's own explicit spec, as updated by a 2026-09
-follow-up request:
+Criteria are the user's own explicit spec, as updated by several 2026-09
+follow-up requests:
 - department == "LIQUOR", or product name containing เหล้า/เบียร์/วิสกี้/ไวน์
 - product name containing นมผง or "milk powder"
 - department == "MAJOR APPLIANCE", or product name containing
-  ตู้เย็น/ทีวี/แอร์/เครื่องซักผ้า
-- amount >= 1,000 baht (per row) - standalone
+  ตู้เย็น/ทีวี/เครื่องซักผ้า ("แอร์" was removed - false-matched non-
+  appliance products like an air-freshener spray branded "แอร์เอ็กซ์")
+- department == "FACE & COSMETICS" (added follow-up request)
 - sku_qty >= 100 pieces AND amount > 5,000 baht, both on the same row -
   a big-lot row is only flagged if it's also actually worth something;
-  qty alone is no longer enough (follow-up request)
+  qty alone is no longer enough
+- the standalone "amount >= 1,000 baht" rule was removed entirely - too
+  noisy flagging every moderately-priced single-unit row
 - ANY of the above (other than the two-part big-lot rule, which needs
   both its own parts) is enough to flag a row on its own.
 
@@ -78,8 +81,8 @@ def _run(product):
         for name in [
             "FOCUS_LIQUOR_DEPARTMENT",
             "FOCUS_LARGE_APPLIANCE_DEPARTMENT",
+            "FOCUS_COSMETICS_DEPARTMENT",
             "FOCUS_NAME_KEYWORDS",
-            "FOCUS_AMOUNT_THRESHOLD",
             "FOCUS_QTY_THRESHOLD",
             "FOCUS_BIG_LOT_AMOUNT_THRESHOLD",
         ]
@@ -150,9 +153,24 @@ def test_major_appliance_department_is_flagged_even_without_a_matching_name():
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
-def test_high_amount_is_flagged_at_the_threshold():
-    assert "highAmount" in _run(_product(name="ธรรมดา", amount=1000))
-    assert "highAmount" not in _run(_product(name="ธรรมดา", amount=999.99))
+def test_face_and_cosmetics_department_is_flagged():
+    reasons = _run(_product(department="FACE & COSMETICS", name="ANYTHING"))
+    assert "cosmetics" in reasons
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_different_department_is_not_flagged_as_cosmetics():
+    reasons = _run(_product(department="HBA", name="ANYTHING"))
+    assert "cosmetics" not in reasons
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_standalone_high_amount_rule_was_removed():
+    # User request: a moderately-priced single-unit row must not be
+    # flagged on value alone anymore - only bigLot (qty + amount together)
+    # or a category match can flag a row now.
+    reasons = _run(_product(department="BAKERY", name="ธรรมดา", amount=50000))
+    assert reasons == []
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
@@ -174,7 +192,7 @@ def test_an_ordinary_row_matches_nothing():
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_a_row_can_match_multiple_reasons_at_once():
     reasons = _run(_product(department="LIQUOR", name="วิสกี้พรีเมียม", amount=6000, sku_qty=200))
-    assert set(reasons) == {"liquor", "highAmount", "bigLot"}
+    assert set(reasons) == {"liquor", "bigLot"}
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
@@ -193,8 +211,8 @@ def _run_grouped(products):
         for name in [
             "FOCUS_LIQUOR_DEPARTMENT",
             "FOCUS_LARGE_APPLIANCE_DEPARTMENT",
+            "FOCUS_COSMETICS_DEPARTMENT",
             "FOCUS_NAME_KEYWORDS",
-            "FOCUS_AMOUNT_THRESHOLD",
             "FOCUS_QTY_THRESHOLD",
             "FOCUS_BIG_LOT_AMOUNT_THRESHOLD",
         ]
@@ -249,7 +267,7 @@ def test_reasons_from_every_contributing_row_are_merged_not_just_the_first():
         _product_with_barcode("222", rowId="r2", department="BAKERY", name="ธรรมดา", sku_qty=150, amount=6000),
     ])
     assert len(groups) == 1
-    assert set(groups[0]["reasons"]) == {"milkPowder", "highAmount", "bigLot"}
+    assert set(groups[0]["reasons"]) == {"milkPowder", "bigLot"}
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")

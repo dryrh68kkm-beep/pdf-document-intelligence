@@ -201,10 +201,25 @@ def _recompute_review_flags(row: dict, changed_column: str, new_value) -> tuple[
 def confirm_review_row(repo: Repository, row_id: str, source: str = "LOCAL_USER") -> dict:
     """Bulk-confirm-safe path: only clears review_required when there is no
     identifier conflict / amount mismatch / unknown barcode outstanding -
-    those must go through an explicit correction instead."""
+    those must go through an explicit correction instead.
+
+    Idempotent by design (user report: a row's edit history showed several
+    "review_required: True -> False" entries for what was really one
+    click's worth of work - the detail panel's own resolve button
+    re-renders, and un-disables, on any unrelated store refresh that lands
+    while its request is still in flight, so an impatient second click - or
+    the same row's other "Mark Resolved" entry point in the Products/Review
+    table - reached this function a second time). update_product_row_field
+    always writes a fresh correction row unconditionally, so calling it
+    again on an already-resolved row used to log another (misleading)
+    True->False transition instead of a no-op. Skip the write entirely
+    when review_required is already False - nothing changed, so nothing
+    to record."""
     row = repo.get_product_row(row_id)
     if not row:
         raise HTTPException(404, "product row not found")
+    if not row.get("review_required"):
+        return {"confirmed": True, "row": row}
     reasons = set(json.loads(row.get("review_reasons") or "[]"))
     unsafe = reasons & {"UNKNOWN_BARCODE", "AMOUNT_MISMATCH", "DEPARTMENT_CONFLICT", "INVALID_IDENTIFIER"}
     if unsafe:
