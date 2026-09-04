@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile
@@ -42,10 +43,29 @@ from pdf_document_intelligence.export.excel import export_many_to_excel
 from pdf_document_intelligence.loader.preflight import PreflightError
 from pdf_document_intelligence.pipeline.orchestrator import process_document
 
-app = FastAPI(title="PDF Document Intelligence")
+_logger = logging.getLogger("pdf_document_intelligence")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # See DocumentStore.recover_interrupted_processing()'s own docstring for
+    # the full story - a document left status='processing' by a killed
+    # previous server process is otherwise a permanent dead end (can't be
+    # reprocessed or removed through the UI). This process has not submitted
+    # any processing job yet at startup, so anything still 'processing' here
+    # is unconditionally leftover from before the restart.
+    recovered = store.recover_interrupted_processing()
+    if recovered:
+        _logger.warning(
+            "Recovered %d document(s) stuck in 'processing' from before this server started: %s",
+            len(recovered), recovered,
+        )
+    yield
+
+
+app = FastAPI(title="PDF Document Intelligence", lifespan=_lifespan)
 _executor = ThreadPoolExecutor(max_workers=2)
 _settings = Settings()
-_logger = logging.getLogger("pdf_document_intelligence")
 # Not a hard concurrency limit (max_workers already caps that) - a backlog
 # cap. ThreadPoolExecutor's own work queue is unbounded by default, so
 # without this a burst of uploads would just pile up invisibly instead of

@@ -167,6 +167,39 @@ class DocumentStore:
     def set_error(self, doc_id: str, error: str) -> None:
         self._repo.set_document_error(doc_id, error)
 
+    def recover_interrupted_processing(self) -> list[str]:
+        """User report ("ตรวจเรื่องการอ่านเอกสาร"): a document uploaded
+        weeks earlier was still shown "กำลังประมวลผล" (processing) with no
+        way to do anything about it. Root cause: nothing ever recorded a
+        server crash/restart mid-job - the in-memory worker thread that
+        was actually reading the PDF is simply gone, but the DB row is
+        left saying status='processing' forever. That status is then a
+        dead end by the app's own design: try_start_processing() (called
+        by both reprocess and the force-upload-duplicate path) refuses to
+        start a new run while status='processing' (423 "cannot reprocess
+        a document while it is already processing"), and the Documents
+        view hides the Reprocess button and disables Remove for exactly
+        that status - so a document interrupted this way could never be
+        reprocessed OR deleted through the UI again.
+
+        Called once at API startup (see app.py's startup handler): any
+        document still 'processing' at that moment cannot possibly have a
+        job actually running for it yet (this process has submitted none),
+        so it's unconditionally a leftover from before the restart. Marking
+        it 'error' with a clear, actionable message makes it visible and
+        gives the user their Reprocess/Remove buttons back - the same
+        recovery the user would otherwise have to do by hand in the DB.
+        Returns the recovered document IDs, for a startup log line."""
+        recovered = []
+        for doc in self._repo.list_documents():
+            if doc["status"] == "processing":
+                self._repo.set_document_error(
+                    doc["id"],
+                    "การประมวลผลถูกขัดจังหวะ (เซิร์ฟเวอร์รีสตาร์ทระหว่างประมวลผล) กรุณากด Reprocess อีกครั้ง",
+                )
+                recovered.append(doc["id"])
+        return recovered
+
     def reset_for_tests(self) -> None:
         self._repo.reset_all_for_tests()
 
