@@ -66,7 +66,8 @@ function isoMonthStart() {
 // Focus Items (user request, Loss Prevention watch-list): a card surfacing
 // only the rows an LP reviewer actually needs eyes on, out of possibly
 // thousands - high-risk categories (alcohol, milk powder, large
-// appliances) regardless of value, plus any big-quantity line item that's
+// appliances, face & cosmetics) regardless of value, plus any
+// big-quantity line item that's
 // also actually worth something (a standalone "just expensive" rule was
 // removed - too noisy on its own). Keyword lists and thresholds are the
 // user's own stated criteria (2026-09 request) - kept as named constants,
@@ -79,6 +80,11 @@ const FOCUS_LIQUOR_DEPARTMENT = "LIQUOR";
 // on top of the existing name-keyword match (a large appliance sold from
 // a different department, e.g. a promotional bundle, still gets a look).
 const FOCUS_LARGE_APPLIANCE_DEPARTMENT = "MAJOR APPLIANCE";
+// User request: add Face & Cosmetics as its own department-based
+// category, the same department-only pattern large appliance uses - a
+// high-theft category regardless of what any individual product's name
+// says.
+const FOCUS_COSMETICS_DEPARTMENT = "FACE & COSMETICS";
 const FOCUS_NAME_KEYWORDS = {
   liquor: ["เหล้า", "เบียร์", "วิสกี้", "ไวน์"],
   milkPowder: ["นมผง", "milk powder"],
@@ -120,6 +126,7 @@ function focusItemReasons(product) {
   ) {
     reasons.push("largeAppliance");
   }
+  if (product.department === FOCUS_COSMETICS_DEPARTMENT) reasons.push("cosmetics");
   // User request: the standalone "amount >= 1,000 baht" rule (with no
   // quantity requirement) was removed - flagging every moderately-priced
   // single-unit row was too noisy. A high-value row is still caught
@@ -141,6 +148,7 @@ export const FOCUS_REASON_LABELS = {
   liquor: "เครื่องดื่มแอลกอฮอล์",
   milkPowder: "นมผง",
   largeAppliance: "เครื่องใช้ไฟฟ้าขนาดใหญ่",
+  cosmetics: "เครื่องสำอาง / ผลิตภัณฑ์ความงาม",
   bigLot: `จำนวน ≥ ${FOCUS_QTY_THRESHOLD.toLocaleString("th-TH")} ชิ้น และมูลค่า > ${FOCUS_BIG_LOT_AMOUNT_THRESHOLD.toLocaleString("th-TH")} บาท`,
 };
 

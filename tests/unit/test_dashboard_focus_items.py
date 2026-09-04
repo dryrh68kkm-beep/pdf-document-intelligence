@@ -3,13 +3,14 @@ only "focus items" - rows worth a reviewer's attention out of possibly
 thousands - so LP staff don't have to scan the full Products table by
 hand every day.
 
-Criteria are the user's own explicit spec, as updated by two 2026-09
+Criteria are the user's own explicit spec, as updated by several 2026-09
 follow-up requests:
 - department == "LIQUOR", or product name containing เหล้า/เบียร์/วิสกี้/ไวน์
 - product name containing นมผง or "milk powder"
 - department == "MAJOR APPLIANCE", or product name containing
   ตู้เย็น/ทีวี/เครื่องซักผ้า ("แอร์" was removed - false-matched non-
   appliance products like an air-freshener spray branded "แอร์เอ็กซ์")
+- department == "FACE & COSMETICS" (added follow-up request)
 - sku_qty >= 100 pieces AND amount > 5,000 baht, both on the same row -
   a big-lot row is only flagged if it's also actually worth something;
   qty alone is no longer enough
@@ -80,6 +81,7 @@ def _run(product):
         for name in [
             "FOCUS_LIQUOR_DEPARTMENT",
             "FOCUS_LARGE_APPLIANCE_DEPARTMENT",
+            "FOCUS_COSMETICS_DEPARTMENT",
             "FOCUS_NAME_KEYWORDS",
             "FOCUS_QTY_THRESHOLD",
             "FOCUS_BIG_LOT_AMOUNT_THRESHOLD",
@@ -151,6 +153,18 @@ def test_major_appliance_department_is_flagged_even_without_a_matching_name():
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_face_and_cosmetics_department_is_flagged():
+    reasons = _run(_product(department="FACE & COSMETICS", name="ANYTHING"))
+    assert "cosmetics" in reasons
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_different_department_is_not_flagged_as_cosmetics():
+    reasons = _run(_product(department="HBA", name="ANYTHING"))
+    assert "cosmetics" not in reasons
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_standalone_high_amount_rule_was_removed():
     # User request: a moderately-priced single-unit row must not be
     # flagged on value alone anymore - only bigLot (qty + amount together)
@@ -197,6 +211,7 @@ def _run_grouped(products):
         for name in [
             "FOCUS_LIQUOR_DEPARTMENT",
             "FOCUS_LARGE_APPLIANCE_DEPARTMENT",
+            "FOCUS_COSMETICS_DEPARTMENT",
             "FOCUS_NAME_KEYWORDS",
             "FOCUS_QTY_THRESHOLD",
             "FOCUS_BIG_LOT_AMOUNT_THRESHOLD",
