@@ -3,13 +3,18 @@ only "focus items" - rows worth a reviewer's attention out of possibly
 thousands - so LP staff don't have to scan the full Products table by
 hand every day.
 
-Criteria are the user's own explicit spec (2026-09 request):
+Criteria are the user's own explicit spec, as updated by a 2026-09
+follow-up request:
 - department == "LIQUOR", or product name containing เหล้า/เบียร์/วิสกี้/ไวน์
 - product name containing นมผง or "milk powder"
-- product name containing ตู้เย็น/ทีวี/แอร์/เครื่องซักผ้า
-- amount >= 1,000 baht (per row)
-- sku_qty >= 100 pieces (per row)
-- ANY of the above is enough to flag a row - not all of them.
+- department == "MAJOR APPLIANCE", or product name containing
+  ตู้เย็น/ทีวี/แอร์/เครื่องซักผ้า
+- amount >= 1,000 baht (per row) - standalone
+- sku_qty >= 100 pieces AND amount > 5,000 baht, both on the same row -
+  a big-lot row is only flagged if it's also actually worth something;
+  qty alone is no longer enough (follow-up request)
+- ANY of the above (other than the two-part big-lot rule, which needs
+  both its own parts) is enough to flag a row on its own.
 
 focusItemReasons() is a pure function (no DOM/imports) - executed
 directly via Node for real behavioral coverage, matching this project's
@@ -70,7 +75,14 @@ def _run(product):
     source = DASHBOARD.read_text(encoding="utf-8")
     consts = "\n".join(
         _extract_const(source, name)
-        for name in ["FOCUS_LIQUOR_DEPARTMENT", "FOCUS_NAME_KEYWORDS", "FOCUS_AMOUNT_THRESHOLD", "FOCUS_QTY_THRESHOLD"]
+        for name in [
+            "FOCUS_LIQUOR_DEPARTMENT",
+            "FOCUS_LARGE_APPLIANCE_DEPARTMENT",
+            "FOCUS_NAME_KEYWORDS",
+            "FOCUS_AMOUNT_THRESHOLD",
+            "FOCUS_QTY_THRESHOLD",
+            "FOCUS_BIG_LOT_AMOUNT_THRESHOLD",
+        ]
     )
     helper = _extract_function(source, "_nameHasAnyKeyword")
     fn = _extract_function(source, "focusItemReasons")
@@ -121,15 +133,25 @@ def test_large_appliance_keywords_are_flagged():
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_major_appliance_department_is_flagged_even_without_a_matching_name():
+    reasons = _run(_product(department="MAJOR APPLIANCE", name="ANYTHING"))
+    assert "largeAppliance" in reasons
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_high_amount_is_flagged_at_the_threshold():
     assert "highAmount" in _run(_product(name="ธรรมดา", amount=1000))
     assert "highAmount" not in _run(_product(name="ธรรมดา", amount=999.99))
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
-def test_big_lot_quantity_is_flagged_at_the_threshold():
-    assert "bigLot" in _run(_product(name="ธรรมดา", sku_qty=100))
-    assert "bigLot" not in _run(_product(name="ธรรมดา", sku_qty=99))
+def test_big_lot_requires_both_quantity_and_amount_thresholds_on_the_same_row():
+    # qty >= 100 alone is no longer enough - amount must also exceed 5,000
+    # (follow-up request); each threshold missing on its own must not flag.
+    assert "bigLot" not in _run(_product(name="ธรรมดา", sku_qty=150, amount=5000))
+    assert "bigLot" not in _run(_product(name="ธรรมดา", sku_qty=99, amount=6000))
+    assert "bigLot" not in _run(_product(name="ธรรมดา", sku_qty=100))
+    assert "bigLot" in _run(_product(name="ธรรมดา", sku_qty=100, amount=5000.01))
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
@@ -140,7 +162,7 @@ def test_an_ordinary_row_matches_nothing():
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_a_row_can_match_multiple_reasons_at_once():
-    reasons = _run(_product(department="LIQUOR", name="วิสกี้พรีเมียม", amount=5000, sku_qty=200))
+    reasons = _run(_product(department="LIQUOR", name="วิสกี้พรีเมียม", amount=6000, sku_qty=200))
     assert set(reasons) == {"liquor", "highAmount", "bigLot"}
 
 
@@ -157,7 +179,14 @@ def _run_grouped(products):
     source = DASHBOARD.read_text(encoding="utf-8")
     consts = "\n".join(
         _extract_const(source, name)
-        for name in ["FOCUS_LIQUOR_DEPARTMENT", "FOCUS_NAME_KEYWORDS", "FOCUS_AMOUNT_THRESHOLD", "FOCUS_QTY_THRESHOLD"]
+        for name in [
+            "FOCUS_LIQUOR_DEPARTMENT",
+            "FOCUS_LARGE_APPLIANCE_DEPARTMENT",
+            "FOCUS_NAME_KEYWORDS",
+            "FOCUS_AMOUNT_THRESHOLD",
+            "FOCUS_QTY_THRESHOLD",
+            "FOCUS_BIG_LOT_AMOUNT_THRESHOLD",
+        ]
     )
     helper = _extract_function(source, "_nameHasAnyKeyword")
     reasons_fn = _extract_function(source, "focusItemReasons")
@@ -205,11 +234,11 @@ def test_rows_sharing_a_barcode_are_combined_into_one_group_with_summed_totals()
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_reasons_from_every_contributing_row_are_merged_not_just_the_first():
     groups = _run_grouped([
-        _product_with_barcode("222", rowId="r1", department="BAKERY", name="ธรรมดา", amount=1500),
-        _product_with_barcode("222", rowId="r2", department="BAKERY", name="ธรรมดา", sku_qty=150),
+        _product_with_barcode("222", rowId="r1", department="BAKERY", name="นมผงตรา A"),
+        _product_with_barcode("222", rowId="r2", department="BAKERY", name="ธรรมดา", sku_qty=150, amount=6000),
     ])
     assert len(groups) == 1
-    assert set(groups[0]["reasons"]) == {"highAmount", "bigLot"}
+    assert set(groups[0]["reasons"]) == {"milkPowder", "highAmount", "bigLot"}
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
