@@ -377,6 +377,21 @@ class Store {
       // the browser console the next time this happens.
       console.error(`Division summary fetch failed for document ${docId}:`, err.status, err.message, err.diagnosticId ? `(diagnosticId: ${err.diagnosticId})` : "");
       this._divisionCache.set(docId, null);
+      if (err.status === 404) {
+        // Live report: the Dashboard kept warning "ไม่สามารถดึงสรุป
+        // Division...ได้" for documents that turned out to 404 here -
+        // build_division_summary's _active_document() only ever 404s when
+        // repo.get_document() finds the row genuinely missing or soft-
+        // deleted, so this is authoritative proof the document is gone,
+        // not a transient failure to retry. It's still in this.state.
+        // documents only because that array can go stale relative to the
+        // backend (deleted from another tab/session, or an earlier action
+        // in this one, since this tab's document list was last fetched).
+        // Prune it immediately instead of leaving a ghost entry that
+        // re-triggers this same warning on every future render until the
+        // page happens to get a full reload.
+        this.set({ documents: this.state.documents.filter((doc) => doc.id !== docId) });
+      }
       return null;
     }
   }

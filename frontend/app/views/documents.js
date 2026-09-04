@@ -86,13 +86,16 @@ export function renderDocuments(container, store) {
   const documents = store.getDateScopedDocuments();
   const visible = filteredDocuments(documents);
 
-  // "Reprocess ทั้งหมด" targets the currently filtered/visible list (not
-  // just the current page - a user filtering down to e.g. only ผิดพลาด
-  // documents expects "all" to mean everything that filter matched, not
-  // just the 10 rows on screen), same status exclusion the per-row button
-  // already applies (a document already mid-processing can't be
-  // resubmitted - the backend's mark_reprocessing() would just 423 it).
-  const reprocessableCount = visible.filter((doc) => doc.status !== "processing").length;
+  // User request: bulk Reprocess must only target documents that are
+  // actually stuck/problematic (isProblemDocument - same HIGH_RISK/error
+  // definition the per-row warning styling already uses), not every
+  // healthy document matching the current filter - reprocessing a document
+  // that's already fine wastes an OCR run for no reason. Still excludes a
+  // document already mid-processing (the backend's mark_reprocessing()
+  // would just 423 it), though isProblemDocument never flags a
+  // status==="processing" row as a problem in the first place.
+  const reprocessTargets = visible.filter((doc) => isProblemDocument(doc) && doc.status !== "processing");
+  const reprocessableCount = reprocessTargets.length;
 
   container.innerHTML = `
     <div class="workspace-header">
@@ -100,7 +103,7 @@ export function renderDocuments(container, store) {
         <div class="workspace-title">Documents</div>
         <div class="workspace-sub">แสดง ${visible.length} จาก ${documents.length} ไฟล์ในช่วงวันที่ที่เลือก${documents.length !== allDocuments.length ? ` · ทั้งหมด ${allDocuments.length} ไฟล์` : ""}</div>
       </div>
-      <button type="button" class="btn btn-sm" id="reprocessAllBtn" style="margin-left:auto;"${reprocessableCount ? "" : " disabled"}>Reprocess ทั้งหมด${reprocessableCount ? ` (${reprocessableCount})` : ""}</button>
+      <button type="button" class="btn btn-sm" id="reprocessAllBtn" style="margin-left:auto;"${reprocessableCount ? "" : " disabled"}>Reprocess เอกสารที่ค้าง/มีปัญหา${reprocessableCount ? ` (${reprocessableCount})` : ""}</button>
     </div>
     <div class="filter-bar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
       <input class="search-input" id="docSearch" type="search" placeholder="ค้นหาชื่อไฟล์ / วันที่ / ประเภท" value="${escapeHtml(searchQuery)}">
@@ -122,12 +125,12 @@ export function renderDocuments(container, store) {
   `;
 
   container.querySelector("#reprocessAllBtn")?.addEventListener("click", () => {
-    const targets = visible.filter((doc) => doc.status !== "processing");
+    const targets = reprocessTargets;
     if (!targets.length) return;
     store.set({
       confirmDialog: {
         title: `Reprocess ${targets.length} เอกสาร?`,
-        message: "เอกสารทั้งหมดที่ตรงกับตัวกรองปัจจุบัน (ยกเว้นเอกสารที่กำลังประมวลผลอยู่) จะถูกส่งประมวลผลใหม่",
+        message: "เฉพาะเอกสารที่ค้างหรือมีปัญหา (ผิดพลาด/ความเสี่ยงสูง) ในตัวกรองปัจจุบันจะถูกส่งประมวลผลใหม่ เอกสารที่ปกติดีอยู่แล้วจะไม่ถูกแตะต้อง",
         onConfirm: async () => {
           const btn = container.querySelector("#reprocessAllBtn");
           if (btn) {

@@ -1,7 +1,13 @@
-"""Documents view: a "Reprocess ทั้งหมด" bulk action next to the existing
-per-row Reprocess button - a user with many documents flagged for review
-had no way to resubmit all of them without clicking Reprocess one row at a
-time.
+"""Documents view: a bulk Reprocess action next to the existing per-row
+Reprocess button - a user with many documents flagged for review had no
+way to resubmit all of them without clicking Reprocess one row at a time.
+
+Follow-up user request: the bulk action originally targeted every document
+matching the current filter (minus ones already mid-processing), including
+documents that were already fine - reprocessing a healthy document wastes
+an OCR run for nothing. Restricted to isProblemDocument(doc) (the same
+HIGH_RISK/error definition the per-row warning styling already uses) so it
+only resubmits documents that are actually stuck or have a real problem.
 
 documents.js is a DOM-driving view module with no pure function to execute
 outside a real browser, matching this project's established pattern for
@@ -16,14 +22,69 @@ would.
 """
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCUMENTS = ROOT / "frontend" / "app" / "views" / "documents.js"
 
+NODE = shutil.which("node")
+
 
 def _source() -> str:
     return DOCUMENTS.read_text(encoding="utf-8")
+
+
+def _extract_function(source: str, name: str) -> str:
+    start = source.index(f"function {name}(")
+    brace_start = source.index("{", start)
+    depth = 0
+    i = brace_start
+    while True:
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : i + 1]
+        i += 1
+
+
+def _is_problem_document(doc):
+    fn = _extract_function(_source(), "isProblemDocument")
+    script = f"""
+{fn}
+console.log(JSON.stringify(isProblemDocument({json.dumps(doc)})));
+"""
+    result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_healthy_complete_document_is_not_a_problem():
+    assert _is_problem_document({"status": "complete", "qualityBand": "GOOD", "qualityCounts": {"errors": 0}}) is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_an_errored_document_is_a_problem():
+    assert _is_problem_document({"status": "error", "qualityBand": None, "qualityCounts": None}) is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_high_risk_or_error_count_document_is_a_problem_even_if_status_is_complete():
+    assert _is_problem_document({"status": "complete", "qualityBand": "HIGH_RISK", "qualityCounts": {"errors": 0}}) is True
+    assert _is_problem_document({"status": "complete", "qualityBand": "GOOD", "qualityCounts": {"errors": 2}}) is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_document_still_processing_is_not_flagged_a_problem():
+    # A document genuinely mid-processing (not stuck) must not be swept up
+    # by the bulk Reprocess action just for being in that state.
+    assert _is_problem_document({"status": "processing", "qualityBand": None, "qualityCounts": None}) is False
 
 
 def test_reprocess_all_button_is_wired():
@@ -38,27 +99,42 @@ def test_reprocess_all_excludes_documents_already_processing():
     mark_reprocessing(), matching the guard the per-row button already
     applies (`doc.status !== "processing"`)."""
     source = _source()
-    handler_start = source.index('#reprocessAllBtn")?.addEventListener("click"')
-    handler_end = source.index("\n  });", handler_start)
-    handler_body = source[handler_start:handler_end]
-    assert 'doc.status !== "processing"' in handler_body
+    targets_start = source.index("const reprocessTargets =")
+    targets_end = source.index(";", targets_start)
+    assert 'doc.status !== "processing"' in source[targets_start:targets_end]
+
+
+def test_reprocess_all_only_targets_stuck_or_problem_documents():
+    """User request: bulk Reprocess must not resubmit every document
+    matching the current filter, only the ones actually stuck/problematic
+    (isProblemDocument - HIGH_RISK quality, a validation error, or
+    status==="error") - reprocessing an already-healthy document wastes an
+    OCR run for nothing."""
+    source = _source()
+    targets_start = source.index("const reprocessTargets =")
+    targets_end = source.index(";", targets_start)
+    assert "isProblemDocument(doc)" in source[targets_start:targets_end]
+    assert "reprocessTargets.length" in source
 
 
 def test_reprocess_all_targets_the_filtered_list_not_only_the_current_page():
     """"All" must mean everything the current filter matched (`visible`),
     not just the 10 rows paginate() put on screen - otherwise a user who
     filtered down to e.g. only ผิดพลาด documents and clicked "Reprocess
-    ทั้งหมด (12)" would silently only get the first page resubmitted."""
+    เอกสารที่ค้าง/มีปัญหา (12)" would silently only get the first page
+    resubmitted."""
     source = _source()
     button_start = source.index('id="reprocessAllBtn"')
     button_line_end = source.index("\n", button_start)
     button_markup = source[button_start:button_line_end]
     assert "reprocessableCount" in button_markup
-    assert "reprocessableCount = visible.filter" in source
+    targets_start = source.index("const reprocessTargets =")
+    targets_end = source.index(";", targets_start)
+    assert "visible.filter" in source[targets_start:targets_end]
     handler_start = source.index('#reprocessAllBtn")?.addEventListener("click"')
     handler_end = source.index("\n  });", handler_start)
     handler_body = source[handler_start:handler_end]
-    assert "visible.filter" in handler_body
+    assert "reprocessTargets" in handler_body
 
 
 def test_reprocess_all_confirms_before_submitting():
