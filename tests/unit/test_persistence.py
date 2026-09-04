@@ -349,6 +349,48 @@ def test_bulk_confirm_is_idempotent_and_does_not_duplicate_history(db_path):
     assert repo.list_corrections(row["id"]) == history_after_first_confirm
 
 
+def test_bulk_confirm_is_race_safe_against_two_concurrent_callers(db_path, monkeypatch):
+    """Follow-up user report: the idempotency guard above only protects a
+    *sequential* second call (one that reads the row after the first call's
+    write already committed) - it reads the row before taking any lock, so
+    two calls landing close enough together (an impatient double-click, or
+    the same row's two "Mark Resolved" entry points both firing) can both
+    read review_required=True before either has written, both pass the
+    guard, and both call update_product_row_field, which had no way to
+    tell the second one was now redundant. Simulates that exact race: the
+    first call's write is applied for real (as if a concurrent request won
+    it), then confirm_review_row is invoked with its own initial read
+    forced to return the pre-race (stale) snapshot, matching what a truly
+    concurrent second caller would have seen."""
+    repo = _repo_at(db_path)
+    _seed_document(repo)
+    row = next(r for r in repo.list_product_rows() if r["review_required"])
+    stale_row = repo.get_product_row(row["id"])
+
+    # The "other" concurrent caller wins the race for real.
+    confirm_review_row(repo, row["id"])
+    history_after_the_winner = repo.list_corrections(row["id"])
+
+    # Our call's own initial read is forced to the pre-race snapshot -
+    # exactly what it would have seen had it read a moment earlier, before
+    # the winner's write landed.
+    original_get = repo.get_product_row
+    calls = {"n": 0}
+
+    def fake_get_product_row(row_id):
+        calls["n"] += 1
+        return stale_row if calls["n"] == 1 else original_get(row_id)
+
+    monkeypatch.setattr(repo, "get_product_row", fake_get_product_row)
+
+    result = confirm_review_row(repo, row["id"])
+
+    assert result["confirmed"] is True
+    assert repo.get_product_row(row["id"])["review_required"] == 0
+    # No second "confirmed" correction was written despite the race.
+    assert repo.list_corrections(row["id"]) == history_after_the_winner
+
+
 # --- Local product master (items 16-19) ---
 
 def test_local_master_add_and_duplicate_protection(db_path):

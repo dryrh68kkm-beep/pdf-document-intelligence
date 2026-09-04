@@ -214,7 +214,25 @@ def confirm_review_row(repo: Repository, row_id: str, source: str = "LOCAL_USER"
     again on an already-resolved row used to log another (misleading)
     True->False transition instead of a no-op. Skip the write entirely
     when review_required is already False - nothing changed, so nothing
-    to record."""
+    to record.
+
+    Follow-up user report: the same duplicate-history symptom still
+    happened after the guard above. Root cause: the `not
+    row.get("review_required")` check reads the row *before* taking the
+    write lock, so two calls landing close enough together (a genuine
+    double-click, or the two entry points racing each other, exactly as
+    described above) can both read review_required=True before either has
+    written - both then pass the guard and both call
+    update_product_row_field, which had no way to tell the second caller
+    it was redundant since it only unconditionally overwrites the row.
+    Passing this call's own `updated_at` as `expected_updated_at` makes
+    the read-check-write atomic at the SQL level (see that parameter's
+    own docstring): whichever caller's UPDATE lands first changes
+    updated_at out from under the other, so the loser's conditional UPDATE
+    matches zero rows and raises RowConflictError instead of silently
+    writing a second "confirmed" correction. On that conflict, re-check
+    the row's *current* state - if it's already resolved (the expected
+    outcome of losing this exact race), this call is a genuine no-op."""
     row = repo.get_product_row(row_id)
     if not row:
         raise HTTPException(404, "product row not found")
@@ -228,7 +246,13 @@ def confirm_review_row(repo: Repository, row_id: str, source: str = "LOCAL_USER"
         repo.update_product_row_field(
             row_id, "review_required", True, False,
             {"review_required": 0, "review_reasons": "[]"}, "confirmed", source,
+            expected_updated_at=row.get("updated_at"),
         )
     except RowNotFoundError:
         raise HTTPException(404, "product row not found")
+    except RowConflictError:
+        current = repo.get_product_row(row_id)
+        if current and not current.get("review_required"):
+            return {"confirmed": True, "row": current}
+        raise HTTPException(409, "row was modified concurrently - please retry")
     return {"confirmed": True, "row": repo.get_product_row(row_id)}

@@ -81,20 +81,32 @@ function isProblemDocument(doc) {
   return doc.qualityBand === "HIGH_RISK" || (doc.qualityCounts?.errors ?? 0) > 0 || doc.status === "error";
 }
 
+// User report: the bulk Reprocess button ended up disabled/unusable for
+// this user's real document set - every visible document had pending
+// review items ("Review 27", "Review 15", ...) but none were HIGH_RISK,
+// had a validation error, or were status==="error", so isProblemDocument
+// alone (correct for the per-row warning styling it was already used for)
+// left reprocessTargets empty. A document with unresolved review items is
+// exactly the kind of "มีปัญหา" (has a problem) document this button was
+// meant to cover - broadens eligibility to include it too, while still
+// excluding a document that's genuinely fine (no errors, no review
+// pending, not HIGH_RISK).
+function isReprocessTarget(doc) {
+  return isProblemDocument(doc) || (doc.qualityCounts?.needReview ?? 0) > 0;
+}
+
 export function renderDocuments(container, store) {
   const allDocuments = store.state.documents;
   const documents = store.getDateScopedDocuments();
   const visible = filteredDocuments(documents);
 
   // User request: bulk Reprocess must only target documents that are
-  // actually stuck/problematic (isProblemDocument - same HIGH_RISK/error
-  // definition the per-row warning styling already uses), not every
-  // healthy document matching the current filter - reprocessing a document
-  // that's already fine wastes an OCR run for no reason. Still excludes a
+  // actually stuck/problematic (isReprocessTarget), not every healthy
+  // document matching the current filter - reprocessing a document that's
+  // already fine wastes an OCR run for no reason. Still excludes a
   // document already mid-processing (the backend's mark_reprocessing()
-  // would just 423 it), though isProblemDocument never flags a
-  // status==="processing" row as a problem in the first place.
-  const reprocessTargets = visible.filter((doc) => isProblemDocument(doc) && doc.status !== "processing");
+  // would just 423 it).
+  const reprocessTargets = visible.filter((doc) => isReprocessTarget(doc) && doc.status !== "processing");
   const reprocessableCount = reprocessTargets.length;
 
   container.innerHTML = `
