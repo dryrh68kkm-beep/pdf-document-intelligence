@@ -20,6 +20,16 @@ Fix: on a 404 specifically, _getDivisionSummary now prunes the document
 from state.documents immediately, so a ghost entry self-heals right away
 instead of nagging forever.
 
+Follow-up user request: check proactively too, not only reactively after
+a 404 comes back. Before firing the request (or even returning a cached
+result), _getDivisionSummary now checks whether docId is still present in
+state.documents at all - if not, it skips the network round-trip entirely
+and drops any cache entry for that ID. This also closes a gap the 404
+prune alone left open: a docId that was cached *successfully* before
+being deleted would otherwise keep being served from cache forever with
+no existence check at all, silently feeding stale numbers into the
+Dashboard - worse than the "incomplete" warning it was supposed to avoid.
+
 state.js's _getDivisionSummary is a Store class method (uses `this.set`,
 `this._divisionCache`, `api.getDivisions`) rather than a pure function, so
 unlike the Node-execution tests elsewhere in this suite (see
@@ -78,3 +88,23 @@ def test_a_non_404_failure_does_not_prune_the_document():
     assert "this.set({ documents:" in prune_block
     before_branch = body[: body.index("if (err.status === 404) {")]
     assert "this.set({ documents:" not in before_branch
+
+
+def test_a_docid_no_longer_in_state_documents_is_checked_before_the_cache_and_before_any_network_call():
+    body = _get_division_summary_body()
+    existence_check_index = body.index("!this.state.documents.some((doc) => doc.id === docId)")
+    cache_read_index = body.index("this._divisionCache.has(docId)")
+    api_call_index = body.index("api.getDivisions(docId)")
+    assert existence_check_index < cache_read_index < api_call_index
+
+
+def test_a_docid_no_longer_in_state_documents_drops_any_stale_cache_entry():
+    """A docId cached from *before* it was deleted must not keep being
+    served from cache forever - the existence check must clear it, not
+    just skip the network call."""
+    body = _get_division_summary_body()
+    guard_start = body.index("!this.state.documents.some((doc) => doc.id === docId)")
+    guard_block_end = body.index("\n    }", guard_start)
+    guard_block = body[guard_start : guard_block_end + len("\n    }")]
+    assert "this._divisionCache.delete(docId);" in guard_block
+    assert "return null;" in guard_block
