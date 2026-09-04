@@ -86,6 +86,7 @@ function buildDashboardOverview(items, divisionFilter, scope = {}) {
     : null;
 
   const incompleteDocumentCount = scope.incompleteDocumentCount ?? 0;
+  const incompleteDocuments = scope.incompleteDocuments ?? [];
 
   const totals = selected
     ? {
@@ -113,6 +114,7 @@ function buildDashboardOverview(items, divisionFilter, scope = {}) {
     unreconciledDocumentCount,
     unreconciledAmount: Math.round((unreconciledAmount + Number.EPSILON) * 100) / 100,
     incompleteDocumentCount,
+    incompleteDocuments,
     isDataIncomplete: incompleteDocumentCount > 0,
   };
 }
@@ -364,7 +366,16 @@ class Store {
       const summary = await api.getDivisions(docId);
       this._divisionCache.set(docId, summary);
       return summary;
-    } catch {
+    } catch (err) {
+      // User report (live screenshot): the Dashboard's "ข้อมูลสรุปไม่สมบูรณ์"
+      // warning gave a bare count with nothing to diagnose from - this catch
+      // used to discard the actual failure (status/message/diagnosticId,
+      // the very thing api.js's errorFromResponse() attaches specifically so
+      // a real backend failure is traceable) instead of ever surfacing it.
+      // Still caches null and never throws (one bad document must not blank
+      // the whole Dashboard), but now the real cause is at least visible in
+      // the browser console the next time this happens.
+      console.error(`Division summary fetch failed for document ${docId}:`, err.status, err.message, err.diagnosticId ? `(diagnosticId: ${err.diagnosticId})` : "");
       this._divisionCache.set(docId, null);
       return null;
     }
@@ -386,12 +397,13 @@ class Store {
     // amount/Division breakdown and is surfaced via incompleteDocumentCount.
     const inRangeDocIds = new Set(inRange.map((doc) => doc.id));
     const rowCount = products.filter((p) => !p.suspectedNonProduct && inRangeDocIds.has(p.docId)).length;
-    const incompleteDocumentCount = pairs.filter((item) => !item.summary).length;
+    const failed = pairs.filter((item) => !item.summary);
     const usable = pairs.filter((item) => item.summary);
     return buildDashboardOverview(usable, dashboardDivisionFilter, {
       documentCount: inRange.length,
       rowCount,
-      incompleteDocumentCount,
+      incompleteDocumentCount: failed.length,
+      incompleteDocuments: failed.map((item) => item.document.filename || item.document.id),
     });
   }
 

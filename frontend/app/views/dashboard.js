@@ -681,6 +681,11 @@ export function renderDashboard(container, store) {
             <span>
               ข้อมูลสรุปไม่สมบูรณ์ - ไม่สามารถดึงสรุป Division ของ ${fmtNum(dashboardOverview.incompleteDocumentCount)} เอกสารในช่วงวันที่นี้ได้
               (จำนวนเอกสาร/จำนวนรายการด้านบนยังถูกต้อง แต่มูลค่ารวมและกราฟตาม Division อาจไม่รวมเอกสารดังกล่าว)
+              ${
+                dashboardOverview.incompleteDocuments?.length
+                  ? `<br><strong>เอกสารที่มีปัญหา:</strong> ${dashboardOverview.incompleteDocuments.map(escapeHtml).join(", ")} - ลองกด Reprocess เอกสารนี้ หรือดูรายละเอียดข้อผิดพลาดใน Console ของเบราว์เซอร์ (F12)`
+                  : ""
+              }
             </span>
           </div>`
         : ""
