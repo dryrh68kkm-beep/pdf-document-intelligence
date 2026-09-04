@@ -128,8 +128,19 @@ def test_milk_powder_keyword_matches_thai_and_english():
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_large_appliance_keywords_are_flagged():
-    for word in ["ตู้เย็น", "ทีวี", "แอร์", "เครื่องซักผ้า"]:
+    for word in ["ตู้เย็น", "ทีวี", "เครื่องซักผ้า"]:
         assert "largeAppliance" in _run(_product(name=f"สินค้า {word} รุ่นใหม่"))
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_air_substring_in_a_product_name_no_longer_false_matches_large_appliance():
+    # User report (live screenshot): "แอร์" as a keyword matched any name
+    # containing that substring, including non-appliance products like an
+    # air-freshener spray branded "แอร์เอ็กซ์" - removed from the keyword
+    # list entirely. Real air conditioners are still caught via the
+    # MAJOR APPLIANCE department rule, not by name.
+    reasons = _run(_product(department="OVER THE COUNTER", name="P_ แอร์ เอ็กซ์ ดรอป 15 มล"))
+    assert "largeAppliance" not in reasons
 
 
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")

@@ -82,7 +82,12 @@ const FOCUS_LARGE_APPLIANCE_DEPARTMENT = "MAJOR APPLIANCE";
 const FOCUS_NAME_KEYWORDS = {
   liquor: ["เหล้า", "เบียร์", "วิสกี้", "ไวน์"],
   milkPowder: ["นมผง", "milk powder"],
-  largeAppliance: ["ตู้เย็น", "ทีวี", "แอร์", "เครื่องซักผ้า"],
+  // "แอร์" removed (user report, live screenshot): it false-matched
+  // non-appliance products whose name/brand merely contains that
+  // substring (e.g. "P_ แอร์เอ็กซ์ ดรอป" - an air-freshener spray, not
+  // an air conditioner). Real air conditioners are still caught via
+  // FOCUS_LARGE_APPLIANCE_DEPARTMENT ("MAJOR APPLIANCE") instead.
+  largeAppliance: ["ตู้เย็น", "ทีวี", "เครื่องซักผ้า"],
 };
 const FOCUS_AMOUNT_THRESHOLD = 1000;
 const FOCUS_QTY_THRESHOLD = 100;
