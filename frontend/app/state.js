@@ -149,6 +149,12 @@ class Store {
       dashboardDateFrom: "",
       dashboardDateTo: "",
       dashboardDivisionFilter: "all",
+      // User request: a per-document drill-down alongside the existing
+      // date-range/Division filters, so the Division breakdown table can
+      // be narrowed to one specific document instead of always summing
+      // every document in the date range. "all" (the default) behaves
+      // exactly as before this filter existed.
+      dashboardDocumentFilter: "all",
       // { totals: {rowCount, amount, documentCount}, divisions: [...],
       // amountAvailable, selectedDivision } - built by
       // _computeDashboardOverview() below from each in-range document's
@@ -412,9 +418,12 @@ class Store {
   }
 
   async _computeDashboardOverview(documents = this.state.documents, products = this.state.products) {
-    const { dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter } = this.state;
+    const { dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter, dashboardDocumentFilter } = this.state;
     const inRange = documents.filter(
-      (doc) => doc.status === "complete" && inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo),
+      (doc) =>
+        doc.status === "complete" &&
+        inDocumentDateRange(doc.documentDate, dashboardDateFrom, dashboardDateTo) &&
+        (dashboardDocumentFilter === "all" || dashboardDocumentFilter === "" || doc.id === dashboardDocumentFilter),
     );
     const pairs = await Promise.all(
       inRange.map(async (document) => ({ document, summary: await this._getDivisionSummary(document.id) })),
@@ -441,11 +450,12 @@ class Store {
     this.set({ dashboardOverview: await this._computeDashboardOverview() });
   }
 
-  async setDashboardOverviewFilters({ dateFrom, dateTo, division } = {}) {
+  async setDashboardOverviewFilters({ dateFrom, dateTo, division, documentId } = {}) {
     const patch = {
       dashboardDateFrom: dateFrom ?? this.state.dashboardDateFrom,
       dashboardDateTo: dateTo ?? this.state.dashboardDateTo,
       dashboardDivisionFilter: division ?? this.state.dashboardDivisionFilter,
+      dashboardDocumentFilter: documentId ?? this.state.dashboardDocumentFilter,
       dashboardOverview: null,
     };
     this.set(patch);

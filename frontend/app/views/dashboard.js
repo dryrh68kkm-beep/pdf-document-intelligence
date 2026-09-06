@@ -549,7 +549,7 @@ let departmentDivisionsRef = {};
 export function renderDashboard(container, store) {
   const {
     documents, products, panel, departmentDivisions,
-    dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter,
+    dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter, dashboardDocumentFilter,
     dashboardOverview, dashboardLastRefreshedAt, dashboardRefreshing,
   } = store.state;
   departmentDivisionsRef = departmentDivisions || {};
@@ -566,7 +566,7 @@ export function renderDashboard(container, store) {
     return;
   }
 
-  const filterKey = `${dashboardDateFrom}|${dashboardDateTo}|${dashboardDivisionFilter}`;
+  const filterKey = `${dashboardDateFrom}|${dashboardDateTo}|${dashboardDivisionFilter}|${dashboardDocumentFilter}`;
   if (filterKey !== lastRenderedFilterKey) {
     page = 1;
     lastRenderedFilterKey = filterKey;
@@ -585,11 +585,23 @@ export function renderDashboard(container, store) {
   }
 
   const docById = new Map(documents.map((d) => [d.id, d]));
+
+  // User request: a per-document drill-down alongside the date-range and
+  // Division filters. Options are scoped to the date-range-and-status
+  // subset the rest of this view already works from (not every document
+  // ever uploaded) - a document outside the selected range wouldn't
+  // contribute to the overview anyway, so listing it here would just be a
+  // dead option. Newest first, matching the Documents view's default sort.
+  const documentFilterOptions = documents
+    .filter((doc) => doc.status === "complete" && inRange(doc.documentDate, dashboardDateFrom, dashboardDateTo))
+    .sort((a, b) => String(b.documentDate || "").localeCompare(String(a.documentDate || "")));
+
   const inFilterRange = (p) => {
     const doc = docById.get(p.docId);
     if (!doc || doc.status !== "complete" || p.suspectedNonProduct) return false;
     if (!inRange(doc.documentDate, dashboardDateFrom, dashboardDateTo)) return false;
     if (dashboardDivisionFilter !== "all" && departmentDivisionsRef[p.department]?.code !== dashboardDivisionFilter) return false;
+    if (dashboardDocumentFilter !== "all" && dashboardDocumentFilter !== "" && p.docId !== dashboardDocumentFilter) return false;
     return true;
   };
   const filteredRows = products.filter(inFilterRange);
@@ -653,6 +665,15 @@ export function renderDashboard(container, store) {
           ${[...allDivisionOptions.entries()]
             .sort((a, b) => a[0].localeCompare(b[0]))
             .map(([code, name]) => `<option value="${escapeHtml(code)}"${dashboardDivisionFilter === code ? " selected" : ""}>${escapeHtml(name)}</option>`)
+            .join("")}
+        </select>
+      </div>
+      <div class="dash-filter">
+        <label for="dashDocumentSelect">เอกสาร</label>
+        <select id="dashDocumentSelect">
+          <option value="all"${dashboardDocumentFilter === "all" ? " selected" : ""}>ทั้งหมด</option>
+          ${documentFilterOptions
+            .map((doc) => `<option value="${escapeHtml(doc.id)}"${dashboardDocumentFilter === doc.id ? " selected" : ""}>${escapeHtml(doc.filename)}</option>`)
             .join("")}
         </select>
       </div>
@@ -758,6 +779,7 @@ export function renderDashboard(container, store) {
   container.querySelector("#dashDateFrom").addEventListener("change", (e) => refetch({ dateFrom: e.target.value || "" }));
   container.querySelector("#dashDateTo").addEventListener("change", (e) => refetch({ dateTo: e.target.value || "" }));
   container.querySelector("#dashDivisionSelect").addEventListener("change", (e) => refetch({ division: e.target.value }));
+  container.querySelector("#dashDocumentSelect").addEventListener("change", (e) => refetch({ documentId: e.target.value }));
   container.querySelector("#dashRefreshBtn").addEventListener("click", () => store.refreshAll());
   container.querySelectorAll(".dash-date-shortcut-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
