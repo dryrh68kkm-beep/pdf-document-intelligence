@@ -81,18 +81,21 @@ function isProblemDocument(doc) {
   return doc.qualityBand === "HIGH_RISK" || (doc.qualityCounts?.errors ?? 0) > 0 || doc.status === "error";
 }
 
-// User report: the bulk Reprocess button ended up disabled/unusable for
-// this user's real document set - every visible document had pending
-// review items ("Review 27", "Review 15", ...) but none were HIGH_RISK,
-// had a validation error, or were status==="error", so isProblemDocument
-// alone (correct for the per-row warning styling it was already used for)
-// left reprocessTargets empty. A document with unresolved review items is
-// exactly the kind of "มีปัญหา" (has a problem) document this button was
-// meant to cover - broadens eligibility to include it too, while still
-// excluding a document that's genuinely fine (no errors, no review
-// pending, not HIGH_RISK).
+// Reverted user report: a prior change broadened bulk-Reprocess eligibility
+// to also include any document with a pending review item
+// (qualityCounts.needReview > 0), reasoning that a document needing review
+// was itself "a problem" worth covering. In this user's actual data,
+// almost every document has *some* review item - so that broadening made
+// the "restricted" button functionally equivalent to reprocessing every
+// document again ("กดแล้ว reprocess ใหม่หมดทุกเอกสาร"), the exact thing
+// the original restriction was meant to prevent. Reprocessing also isn't
+// even the right fix for a review item in the first place - those need a
+// human correction (Products/Review table), not another OCR pass over the
+// same PDF. Back to isProblemDocument alone (HIGH_RISK quality, a
+// validation error, or status==="error") - the button now stays disabled
+// when nothing genuinely needs reprocessing, which is correct, not a bug.
 function isReprocessTarget(doc) {
-  return isProblemDocument(doc) || (doc.qualityCounts?.needReview ?? 0) > 0;
+  return isProblemDocument(doc);
 }
 
 export function renderDocuments(container, store) {
