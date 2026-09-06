@@ -361,6 +361,21 @@ class Store {
   }
 
   async _getDivisionSummary(docId) {
+    // User request (follow-up on the 404 self-heal above): check against
+    // the live document list *before* firing the request, not only after
+    // a 404 comes back. This closes a gap the reactive 404-prune left
+    // open - a docId already known locally to be gone (pruned by an
+    // earlier 404, deleted through this same tab, or simply never present
+    // in the current documents list) still used to either replay a
+    // *stale cached success* from before it was deleted (silently feeding
+    // wrong numbers into the Dashboard, worse than the "incomplete"
+    // warning) or spend a round-trip only to be told what was already
+    // known. Checking here also drops any such stale cache entry
+    // immediately instead of leaving it to be served on the next call.
+    if (!this.state.documents.some((doc) => doc.id === docId)) {
+      this._divisionCache.delete(docId);
+      return null;
+    }
     if (this._divisionCache.has(docId)) return this._divisionCache.get(docId);
     try {
       const summary = await api.getDivisions(docId);

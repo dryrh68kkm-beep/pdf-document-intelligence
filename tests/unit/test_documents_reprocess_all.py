@@ -9,6 +9,15 @@ an OCR run for nothing. Restricted to isProblemDocument(doc) (the same
 HIGH_RISK/error definition the per-row warning styling already uses) so it
 only resubmits documents that are actually stuck or have a real problem.
 
+Second follow-up user report: that restriction left the button disabled
+for this user's real document set - every visible document had pending
+review items but none were HIGH_RISK/errored/status==="error", so the
+target list came up empty. isReprocessTarget() broadens eligibility to
+also include a document with unresolved review items
+(qualityCounts.needReview > 0) - exactly the "Review 27"/"Review 15" kind
+of document visible in the live report - while still excluding one that's
+genuinely fine.
+
 documents.js is a DOM-driving view module with no pure function to execute
 outside a real browser, matching this project's established pattern for
 this bug class (see test_documents_view_pdf.py) - these are source-level
@@ -64,6 +73,19 @@ console.log(JSON.stringify(isProblemDocument({json.dumps(doc)})));
     return json.loads(result.stdout)
 
 
+def _is_reprocess_target(doc):
+    source = _source()
+    problem_fn = _extract_function(source, "isProblemDocument")
+    target_fn = _extract_function(source, "isReprocessTarget")
+    script = f"""
+{problem_fn}
+{target_fn}
+console.log(JSON.stringify(isReprocessTarget({json.dumps(doc)})));
+"""
+    result = subprocess.run([NODE, "-e", script], capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
 @pytest.mark.skipif(NODE is None, reason="node not available in this environment")
 def test_a_healthy_complete_document_is_not_a_problem():
     assert _is_problem_document({"status": "complete", "qualityBand": "GOOD", "qualityCounts": {"errors": 0}}) is False
@@ -87,6 +109,28 @@ def test_a_document_still_processing_is_not_flagged_a_problem():
     assert _is_problem_document({"status": "processing", "qualityBand": None, "qualityCounts": None}) is False
 
 
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_document_with_pending_review_items_is_a_reprocess_target_even_without_a_hard_error():
+    # Live report: the bulk button came up disabled for a real document set
+    # that was all "Review N" documents with no HIGH_RISK band, no
+    # validation errors, and no status==="error" - isProblemDocument alone
+    # left every one of them ineligible.
+    doc = {"status": "complete", "qualityBand": "GOOD", "qualityCounts": {"errors": 0, "needReview": 27}}
+    assert _is_problem_document(doc) is False
+    assert _is_reprocess_target(doc) is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_genuinely_healthy_document_is_not_a_reprocess_target():
+    doc = {"status": "complete", "qualityBand": "GOOD", "qualityCounts": {"errors": 0, "needReview": 0}}
+    assert _is_reprocess_target(doc) is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node not available in this environment")
+def test_a_problem_document_is_still_a_reprocess_target():
+    assert _is_reprocess_target({"status": "error", "qualityBand": None, "qualityCounts": None}) is True
+
+
 def test_reprocess_all_button_is_wired():
     source = _source()
     assert 'id="reprocessAllBtn"' in source
@@ -107,13 +151,13 @@ def test_reprocess_all_excludes_documents_already_processing():
 def test_reprocess_all_only_targets_stuck_or_problem_documents():
     """User request: bulk Reprocess must not resubmit every document
     matching the current filter, only the ones actually stuck/problematic
-    (isProblemDocument - HIGH_RISK quality, a validation error, or
-    status==="error") - reprocessing an already-healthy document wastes an
-    OCR run for nothing."""
+    (isReprocessTarget - HIGH_RISK quality, a validation error,
+    status==="error", or pending review items) - reprocessing an
+    already-healthy document wastes an OCR run for nothing."""
     source = _source()
     targets_start = source.index("const reprocessTargets =")
     targets_end = source.index(";", targets_start)
-    assert "isProblemDocument(doc)" in source[targets_start:targets_end]
+    assert "isReprocessTarget(doc)" in source[targets_start:targets_end]
     assert "reprocessTargets.length" in source
 
 
