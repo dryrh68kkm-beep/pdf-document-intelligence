@@ -33,6 +33,14 @@ class DocumentStore:
     def find_by_hash(self, sha256: str) -> dict | None:
         return self._repo.find_document_by_sha256(sha256)
 
+    def find_any_by_hash(self, sha256: str) -> dict | None:
+        """Includes soft-deleted documents - see
+        Repository.find_any_document_by_sha256's own docstring. Used by
+        the Auto PDF Folder Import watcher, never by an active-document
+        endpoint (those must keep using find_by_hash/get, which correctly
+        treat a deleted document as gone)."""
+        return self._repo.find_any_document_by_sha256(sha256)
+
     def create(self, filename: str, pdf_bytes: bytes) -> dict:
         """Convenience path for a caller that already holds the whole file
         in memory (tests, internal seeding). The real HTTP upload endpoint
