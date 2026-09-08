@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     parser_version: str = "0.1.0"
     ocr_engine_version: str = "unset"
 
+    # --- Auto PDF Folder Import (data/inbox) ---
+    # A user drops a PDF into data/inbox instead of using the Add Files
+    # button; the app notices it, dedupes it against `documents` the same
+    # way a manual upload does, and feeds it through the same pipeline.
+    # inbox_enabled=False (still true by default) is an escape hatch for a
+    # deployment that wants the Add Files button only, with no filesystem
+    # watching at all.
+    inbox_enabled: bool = True
+    inbox_scan_interval_seconds: float = 7.0
+
     # --- Viewer/Admin permission gate (PR13) ---
     # A single shared passphrase, not a user-account system - this app has
     # no login. Empty (the default) means the gate is off entirely: every

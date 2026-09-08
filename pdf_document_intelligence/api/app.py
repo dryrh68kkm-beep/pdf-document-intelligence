@@ -33,11 +33,12 @@ from pdf_document_intelligence.api import review as review_api
 from pdf_document_intelligence.api.aggregate import build_dashboard_state
 from pdf_document_intelligence.api.divisions import build_division_departments, build_division_summary
 from pdf_document_intelligence.api.health import check_health
+from pdf_document_intelligence.api.inbox_watcher import InboxWatcher
 from pdf_document_intelligence.api.serialize import _row_stats, document_detail_json, document_summary_json, product_row_json
 from pdf_document_intelligence.api.store import store
 from pdf_document_intelligence.config.settings import Settings
 from pdf_document_intelligence.db import backup as backup_module
-from pdf_document_intelligence.db.paths import get_data_dir, get_pdf_path
+from pdf_document_intelligence.db.paths import get_data_dir, get_inbox_dir, get_pdf_path
 from pdf_document_intelligence.db.repository import new_id
 from pdf_document_intelligence.export.excel import export_many_to_excel
 from pdf_document_intelligence.loader.preflight import PreflightError
@@ -60,7 +61,17 @@ async def _lifespan(app: FastAPI):
             "Recovered %d document(s) stuck in 'processing' from before this server started: %s",
             len(recovered), recovered,
         )
+
+    # Auto PDF Folder Import - see api/inbox_watcher.py's module docstring
+    # for the dedup design. Started here (not module import time) so tests
+    # that import app.py without running the app's lifespan never get a
+    # background thread scanning a directory behind their back.
+    if _settings.inbox_enabled:
+        inbox_watcher.start()
+
     yield
+
+    inbox_watcher.stop()
 
 
 app = FastAPI(title="PDF Document Intelligence", lifespan=_lifespan)
@@ -192,6 +203,59 @@ def _run_processing(doc_id: str) -> None:
             "Processing failed [%s] for document %s at stage %s", diagnostic_id, doc_id, last_stage
         )
         store.set_error(doc_id, str(exc))
+
+
+def _ingest_inbox_file(sha256: str, filename: str, file_size: int, source_path: Path) -> dict | None:
+    """InboxWatcher's own entry into the exact same create-document
+    pipeline upload_document() uses for a manual upload - same repository
+    method (so the same atomic queue-cap admission and the same sha256
+    unique-index race protection apply), same executor submission. The
+    only differences from a manual upload: the source is a file already
+    sitting in data/inbox (copied, not moved, so the user's original stays
+    untouched in the folder - shutil.copy2 also preserves its mtime,
+    keeping InboxWatcher's own stability bookkeeping for that name
+    consistent), and a full queue or a lost sha256-uniqueness race here
+    means "return None, let the next scan retry" rather than an HTTP
+    error - there's no request to respond to."""
+    doc_id = new_id()
+    target = get_pdf_path(doc_id)
+    try:
+        shutil.copy2(str(source_path), str(target))
+    except OSError:
+        _logger.warning("Inbox watcher: failed to copy %s into place", source_path)
+        return None
+    try:
+        doc = store.repo.create_document_if_below_processing_cap(
+            doc_id, sha256, filename, file_size, _MAX_QUEUED_PROCESSING_JOBS
+        )
+        if doc is None:
+            target.unlink(missing_ok=True)
+            return None
+    except sqlite3.DatabaseError as exc:
+        target.unlink(missing_ok=True)
+        if "UNIQUE constraint failed: documents.sha256" not in str(exc):
+            _logger.exception("Inbox watcher: unexpected DB error ingesting %s", filename)
+        return None
+    _executor.submit(_run_processing, doc_id)
+    _logger.info("Inbox watcher: imported %s from data/inbox as document %s", filename, doc_id)
+    return doc
+
+
+inbox_watcher = InboxWatcher(
+    inbox_dir=get_inbox_dir(),
+    find_any_by_sha256=store.find_any_by_hash,
+    ingest_new_file=_ingest_inbox_file,
+    scan_interval_seconds=_settings.inbox_scan_interval_seconds,
+)
+
+
+@app.get("/api/inbox/status")
+def inbox_status():
+    return {
+        "watching": inbox_watcher.is_watching,
+        "folder": str(inbox_watcher.inbox_dir),
+        "lastScanAt": inbox_watcher.last_scan_at,
+    }
 
 
 def _doc_products(doc_id: str) -> list[dict]:

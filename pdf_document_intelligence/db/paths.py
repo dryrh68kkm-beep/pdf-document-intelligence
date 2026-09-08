@@ -31,6 +31,11 @@ def get_data_dir() -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "pdfs").mkdir(parents=True, exist_ok=True)
     (data_dir / "backups").mkdir(parents=True, exist_ok=True)
+    # Auto PDF Folder Import watch directory - created here (not lazily by
+    # the watcher itself) so it always exists the moment the app resolves
+    # its data dir at all, same as pdfs/backups above, and a user can drop
+    # a file into it even before the watcher's first scan runs.
+    (data_dir / "inbox").mkdir(parents=True, exist_ok=True)
     return data_dir
 
 
@@ -40,3 +45,7 @@ def get_db_path() -> Path:
 
 def get_pdf_path(document_id: str) -> Path:
     return get_data_dir() / "pdfs" / f"{document_id}.pdf"
+
+
+def get_inbox_dir() -> Path:
+    return get_data_dir() / "inbox"

@@ -120,6 +120,24 @@ class Repository:
         ).fetchone()
         return dict(row) if row else None
 
+    def find_any_document_by_sha256(self, sha256: str) -> dict | None:
+        """Unlike find_document_by_sha256, does not filter deleted_at -
+        used by the Auto PDF Folder Import watcher (api/inbox_watcher.py)
+        to decide whether a file sitting in data/inbox has already been
+        handled. soft_delete_document() never clears sha256 off a removed
+        document's row (db/repository.py's own reasoning: correction
+        history stays inspectable rather than being hard-deleted), so a
+        deleted row's sha256 surviving right here is exactly what lets the
+        watcher remember "the user removed this, don't re-import it"
+        without a second piece of state to keep in sync - any existing
+        row for this hash, active or not, means the watcher should leave
+        the file alone. Most-recent match only; the watcher only needs to
+        know *whether* one exists, not enumerate every historical one."""
+        row = self._conn.execute(
+            "SELECT * FROM documents WHERE sha256 = ? ORDER BY uploaded_at DESC LIMIT 1", (sha256,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def get_document(self, doc_id: str) -> dict | None:
         row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         return dict(row) if row else None
