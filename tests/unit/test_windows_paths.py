@@ -82,3 +82,44 @@ def test_db_and_pdf_paths_stay_under_the_resolved_data_dir_on_windows(monkeypatc
 
     monkeypatch.undo()
     _reload_paths_module()
+
+
+def test_inbox_dir_defaults_to_a_subfolder_of_the_data_dir():
+    from pdf_document_intelligence.db import paths as paths_module
+
+    assert paths_module.get_inbox_dir() == paths_module.get_data_dir() / "inbox"
+
+
+def test_inbox_dir_env_override_points_at_an_arbitrary_folder_outside_the_data_dir(monkeypatch, tmp_path):
+    """User request: watch a folder they already drop PDFs into (e.g. a
+    Desktop folder from a legacy workflow) instead of the app's own
+    data/inbox - PDF_INTELLIGENCE_INBOX_DIR must win over the data-dir
+    default and must not require the folder to already exist."""
+    custom_folder = tmp_path / "Desktop" / "pdf"
+    monkeypatch.setenv("PDF_INTELLIGENCE_INBOX_DIR", str(custom_folder))
+    paths_module = _reload_paths_module()
+
+    inbox_dir = paths_module.get_inbox_dir()
+
+    assert inbox_dir == custom_folder
+    assert inbox_dir.is_dir()  # created automatically, not just returned as a path
+    assert inbox_dir != paths_module.get_data_dir() / "inbox"
+
+    monkeypatch.undo()
+    _reload_paths_module()
+
+
+def test_inbox_dir_override_is_used_even_when_it_already_has_files_in_it(monkeypatch, tmp_path):
+    custom_folder = tmp_path / "existing-pdf-folder"
+    custom_folder.mkdir()
+    (custom_folder / "already-here.pdf").write_bytes(b"%PDF-1.4 pre-existing file")
+    monkeypatch.setenv("PDF_INTELLIGENCE_INBOX_DIR", str(custom_folder))
+    paths_module = _reload_paths_module()
+
+    inbox_dir = paths_module.get_inbox_dir()
+
+    assert inbox_dir == custom_folder
+    assert (inbox_dir / "already-here.pdf").is_file()
+
+    monkeypatch.undo()
+    _reload_paths_module()
