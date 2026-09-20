@@ -1,8 +1,9 @@
 """Cheap regression signal for .github/workflows/*.yml: catches an action
 version drifting back to a deprecated Node-20 major (actions/checkout <v4,
 actions/setup-python <v5) and confirms the CI job structure the hardening
-spec requires (4 parallel jobs: fast unit+API, golden regression with real
-OCR, Windows smoke/E2E, concurrency/stress) stays intact. A plain grep over
+spec requires (5 parallel jobs: fast unit+API, non-OCR integration,
+golden regression with real OCR, Windows smoke/E2E, concurrency/stress)
+stays intact. A plain grep over
 the YAML text, not a workflow execution - this cannot catch an action
 actually being broken, only the file drifting out of the shape this repo's
 CI is supposed to have.
@@ -39,13 +40,13 @@ def test_no_workflow_uses_a_pre_node20_setup_python():
             assert major >= 5, f"{name}: actions/setup-python@v{major} predates the Node 20 runtime"
 
 
-def test_tests_workflow_has_four_parallel_jobs():
+def test_tests_workflow_has_five_parallel_jobs():
     tests_yml = WORKFLOWS_DIR / "tests.yml"
     doc = yaml.safe_load(tests_yml.read_text(encoding="utf-8"))
     jobs = doc["jobs"]
-    assert len(jobs) == 4, f"expected exactly 4 jobs, found {sorted(jobs)}"
+    assert len(jobs) == 5, f"expected exactly 5 jobs, found {sorted(jobs)}"
 
-    # None of the 4 jobs declares a `needs:` on another - "running in
+    # None of the jobs declares a `needs:` on another - "running in
     # parallel where possible" per the spec means no job in this file is
     # made to wait on another.
     for job_name, job in jobs.items():
@@ -115,3 +116,19 @@ def test_concurrency_stress_job_exists_and_runs_required_suite():
     assert len(stress_jobs) == 1, f"expected exactly one concurrency/stress job, found jobs={sorted(jobs)}"
     run_steps = " ".join(step.get("run", "") for step in stress_jobs[0]["steps"])
     assert "test_concurrency_stress" in run_steps
+
+
+
+def test_integration_regression_job_covers_remaining_integration_suites():
+    tests_yml = WORKFLOWS_DIR / "tests.yml"
+    doc = yaml.safe_load(tests_yml.read_text(encoding="utf-8"))
+    job = doc["jobs"]["integration-regression"]
+    run_steps = " ".join(step.get("run", "") for step in job["steps"])
+    for filename in (
+        "test_backup_restore_full.py",
+        "test_dashboard_date_range_consistency.py",
+        "test_export_cleanup.py",
+        "test_inbox_folder_import.py",
+        "test_master_import_validation.py",
+    ):
+        assert filename in run_steps
