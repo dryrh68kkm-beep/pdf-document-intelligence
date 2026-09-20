@@ -32,6 +32,13 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Starlette 1.6.0 still imports AnyIO's deprecated BlockingPortal alias.
+# Upstream issue #3497/#3498 fixes it after the currently resolved release;
+# filter only this exact third-party import-time warning until that release
+# reaches FastAPI's dependency range.
+filterwarnings = [
+    "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
