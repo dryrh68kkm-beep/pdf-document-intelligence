@@ -1,11 +1,8 @@
-"""User request: make run.bat open the app in Chrome specifically, rather
-than whatever the OS default browser happens to be.
+"""Windows launcher/stopper source-level regression guards.
 
-run.bat is a Windows batch file with no interpreter available in this
-Linux test environment - source-level regression guards, matching this
-project's established pattern for non-Python source this suite can't
-execute directly (see e.g. test_documents_view_pdf.py for the equivalent
-approach on a frontend view module).
+The Linux fast-test job cannot execute .bat files, so the important Windows
+ownership/readiness invariants are pinned by source inspection while the
+real Windows E2E job covers the application itself.
 """
 from __future__ import annotations
 
@@ -13,47 +10,51 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RUN_BAT = ROOT / "run.bat"
+STOP_BAT = ROOT / "stop.bat"
+RUN_SERVER = ROOT / "scripts" / "run_server.py"
 
 
-def _source() -> str:
-    return RUN_BAT.read_text(encoding="utf-8")
+def test_run_bat_uses_owned_python_launcher():
+    source = RUN_BAT.read_text(encoding="utf-8")
+    assert r"python scripts\run_server.py" in source
+    assert "uvicorn pdf_document_intelligence.api.app:app" not in source
 
 
-def test_checks_all_three_real_chrome_install_locations():
-    """A real Chrome install lands in one of exactly three places: the
-    64-bit or 32-bit Program Files (machine-wide, needs admin) or
-    LocalAppData (per-user, no admin rights needed) - missing the last one
-    would silently fail to find Chrome on a locked-down corporate machine."""
-    source = _source()
-    assert r"%ProgramFiles%\Google\Chrome\Application\chrome.exe" in source
-    assert r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe" in source
-    assert r"%LocalAppData%\Google\Chrome\Application\chrome.exe" in source
+def test_launcher_waits_for_health_before_opening_browser():
+    source = RUN_SERVER.read_text(encoding="utf-8")
+    assert 'HEALTH_URL = f"{URL}/api/health"' in source
+    assert "if _app_is_ready():" in source
+    assert "_open_browser()" in source
+    assert "time.sleep(0.25)" in source
 
 
-def test_launches_chrome_explicitly_when_found():
-    source = _source()
-    assert 'start "" "%CHROME_EXE%" http://localhost:8000' in source
+def test_launcher_checks_all_three_chrome_install_locations():
+    source = RUN_SERVER.read_text(encoding="utf-8")
+    assert '"ProgramFiles"' in source
+    assert '"ProgramFiles(x86)"' in source
+    assert '"LocalAppData"' in source
+    assert '"Google" / "Chrome" / "Application" / "chrome.exe"' in source
 
 
-def test_falls_back_to_default_browser_when_chrome_is_not_installed():
-    """A machine without Chrome must still open the app somehow - the
-    original plain `start "" http://localhost:8000` behavior must survive
-    as the else branch, not be replaced outright."""
-    source = _source()
-    assert "if defined CHROME_EXE (" in source
-    assert ") else (\n  start \"\" http://localhost:8000\n)" in source
+def test_launcher_preserves_lan_binding():
+    source = RUN_SERVER.read_text(encoding="utf-8")
+    assert 'host="0.0.0.0"' in source
+    assert "port=8000" in source
 
 
-def test_stays_plain_ascii():
-    """install.bat's own comment explains why: chcp 65001 + non-ASCII text
-    corrupted the batch parser on real Windows 10 machines (build 17763
-    confirmed) - any new lines added to run.bat must not reintroduce that."""
-    source = _source()
-    assert all(ord(ch) < 128 for ch in source)
+def test_stop_bat_requires_pid_ownership_and_port_ownership_before_taskkill():
+    source = STOP_BAT.read_text(encoding="utf-8")
+    assert r"python scripts\server_pid_path.py" in source
+    assert "Get-CimInstance Win32_Process" in source
+    assert r"*scripts\run_server.py*" in source
+    assert 'if "%%a"=="%APPPID%"' in source
+    assert "taskkill /F /T /PID %APPPID%" in source
+    # Regression: the old implementation killed every PID returned by
+    # netstat on :8000, even if another application owned that port.
+    assert "taskkill /F /PID %%a" not in source
 
 
-def test_still_starts_the_uvicorn_server():
-    """Regression guard: the browser-launch logic must not have replaced or
-    displaced the actual server start-up line."""
-    source = _source()
-    assert "uvicorn pdf_document_intelligence.api.app:app --host 0.0.0.0 --port 8000" in source
+def test_windows_batch_files_stay_plain_ascii():
+    for path in (RUN_BAT, STOP_BAT):
+        source = path.read_text(encoding="utf-8")
+        assert all(ord(ch) < 128 for ch in source)
