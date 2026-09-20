@@ -88,12 +88,14 @@ class InboxWatcher:
         ingest_new_file: Callable[[str, str, int, Path], dict | None],
         scan_interval_seconds: float = 7.0,
         stability_rounds: int = 2,
+        max_file_size_bytes: int = 200 * 1024 * 1024,
     ) -> None:
         self._inbox_dir = inbox_dir
         self._find_any_by_sha256 = find_any_by_sha256
         self._ingest_new_file = ingest_new_file
         self._scan_interval_seconds = scan_interval_seconds
         self._stability_rounds = max(2, stability_rounds)
+        self._max_file_size_bytes = max(1, int(max_file_size_bytes))
         self._states: dict[str, _FileState] = {}
         # Guards both _states and the body of scan_once() - the background
         # thread and a caller triggering an out-of-band scan_once() (or two
@@ -104,6 +106,7 @@ class InboxWatcher:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self.last_scan_at: str | None = None
+        self.last_error: str | None = None
 
     @property
     def inbox_dir(self) -> Path:
@@ -132,6 +135,7 @@ class InboxWatcher:
         with self._lock:
             self._states.clear()
             self.last_scan_at = None
+            self.last_error = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -151,14 +155,20 @@ class InboxWatcher:
         with self._lock:
             self.last_scan_at = _now_iso()
             if not self._inbox_dir.is_dir():
-                return
+                try:
+                    self._inbox_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    self.last_error = "folder_unavailable"
+                    return
             current_names: set[str] = set()
             try:
                 entries = sorted(self._inbox_dir.iterdir())
             except OSError:
+                self.last_error = "folder_unavailable"
                 return
+            self.last_error = None
             for path in entries:
-                if not path.is_file() or path.suffix.lower() != ".pdf":
+                if path.is_symlink() or not path.is_file() or path.suffix.lower() != ".pdf":
                     continue
                 current_names.add(path.name)
                 self._scan_one_file(path)
@@ -189,6 +199,32 @@ class InboxWatcher:
         if state.stable_count < self._stability_rounds:
             return  # not yet unchanged across enough consecutive scans - could still be mid-copy
 
+        # Match the manual Add Files guardrails before hashing/copying a
+        # folder drop. Invalid files become resolved for this exact
+        # size/mtime and are reconsidered automatically if the user
+        # replaces or edits them later.
+        if stat.st_size <= 0:
+            _logger.warning("Inbox watcher: ignoring empty PDF candidate %s", path.name)
+            state.resolved = True
+            return
+        if stat.st_size > self._max_file_size_bytes:
+            _logger.warning(
+                "Inbox watcher: ignoring oversized PDF candidate %s (%d bytes)",
+                path.name,
+                stat.st_size,
+            )
+            state.resolved = True
+            return
+        try:
+            with path.open("rb") as source:
+                header = source.read(5)
+        except OSError:
+            return
+        if header != b"%PDF-":
+            _logger.warning("Inbox watcher: ignoring file with invalid PDF signature: %s", path.name)
+            state.resolved = True
+            return
+
         if state.sha256 is None:
             try:
                 state.sha256 = _sha256_file(path)
@@ -203,6 +239,12 @@ class InboxWatcher:
         doc = self._ingest_new_file(state.sha256, path.name, stat.st_size, path)
         if doc is not None:
             state.resolved = True
+        else:
+            # The source may have changed in the tiny window between our
+            # hash and the app-managed copy. Force a fresh hash before a
+            # retry; this also keeps a queue-full retry correct (at the
+            # cost of one extra sequential read while the queue is full).
+            state.sha256 = None
         # else: leave resolved False - queue was full or a concurrent
         # upload of the same bytes won the race; the next scan re-checks
         # find_any_by_sha256 first (cheap) before ever attempting another
