@@ -46,7 +46,7 @@ echo [OK] Tesseract found.
 
 REM The binary alone is not enough: this application OCRs Thai text.
 REM Fail during install instead of letting the app start and fail later.
-tesseract --list-langs 2^>nul | findstr /R /X /C:"tha" >nul
+tesseract --list-langs 2>nul | findstr /R /X /C:"tha" >nul
 if errorlevel 1 (
   echo [ERROR] Tesseract is installed, but the Thai language pack is missing.
   echo Re-run the Tesseract installer and add the Thai language data.
