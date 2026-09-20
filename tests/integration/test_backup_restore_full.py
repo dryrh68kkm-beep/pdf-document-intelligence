@@ -187,34 +187,73 @@ def test_restored_pdf_bytes_match_original(isolated_data_dir):
 
 
 def test_failed_restore_preserves_original_installation(isolated_data_dir, monkeypatch):
-    doc = _make_document_with_pdf()
+    doc = _make_document_with_pdf(b"%PDF-1.4\n%original-before-failed-restore\n")
+    original_pdf = get_pdf_path(doc["id"]).read_bytes()
     zip_bytes = backup.create_backup().read_bytes()
 
-    def _boom(*args, **kwargs):
-        raise OSError("simulated disk failure swapping the DB file")
+    real_replace = backup._atomic_replace
+    live_db = isolated_data_dir / "app.db"
 
-    # The DB swap (shutil.move) is deliberately the *last* step in
-    # restore_backup() - PDFs and the master snapshot are staged first, so
-    # a failure here proves the ordering actually protects the DB: it must
-    # still hold the original data even though other files were already
-    # written. (A raw byte-for-byte comparison of app.db isn't meaningful
-    # here - closing/reopening a WAL-mode connection can rewrite header
-    # counters via a checkpoint with no logical data change, so this checks
-    # the data itself instead.)
-    monkeypatch.setattr(backup.shutil, "move", _boom)
+    def _boom_on_candidate_db(source, target):
+        # Let the restore stage/swap PDFs and move the old DB aside, then
+        # fail exactly when activating the candidate DB. The implementation
+        # must roll every already-swapped asset back.
+        if target == live_db and source.name.startswith("_restore-candidate-"):
+            raise OSError("simulated disk failure swapping the DB file")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(backup, "_atomic_replace", _boom_on_candidate_db)
 
     with pytest.raises(OSError, match="simulated disk failure"):
         backup.restore_backup(zip_bytes)
 
-    monkeypatch.undo()
-    from pdf_document_intelligence.db.connection import get_connection
-
-    get_connection()  # the singleton was closed and set to None before the
-    # simulated failure - reopen it the same way a real server would after
-    # a crashed restore, to confirm the original file is still intact.
     restored = _repo().get_document(doc["id"])
     assert restored is not None
     assert restored["filename"] == "t.pdf"
+    assert get_pdf_path(doc["id"]).read_bytes() == original_pdf
+    assert not list(isolated_data_dir.glob("_restore-old-*"))
+    assert not list(isolated_data_dir.glob("_restore-stage-*"))
+
+
+def test_pdf_directory_swap_failure_rolls_back_without_touching_live_install(isolated_data_dir, monkeypatch):
+    doc = _make_document_with_pdf(b"%PDF-1.4\n%pdf-swap-rollback\n")
+    original_pdf = get_pdf_path(doc["id"]).read_bytes()
+    zip_bytes = backup.create_backup().read_bytes()
+
+    real_replace = backup._atomic_replace
+
+    def _boom_installing_staged_pdfs(source, target):
+        if source.name == "pdfs" and source.parent.name.startswith("_restore-stage-"):
+            raise OSError("simulated staged PDF directory activation failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(backup, "_atomic_replace", _boom_installing_staged_pdfs)
+
+    with pytest.raises(OSError, match="staged PDF directory"):
+        backup.restore_backup(zip_bytes)
+
+    assert _repo().get_document(doc["id"]) is not None
+    assert get_pdf_path(doc["id"]).read_bytes() == original_pdf
+
+
+def test_full_restore_is_exact_snapshot_and_removes_orphan_assets(isolated_data_dir):
+    doc = _make_document_with_pdf(b"%PDF-1.4\n%exact-snapshot\n")
+    zip_bytes = backup.create_backup().read_bytes()  # no master snapshot in this backup
+
+    pdfs_dir = isolated_data_dir / "pdfs"
+    orphan = pdfs_dir / "orphan-not-in-backup.pdf"
+    orphan.write_bytes(b"%PDF-1.4 orphan")
+    snapshot = isolated_data_dir / "master_catalog.snapshot.json"
+    snapshot.write_text('{"newer": true}', encoding="utf-8")
+
+    result = backup.restore_backup(zip_bytes)
+
+    assert result["restored"] is True
+    assert get_pdf_path(doc["id"]).is_file()
+    assert not orphan.exists()
+    # Full-format backup declared hasMasterSnapshot=false, so restore must
+    # reproduce that state rather than silently keeping a newer local master.
+    assert not snapshot.exists()
 
 
 def test_restore_via_api_clears_catalog_caches_so_new_snapshot_resolves(isolated_data_dir):
