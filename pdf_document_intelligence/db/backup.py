@@ -179,11 +179,7 @@ def _validate_member_name(name: str) -> None:
 
 
 def _atomic_replace(source: Path, target: Path) -> None:
-    """Same-filesystem rename/replace seam used by restore.
-
-    Keeping this tiny wrapper makes the multi-file restore transaction
-    testable: tests can fail one swap deliberately and prove every already-
-    moved live asset is rolled back."""
+    """Same-filesystem rename/replace seam used by restore."""
     source.replace(target)
 
 
@@ -263,11 +259,10 @@ def restore_backup(zip_bytes: bytes) -> dict:
                 f"backup schema version {candidate_version} is newer than this app supports ({SCHEMA_VERSION})"
             )
 
-        # Stage every non-DB asset completely before touching the live
-        # installation. Full-format backups are exact snapshots: an empty
-        # pdfs/ set must remove old/orphan PDFs, and a backup with no master
-        # snapshot must remove a newer live snapshot. Legacy DB-only backups
-        # intentionally leave those assets alone.
+        # Stage the complete file set before touching live state. Full-format
+        # backups are exact snapshots: zero PDFs removes old/orphan PDFs, and
+        # "no master snapshot" removes a newer live snapshot. Legacy DB-only
+        # backups intentionally leave PDFs/master untouched.
         if not is_legacy:
             stage_pdfs.mkdir(parents=True, exist_ok=False)
             for member, data in pdf_payloads.items():
@@ -301,20 +296,41 @@ def restore_backup(zip_bytes: bytes) -> dict:
             db_original_moved = False
             db_stage_installed = False
 
+            from pdf_document_intelligence.db import connection as connection_module
+
+            def close_live_connection() -> None:
+                with connection_module._lock:
+                    if connection_module._conn is not None:
+                        connection_module._conn.close()
+                        connection_module._conn = None
+
             def rollback_assets() -> None:
                 nonlocal pdf_stage_installed, snapshot_stage_installed
-                if not is_legacy:
-                    if pdf_stage_installed and pdfs_dir.exists():
-                        shutil.rmtree(pdfs_dir, ignore_errors=True)
-                        pdf_stage_installed = False
-                    if pdf_original_moved and old_pdfs.exists():
-                        _atomic_replace(old_pdfs, pdfs_dir)
+                if is_legacy:
+                    return
+                if pdf_stage_installed and pdfs_dir.exists():
+                    shutil.rmtree(pdfs_dir, ignore_errors=True)
+                    pdf_stage_installed = False
+                if pdf_original_moved and old_pdfs.exists():
+                    _atomic_replace(old_pdfs, pdfs_dir)
 
-                    if snapshot_stage_installed:
-                        snapshot_target.unlink(missing_ok=True)
-                        snapshot_stage_installed = False
-                    if snapshot_original_moved and old_snapshot.exists():
-                        _atomic_replace(old_snapshot, snapshot_target)
+                if snapshot_stage_installed:
+                    snapshot_target.unlink(missing_ok=True)
+                    snapshot_stage_installed = False
+                if snapshot_original_moved and old_snapshot.exists():
+                    _atomic_replace(old_snapshot, snapshot_target)
+
+            def rollback_database() -> None:
+                nonlocal db_stage_installed
+                close_live_connection()
+                for suffix in ("-wal", "-shm"):
+                    Path(str(db_path) + suffix).unlink(missing_ok=True)
+                if db_stage_installed and db_path.exists():
+                    db_path.unlink(missing_ok=True)
+                    db_stage_installed = False
+                if db_original_moved and old_db.exists():
+                    _atomic_replace(old_db, db_path)
+                get_connection()
 
             try:
                 if not is_legacy:
@@ -331,69 +347,57 @@ def restore_backup(zip_bytes: bytes) -> dict:
                         _atomic_replace(stage_snapshot, snapshot_target)
                         snapshot_stage_installed = True
 
-                from pdf_document_intelligence.db import connection as connection_module
-
-                # Close the one live SQLite handle before swapping database
-                # files. Keep the old DB beside it until the restored DB has
-                # reopened successfully, so a failed candidate activation can
-                # be rolled back without relying on the ZIP backup.
-                with connection_module._lock:
-                    if connection_module._conn is not None:
-                        connection_module._conn.close()
-                        connection_module._conn = None
-
+                # DB is the final live swap. Keep the original beside it
+                # until the restored connection opens and the document/PDF
+                # consistency check completes.
+                close_live_connection()
                 for suffix in ("-wal", "-shm"):
                     Path(str(db_path) + suffix).unlink(missing_ok=True)
 
                 if db_path.exists():
                     _atomic_replace(db_path, old_db)
                     db_original_moved = True
-                try:
-                    _atomic_replace(tmp_path, db_path)
-                    db_stage_installed = True
-                    restored_conn = get_connection()  # reopen + run pending migrations
-                except Exception:
-                    with connection_module._lock:
-                        if connection_module._conn is not None:
-                            connection_module._conn.close()
-                            connection_module._conn = None
-                    if db_stage_installed:
-                        db_path.unlink(missing_ok=True)
-                        db_stage_installed = False
-                    if db_original_moved and old_db.exists():
-                        _atomic_replace(old_db, db_path)
-                    get_connection()
-                    rollback_assets()
-                    raise
+
+                _atomic_replace(tmp_path, db_path)
+                db_stage_installed = True
+                restored_conn = get_connection()
 
                 missing_pdfs = []
                 for row in restored_conn.execute("SELECT id FROM documents WHERE deleted_at IS NULL"):
                     if not (data_dir / "pdfs" / f"{row['id']}.pdf").is_file():
                         missing_pdfs.append(row["id"])
-
-                # Commit point: DB reopened successfully and the matching
-                # staged assets are live. Old copies are now safe to delete.
-                if old_pdfs.exists():
-                    shutil.rmtree(old_pdfs, ignore_errors=True)
-                old_snapshot.unlink(missing_ok=True)
-                old_db.unlink(missing_ok=True)
-
-                return {
-                    "restored": True,
-                    "legacy": is_legacy,
-                    "preRestoreBackup": str(pre_restore_backup),
-                    "metadata": metadata,
-                    "pdfsRestored": len(pdf_payloads),
-                    "masterSnapshotRestored": master_snapshot_bytes is not None,
-                    "missingPdfCount": len(missing_pdfs),
-                }
             except Exception:
-                # Failures before/during the DB swap must leave all live
-                # assets exactly as they were. The DB-specific except above
-                # performs DB rollback; this covers a PDF/master swap failure.
-                if not db_stage_installed:
-                    rollback_assets()
+                # True transaction semantics across filesystem + SQLite:
+                # any failure before the consistency check completes restores
+                # the old DB, old PDF directory and old master snapshot.
+                if db_original_moved:
+                    rollback_database()
+                else:
+                    # The connection may have been closed immediately before
+                    # an attempted DB rename failed.
+                    get_connection()
+                rollback_assets()
                 raise
+
+            # Commit point reached. Cleanup of rollback copies is best-effort
+            # and must never turn a successful restore into a reported failure.
+            if old_pdfs.exists():
+                shutil.rmtree(old_pdfs, ignore_errors=True)
+            for old_file in (old_snapshot, old_db):
+                try:
+                    old_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+            return {
+                "restored": True,
+                "legacy": is_legacy,
+                "preRestoreBackup": str(pre_restore_backup),
+                "metadata": metadata,
+                "pdfsRestored": len(pdf_payloads),
+                "masterSnapshotRestored": master_snapshot_bytes is not None,
+                "missingPdfCount": len(missing_pdfs),
+            }
     finally:
         tmp_path.unlink(missing_ok=True)
         if stage_root.exists():
