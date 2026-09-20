@@ -12,7 +12,7 @@ if not exist ".venv" (
 
 call .venv\Scripts\activate.bat
 set "PIDFILE="
-for /f "delims=" %%p in ('python -c "from pdf_document_intelligence.db.paths import get_data_dir; print(get_data_dir() / 'server.pid')"') do set "PIDFILE=%%p"
+for /f "delims=" %%p in ('python scripts\server_pid_path.py') do set "PIDFILE=%%p"
 
 if not defined PIDFILE (
   echo [INFO] Could not resolve the app PID file.
