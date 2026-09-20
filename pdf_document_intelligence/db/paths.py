@@ -64,7 +64,14 @@ def get_inbox_dir() -> Path:
     never has to create it by hand before pointing the app at it."""
     override = os.environ.get("PDF_INTELLIGENCE_INBOX_DIR")
     if override:
-        inbox_dir = Path(override)
-        inbox_dir.mkdir(parents=True, exist_ok=True)
+        inbox_dir = Path(override).expanduser()
+        try:
+            inbox_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # A bad/unavailable custom watch path must not prevent the
+            # entire application from starting. InboxWatcher reports
+            # folder_unavailable and retries on later scans; the database,
+            # manual Add Files, Dashboard, etc. remain usable.
+            pass
         return inbox_dir
     return get_data_dir() / "inbox"
