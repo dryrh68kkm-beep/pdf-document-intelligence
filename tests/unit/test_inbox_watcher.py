@@ -59,12 +59,19 @@ class _FakeIngestor:
         return doc
 
 
-def _watcher(inbox_dir, catalog: _FakeCatalog, ingestor: _FakeIngestor, stability_rounds: int = 2) -> InboxWatcher:
+def _watcher(
+    inbox_dir,
+    catalog: _FakeCatalog,
+    ingestor: _FakeIngestor,
+    stability_rounds: int = 2,
+    max_file_size_bytes: int = 200 * 1024 * 1024,
+) -> InboxWatcher:
     return InboxWatcher(
         inbox_dir=inbox_dir,
         find_any_by_sha256=catalog.find_any_by_sha256,
         ingest_new_file=ingestor.ingest,
         stability_rounds=stability_rounds,
+        max_file_size_bytes=max_file_size_bytes,
     )
 
 
@@ -318,3 +325,100 @@ def test_reset_for_tests_clears_bookkeeping_so_a_reused_filename_starts_fresh(tm
 
     watcher.reset_for_tests()
     assert watcher.last_scan_at is None
+
+
+
+def test_pdf_extension_with_invalid_signature_is_ignored(tmp_path):
+    catalog = _FakeCatalog()
+    ingestor = _FakeIngestor(catalog)
+    watcher = _watcher(tmp_path, catalog, ingestor)
+    _write(tmp_path / "fake.pdf", b"this is not a PDF")
+
+    watcher.scan_once()
+    watcher.scan_once()
+
+    assert ingestor.calls == []
+
+
+def test_empty_pdf_candidate_is_ignored_until_file_changes(tmp_path):
+    catalog = _FakeCatalog()
+    ingestor = _FakeIngestor(catalog)
+    watcher = _watcher(tmp_path, catalog, ingestor)
+    path = tmp_path / "empty.pdf"
+    _write(path, b"")
+
+    for _ in range(4):
+        watcher.scan_once()
+    assert ingestor.calls == []
+
+    time.sleep(0.01)
+    _write(path, b"%PDF-1.4 now valid")
+    watcher.scan_once()
+    watcher.scan_once()
+    assert len(ingestor.calls) == 1
+
+
+def test_oversized_pdf_is_not_hashed_or_ingested_until_replaced(tmp_path):
+    catalog = _FakeCatalog()
+    ingestor = _FakeIngestor(catalog)
+    watcher = _watcher(tmp_path, catalog, ingestor, max_file_size_bytes=12)
+    path = tmp_path / "too-big.pdf"
+    _write(path, b"%PDF-1.4" + b"x" * 100)
+
+    for _ in range(4):
+        watcher.scan_once()
+    assert ingestor.calls == []
+
+    time.sleep(0.01)
+    _write(path, b"%PDF-1.4 ok")
+    watcher.scan_once()
+    watcher.scan_once()
+    assert len(ingestor.calls) == 1
+
+
+def test_failed_ingest_forces_a_fresh_hash_before_retry(tmp_path):
+    catalog = _FakeCatalog()
+
+    class MutatingIngestor:
+        def __init__(self):
+            self.calls = 0
+
+        def ingest(self, sha256, filename, file_size, source_path):
+            self.calls += 1
+            if self.calls == 1:
+                source_path.write_bytes(b"%PDF-1.4 replacement bytes")
+                return None
+            catalog.mark_known(sha256)
+            return {"id": "doc-1", "sha256": sha256}
+
+    ingestor = MutatingIngestor()
+    watcher = InboxWatcher(
+        inbox_dir=tmp_path,
+        find_any_by_sha256=catalog.find_any_by_sha256,
+        ingest_new_file=ingestor.ingest,
+        stability_rounds=2,
+    )
+    path = tmp_path / "race.pdf"
+    original = b"%PDF-1.4 original bytes"
+    _write(path, original)
+
+    watcher.scan_once()
+    watcher.scan_once()  # first ingest mutates source and returns None
+    first_hash = _sha256_bytes(original)
+
+    watcher.scan_once()  # metadata change is observed, stability resets
+    watcher.scan_once()  # fresh hash + second ingest
+
+    assert ingestor.calls == 2
+    assert first_hash not in catalog.known
+    assert _sha256_bytes(path.read_bytes()) in catalog.known
+
+
+def test_unavailable_inbox_sets_error_without_crashing(tmp_path):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("file blocks mkdir", encoding="utf-8")
+    watcher = _watcher(blocker, _FakeCatalog(), _FakeIngestor(_FakeCatalog()))
+
+    watcher.scan_once()
+
+    assert watcher.last_error == "folder_unavailable"
