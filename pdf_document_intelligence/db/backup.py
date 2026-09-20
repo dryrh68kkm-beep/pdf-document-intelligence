@@ -229,14 +229,19 @@ def restore_backup(zip_bytes: bytes) -> dict:
                 raise RestoreError(f"{SNAPSHOT_FILENAME} is corrupt: {exc}") from exc
 
         if not is_legacy:
-            declared_pdf_count = metadata.get("pdfCount")
-            if declared_pdf_count != len(pdf_payloads):
-                raise RestoreError(
-                    f"backup metadata pdfCount={declared_pdf_count!r} does not match archive ({len(pdf_payloads)})"
-                )
-            declared_master = bool(metadata.get("hasMasterSnapshot"))
-            if declared_master != (master_snapshot_bytes is not None):
-                raise RestoreError("backup metadata master-snapshot flag does not match archive contents")
+            # Current backups always carry these fields, but older or
+            # hand-built v2 archives may not. Validate a declaration when
+            # present without masking a more fundamental DB-corruption error.
+            if "pdfCount" in metadata:
+                declared_pdf_count = metadata.get("pdfCount")
+                if declared_pdf_count != len(pdf_payloads):
+                    raise RestoreError(
+                        f"backup metadata pdfCount={declared_pdf_count!r} does not match archive ({len(pdf_payloads)})"
+                    )
+            if "hasMasterSnapshot" in metadata:
+                declared_master = bool(metadata.get("hasMasterSnapshot"))
+                if declared_master != (master_snapshot_bytes is not None):
+                    raise RestoreError("backup metadata master-snapshot flag does not match archive contents")
 
     data_dir = get_data_dir()
     token = f"{_timestamp()}-{_unique_suffix()}"
@@ -370,13 +375,17 @@ def restore_backup(zip_bytes: bytes) -> dict:
                 # True transaction semantics across filesystem + SQLite:
                 # any failure before the consistency check completes restores
                 # the old DB, old PDF directory and old master snapshot.
-                if db_original_moved:
-                    rollback_database()
-                else:
-                    # The connection may have been closed immediately before
-                    # an attempted DB rename failed.
-                    get_connection()
-                rollback_assets()
+                try:
+                    if db_original_moved:
+                        rollback_database()
+                    else:
+                        # The connection may have been closed immediately before
+                        # an attempted DB rename failed.
+                        get_connection()
+                finally:
+                    # File rollback must still happen even if reopening the
+                    # old DB itself unexpectedly raises.
+                    rollback_assets()
                 raise
 
             # Commit point reached. Cleanup of rollback copies is best-effort
