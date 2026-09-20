@@ -26,7 +26,7 @@ import pytesseract
 from PIL import Image
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz  # supported PyMuPDF import name
 except ImportError:  # pragma: no cover
     fitz = None
 

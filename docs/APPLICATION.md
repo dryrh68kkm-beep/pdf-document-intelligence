@@ -1,118 +1,144 @@
-# Desktop web application — architecture and status
+# Desktop web application — current architecture
 
-## Current application
+## Runtime model
 
-**Backend** (`pdf_document_intelligence/api/`):
-- `store.py` — in-memory, thread-safe, multi-document store. SHA-256
-  dedup on upload; per-document `ProgressState` (stage/current/total)
-  updated live during processing.
-- `app.py` — FastAPI. Upload runs on a `ThreadPoolExecutor` (2 workers),
-  not the request-handling event loop: PDF extraction/OCR is CPU-bound
-  Python, so this is the server-side equivalent of a browser Web Worker —
-  the API stays responsive to list/detail/export requests while a
-  document is mid-pipeline. Endpoints: upload (with `force` dedup
-  bypass), list/detail/delete/reprocess, PDF passthrough for the embedded
-  viewer, flat cross-document product list, dashboard aggregate, combined
-  Excel export.
-- `aggregate.py` — cross-document department/KPI aggregation. Only sums
-  fields the extracted schema actually has (`weight_qty`/`pu_qty`/`sku_qty`
-  for this document type) — **no fabricated price/amount total**, since
-  the golden document type (a packing list) doesn't carry monetary values.
-  A future invoice-type template with real price/amount fields would
-  appear automatically; nothing here assumes those fields exist.
-- `serialize.py` — flattens `DocumentResult` into the row-oriented JSON
-  the frontend consumes, including full per-field evidence (raw PDF text,
-  OCR text + confidence, source, flags) for the review/detail panels.
-- `pipeline/orchestrator.py` gained an `on_progress(stage, current, total)`
-  callback, threaded through `text_extraction` (per page) and
-  `ocr_cross_validation` (per row) — this is what makes the incremental
-  "Processing 8/47 pages" UI real progress, not a fake spinner.
+PDF Document Intelligence is a local/offline FastAPI + SQLite application.
+The browser frontend is a single-page vanilla-JS app served by the same
+process. The normal Windows launcher binds the server to `0.0.0.0:8000`
+for LAN use and opens the browser only after the health endpoint is ready.
 
-**Frontend** (`frontend/app/`): vanilla JS, ES modules, no bundler (Node
-is available in this environment but wasn't already part of this Python
-project's toolchain, and a full webpack/vite setup for this scope wasn't
-worth the added dependency surface). One `index.html` shell; sidebar
-switches `view` in JS state, never a page reload. View modules
-(`views/*.js`) are lazy-loaded via native dynamic `import()`.
+Processing is deterministic. Product resolution uses PDF extraction,
+registered templates, validation/reconciliation, Official Master exact
+matching, Local Verified corrections, and Tesseract OCR fallback. The app
+does not use an LLM/Generative-AI inference path.
 
-- `state.js` — central store + pub/sub. All views re-render from this on
-  any state change.
-- Shared pagination components keep product and review tables responsive without rendering an unbounded list.
-- `components/detailPanel.js` — right-side product detail + evidence
-  (raw PDF / OCR / confidence / reasons), with an embedded PDF viewer
-  (`<iframe>` + `#page=N`) fetched from `/api/documents/{id}/pdf`.
-- Persistent bottom Add-Files bar + drag-and-drop anywhere on the app
-  (dragenter/dragleave depth-counted to handle nested elements correctly).
-- Global search debounced 200ms, filtering a search index string
-  precomputed once per data refresh (not recomputed per keystroke).
+## Backend
 
-## Master catalog lookup (barcode -> authoritative product name)
+### SQLite persistence
 
-`pdf_document_intelligence/catalog/` adds a higher-confidence resolution
-path for the `name` field than OCR: `data/master_catalog.csv` (~30k
-barcode -> name rows, also the Division rollup's source - see
-`templates/department_groups.py`) is loaded once and looked up by
-barcode before OCR cross-validation runs. A matched name skips OCR because the Master is authoritative. A match is ground truth — an
-exact hit against real master data, not a pixel/glyph reading — so it's
-never flagged for review, and it takes priority over OCR. On the golden
-sample this resolves 133/154 (86%) of names exactly, vs. OCR's 116/154
-legible-but-still-uncertain recoveries; `raw_value`/`ocr_raw_value` are
-preserved either way, never overwritten.
+`pdf_document_intelligence/db/` is the durable system of record:
 
-`catalog/classify.py` also flags rows suspected of being internal
-marketing material or explicit free-gift items (`suspected_non_product`),
-using only signals specific enough that a real product can't plausibly
-trigger them (an internal `PAQ1_`/`PAQ2_` barcode-name prefix, or the
-literal phrase "ของแถม"). An earlier draft used looser keywords (`POP`,
-`LABEL`, `STAND`, `TAG`, `"ราคาโปรโมชั่น"`, `"ป้ายห้อย"`) and was rejected
-after verification against the real catalog caught it mis-flagging actual
-products — `JOHNNIE WALKER GOLD LABEL` (real whisky), a real luggage tag,
-and real discounted meat all got wrongly flagged as "not a product". Those
-specific cases are pinned as regression tests in
-`tests/unit/test_catalog_classify.py`. Flagged rows are never deleted or
-silently reclassified — they're grouped into a separate "ของแถม /
-ไม่ใช่สินค้า" view instead of counting toward ordinary SKU/quantity totals.
+- WAL mode + foreign keys + busy timeout.
+- A process-wide write lock serializes write transactions on the shared
+  connection.
+- Documents, extracted product rows, correction history and Local Verified
+  Master survive application restarts.
+- SHA-256 is used for document deduplication.
+- Optimistic row updates protect concurrent corrections from stale overwrite.
 
-## What's implemented (P0 + most of P1)
+On Windows the default data directory is
+`%LOCALAPPDATA%\pdf-document-intelligence`, unless
+`PDF_INTELLIGENCE_DATA_DIR` overrides it.
 
-- App shell, persistent Add Files bar, drag-and-drop anywhere, duplicate
-  (SHA-256) detection with a real "add anyway" bypass.
-- Auto-processing on add, live incremental progress per document.
-- Dashboard with real KPIs (never a fabricated amount), department bar
-  chart, department cards.
-- Departments view, Products view (virtualized, searchable, department-
-  filterable), Review view (all flagged rows).
-- Product detail side panel with full evidence trail + embedded PDF
-  viewer jumping to the correct page.
-- Documents view: status, reprocess, remove (with confirmation, dashboard
-  recalculates immediately).
-- Combined Excel export across all completed documents.
+### Processing
 
-Verified end-to-end in a real browser (Playwright): upload → live
-progress → dashboard populated with correct real numbers → department
-drill-down → product search → detail panel → evidence → embedded PDF at
-the right page → review queue → document remove/reprocess → duplicate
-dialog, both cancel and confirm paths.
+`api/app.py` submits PDF work to a small `ThreadPoolExecutor`; API reads
+remain responsive while parsing/OCR runs. The processing backlog has an
+atomic SQLite-backed admission cap so concurrent uploads cannot grow an
+unbounded queue.
 
-## What's explicitly deferred (P2, or noted limitations)
+A process restart recovers documents left in an interrupted
+`processing` state instead of leaving them permanently locked.
 
-- **Manual correction / edit-and-save with audit trail** (spec §18-19):
-  the Review panel is read-only (view evidence) in this version. Building
-  a fake "Confirm" button that doesn't persist would be worse than not
-  having it — this needs a real `PATCH` endpoint + correction audit log,
-  not implemented yet.
-- **IndexedDB / durable persistence**: the document store is in-memory;
-  a server restart loses all processed documents. Explicitly P2 in the
-  spec's own priority ordering.
-- **Keyboard shortcuts, code-splitting beyond dynamic `import()`**: not
-  implemented.
-- **True background-thread cap / page-parallelism**: processing runs on a
-  2-worker thread pool; the proposal's page-parallel worker-pool
-  architecture (§50) is still not implemented — OCR-heavy documents take
-  ~60s each (11 pages / 154 rows in the golden sample), serialized per
-  document.
-- **Search is client-side over an in-memory array fetched once per
-  refresh** (`GET /api/products`). Fine at the scale tested (154 rows);
-  a dataset in the tens of thousands of rows across many documents would
-  want server-side pagination/filtering instead of shipping the whole
-  array to the browser every refresh.
+### Auto PDF Folder Import
+
+`api/inbox_watcher.py` watches the inbox approximately every seven seconds
+(default, configurable). It:
+
+1. waits until file size + modified time are stable across scans;
+2. rejects empty, oversized, invalid-signature and symlink candidates;
+3. hashes the stable source with SHA-256;
+4. skips any hash already represented in SQLite, including a previously
+   removed document;
+5. copies the PDF into app-managed storage while hashing the copied bytes
+   again, preventing a source-change race;
+6. submits the same processing pipeline used by manual **Add Files**.
+
+The default inbox is `<data-dir>/inbox`.
+`PDF_INTELLIGENCE_INBOX_DIR` can point the watcher at another folder.
+An unavailable custom inbox no longer prevents the rest of the app from
+starting; watcher status reports the folder as unavailable and retries.
+
+### Backup / restore
+
+Full backups contain:
+- a consistent SQLite snapshot;
+- managed source PDFs;
+- the compiled Master snapshot when present;
+- checksums and backup metadata.
+
+Restore validates the archive before mutation, stages the restored files,
+then swaps DB/PDF/Master state under the write lock. If an activation step
+fails, the old DB and file assets are restored rather than leaving a
+partially-restored installation.
+
+### Health
+
+`GET /api/health` checks:
+- database/schema;
+- Official and Local Master status;
+- Tesseract binary;
+- Thai OCR language pack;
+- writable data/temp directories;
+- free disk space.
+
+Raw exception details and secrets are not returned by the health endpoint.
+
+## Frontend
+
+`frontend/app/` uses ES modules and dynamic view loading. Current primary
+views include Dashboard, Departments, Products, Review, Focus Items,
+Non-product, Documents and Product Master.
+
+Shared state preserves document/date filtering, search/pagination behavior
+and background refresh behavior. Dashboard KPI document/row counts are
+derived from the same date-scoped document/product sets used by the other
+views; a failed per-document Division summary is surfaced as incomplete
+instead of silently shrinking those headline counts.
+
+## Product Master
+
+Official Master is read-only reference data used for exact barcode
+resolution. Local Verified Master stores user-corrected product knowledge.
+Runtime Master import validates the candidate before atomically replacing
+the active snapshot and clears in-process catalog caches only after a valid
+replacement.
+
+## Windows operation
+
+`install.bat` requires:
+- Python 3.11+;
+- Tesseract;
+- the `tha` Tesseract language pack.
+
+`scripts/run_server.py` owns a PID file in the app data directory, starts
+Uvicorn, waits for `/api/health`, and then opens Chrome/default browser.
+`stop.bat` verifies both the recorded process command line and ownership
+of port 8000 before terminating it, so an unrelated application on the same
+port is not killed.
+
+## CI / regression coverage
+
+The workflow gates:
+- Unit + API tests;
+- non-OCR integration regressions (backup/restore, dashboard date
+  consistency, export cleanup, inbox import, Master import);
+- Golden regression + real OCR;
+- LAN/concurrency stress;
+- Windows smoke/E2E;
+- required Windows Thai OCR.
+
+Synthetic/runtime-generated PDFs are used in tests. Operational PDFs and
+Master datasets are excluded by repository data-safety tests.
+
+## Current limits
+
+- Product/search data is still primarily fetched client-side; very large
+  datasets may eventually benefit from server-side pagination/filtering.
+- PDF processing uses a small document-level worker pool rather than
+  page-parallel OCR.
+- Viewer/Admin is an optional shared-passphrase gate, not a per-user account
+  system.
+- Windows CI validates the application and OCR stack, but organization/repo
+  policy such as GitHub branch protection remains an external repository
+  setting rather than application code.

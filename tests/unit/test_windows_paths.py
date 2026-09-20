@@ -123,3 +123,22 @@ def test_inbox_dir_override_is_used_even_when_it_already_has_files_in_it(monkeyp
 
     monkeypatch.undo()
     _reload_paths_module()
+
+
+
+def test_unavailable_custom_inbox_does_not_break_path_resolution(monkeypatch, tmp_path):
+    """A typo/permission-like path failure must not crash app import/startup.
+    The watcher reports folder_unavailable and can retry later."""
+    blocker = tmp_path / "blocked-parent"
+    blocker.write_text("not a directory", encoding="utf-8")
+    custom_folder = blocker / "pdf"
+    monkeypatch.setenv("PDF_INTELLIGENCE_INBOX_DIR", str(custom_folder))
+    paths_module = _reload_paths_module()
+
+    inbox_dir = paths_module.get_inbox_dir()
+
+    assert inbox_dir == custom_folder
+    assert not inbox_dir.exists()
+
+    monkeypatch.undo()
+    _reload_paths_module()

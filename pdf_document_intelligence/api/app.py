@@ -205,24 +205,60 @@ def _run_processing(doc_id: str) -> None:
         store.set_error(doc_id, str(exc))
 
 
+def _copy_inbox_pdf_verified(
+    source_path: Path,
+    target: Path,
+    expected_sha256: str,
+    expected_size: int,
+) -> bool:
+    """Copy a stable inbox file into app-managed storage while re-checking
+    exactly the bytes that were copied.
+
+    InboxWatcher hashes the source before calling us. A user/process can
+    still replace the file in the tiny gap between that hash and this copy.
+    Hashing the copy stream again closes that TOCTOU window: the document
+    row is created only when the bytes on disk match both the expected
+    SHA-256 and size. This also repeats the manual-upload PDF signature and
+    max-size guardrails at the storage boundary."""
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        with source_path.open("rb") as source, target.open("xb") as dest:
+            first_chunk = True
+            while True:
+                chunk = source.read(_UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                if first_chunk:
+                    if not chunk.startswith(b"%PDF-"):
+                        raise ValueError("invalid PDF signature")
+                    first_chunk = False
+                total += len(chunk)
+                if total > _settings.max_file_size_bytes:
+                    raise ValueError("PDF exceeds configured size limit")
+                hasher.update(chunk)
+                dest.write(chunk)
+
+        if total == 0:
+            raise ValueError("empty PDF")
+        if total != expected_size or hasher.hexdigest() != expected_sha256:
+            raise ValueError("source changed between inbox hash and managed copy")
+        return True
+    except (OSError, ValueError):
+        target.unlink(missing_ok=True)
+        return False
+
+
 def _ingest_inbox_file(sha256: str, filename: str, file_size: int, source_path: Path) -> dict | None:
-    """InboxWatcher's own entry into the exact same create-document
-    pipeline upload_document() uses for a manual upload - same repository
-    method (so the same atomic queue-cap admission and the same sha256
-    unique-index race protection apply), same executor submission. The
-    only differences from a manual upload: the source is a file already
-    sitting in data/inbox (copied, not moved, so the user's original stays
-    untouched in the folder - shutil.copy2 also preserves its mtime,
-    keeping InboxWatcher's own stability bookkeeping for that name
-    consistent), and a full queue or a lost sha256-uniqueness race here
-    means "return None, let the next scan retry" rather than an HTTP
-    error - there's no request to respond to."""
+    """InboxWatcher's entry into the same repository/executor pipeline used
+    by manual Add Files. The original inbox file is never moved or deleted.
+
+    Returning None means "defer and retry": queue full, a concurrent
+    duplicate won, or the source changed while being copied."""
     doc_id = new_id()
     target = get_pdf_path(doc_id)
-    try:
-        shutil.copy2(str(source_path), str(target))
-    except OSError:
-        _logger.warning("Inbox watcher: failed to copy %s into place", source_path)
+    if not _copy_inbox_pdf_verified(source_path, target, sha256, file_size):
+        _logger.warning("Inbox watcher: deferred %s because the source changed or failed validation", filename)
         return None
     try:
         doc = store.repo.create_document_if_below_processing_cap(
@@ -237,7 +273,7 @@ def _ingest_inbox_file(sha256: str, filename: str, file_size: int, source_path: 
             _logger.exception("Inbox watcher: unexpected DB error ingesting %s", filename)
         return None
     _executor.submit(_run_processing, doc_id)
-    _logger.info("Inbox watcher: imported %s from data/inbox as document %s", filename, doc_id)
+    _logger.info("Inbox watcher: imported %s as document %s", filename, doc_id)
     return doc
 
 
@@ -246,15 +282,21 @@ inbox_watcher = InboxWatcher(
     find_any_by_sha256=store.find_any_by_hash,
     ingest_new_file=_ingest_inbox_file,
     scan_interval_seconds=_settings.inbox_scan_interval_seconds,
+    max_file_size_bytes=_settings.max_file_size_bytes,
 )
 
 
 @app.get("/api/inbox/status")
 def inbox_status():
+    # Do not expose the server's absolute filesystem layout to every LAN
+    # viewer. The folder name is enough for status UI; operators configure
+    # the full path locally via PDF_INTELLIGENCE_INBOX_DIR.
     return {
         "watching": inbox_watcher.is_watching,
-        "folder": str(inbox_watcher.inbox_dir),
+        "folder": inbox_watcher.inbox_dir.name,
+        "customFolder": bool(os.environ.get("PDF_INTELLIGENCE_INBOX_DIR")),
         "lastScanAt": inbox_watcher.last_scan_at,
+        "lastError": inbox_watcher.last_error,
     }
 
 

@@ -178,6 +178,11 @@ def _validate_member_name(name: str) -> None:
     raise RestoreError(f"backup archive contains an unexpected entry: {name!r}")
 
 
+def _atomic_replace(source: Path, target: Path) -> None:
+    """Same-filesystem rename/replace seam used by restore."""
+    source.replace(target)
+
+
 def restore_backup(zip_bytes: bytes) -> dict:
     import io
 
@@ -195,9 +200,6 @@ def restore_backup(zip_bytes: bytes) -> dict:
         if not isinstance(metadata, dict):
             metadata = {}
         checksums = metadata.get("checksums") if isinstance(metadata.get("checksums"), dict) else {}
-        # A backup from before this format existed, or one whose metadata
-        # is missing/unreadable, is restorable but DB-only - never claim a
-        # full restore for data this archive was never capable of holding.
         is_legacy = metadata.get("backupFormatVersion") != BACKUP_FORMAT_VERSION or not checksums
 
         db_bytes = zf.read("app.db")
@@ -226,7 +228,28 @@ def restore_backup(zip_bytes: bytes) -> dict:
             except json.JSONDecodeError as exc:
                 raise RestoreError(f"{SNAPSHOT_FILENAME} is corrupt: {exc}") from exc
 
-    tmp_path = get_data_dir() / f"_restore-candidate-{_timestamp()}-{_unique_suffix()}.db"
+        if not is_legacy:
+            # Current backups always carry these fields, but older or
+            # hand-built v2 archives may not. Validate a declaration when
+            # present without masking a more fundamental DB-corruption error.
+            if "pdfCount" in metadata:
+                declared_pdf_count = metadata.get("pdfCount")
+                if declared_pdf_count != len(pdf_payloads):
+                    raise RestoreError(
+                        f"backup metadata pdfCount={declared_pdf_count!r} does not match archive ({len(pdf_payloads)})"
+                    )
+            if "hasMasterSnapshot" in metadata:
+                declared_master = bool(metadata.get("hasMasterSnapshot"))
+                if declared_master != (master_snapshot_bytes is not None):
+                    raise RestoreError("backup metadata master-snapshot flag does not match archive contents")
+
+    data_dir = get_data_dir()
+    token = f"{_timestamp()}-{_unique_suffix()}"
+    tmp_path = data_dir / f"_restore-candidate-{token}.db"
+    stage_root = data_dir / f"_restore-stage-{token}"
+    stage_pdfs = stage_root / "pdfs"
+    stage_snapshot = stage_root / SNAPSHOT_FILENAME
+
     tmp_path.write_bytes(db_bytes)
     try:
         try:
@@ -241,17 +264,18 @@ def restore_backup(zip_bytes: bytes) -> dict:
                 f"backup schema version {candidate_version} is newer than this app supports ({SCHEMA_VERSION})"
             )
 
-        # Everything from here on actually mutates the installation - held
-        # under the same write lock every other DB write in the app already
-        # uses (db/connection.py's get_write_lock), so this check-then-act
-        # is atomic against a concurrent upload/reprocess: either that
-        # request's mark-as-processing write happens first (this restore
-        # then sees it and refuses) or this restore's lock acquisition
-        # happens first (that request then blocks on the same lock until
-        # restore is done, so nothing can start processing mid-restore).
-        # A hard reject rather than best-effort coordination, per spec -
-        # actually cancelling an in-flight OCR job is explicitly out of
-        # scope for now.
+        # Stage the complete file set before touching live state. Full-format
+        # backups are exact snapshots: zero PDFs removes old/orphan PDFs, and
+        # "no master snapshot" removes a newer live snapshot. Legacy DB-only
+        # backups intentionally leave PDFs/master untouched.
+        if not is_legacy:
+            stage_pdfs.mkdir(parents=True, exist_ok=False)
+            for member, data in pdf_payloads.items():
+                pdf_name = member[len(_PDF_MEMBER_PREFIX) :]
+                (stage_pdfs / pdf_name).write_bytes(data)
+            if master_snapshot_bytes is not None:
+                stage_snapshot.write_bytes(master_snapshot_bytes)
+
         with get_write_lock():
             processing = get_connection().execute(
                 "SELECT COUNT(*) FROM documents WHERE status='processing'"
@@ -263,61 +287,116 @@ def restore_backup(zip_bytes: bytes) -> dict:
 
             pre_restore_backup = create_backup()
 
-            data_dir = get_data_dir()
+            pdfs_dir = data_dir / "pdfs"
+            snapshot_target = data_dir / SNAPSHOT_FILENAME
+            db_path = get_db_path()
+            old_pdfs = data_dir / f"_restore-old-pdfs-{token}"
+            old_snapshot = data_dir / f"_restore-old-master-{token}.json"
+            old_db = data_dir / f"_restore-old-app-{token}.db"
 
-            # PDFs and the master snapshot are applied *before* the DB swap
-            # (the step below that closes and reopens the live connection) -
-            # deliberately, so that if writing one of these files fails
-            # partway (disk full, permissions, ...) the DB - and therefore
-            # the document list the running app reports - is still the
-            # original, consistent one, not swapped out from under a
-            # partially-applied restore.
-            if pdf_payloads:
-                pdfs_dir = data_dir / "pdfs"
-                pdfs_dir.mkdir(parents=True, exist_ok=True)
-                for member, data in pdf_payloads.items():
-                    pdf_name = member[len(_PDF_MEMBER_PREFIX) :]
-                    target = pdfs_dir / pdf_name
-                    tmp_pdf = pdfs_dir / f"{pdf_name}.restore-tmp"
-                    tmp_pdf.write_bytes(data)
-                    tmp_pdf.replace(target)
-
-            if master_snapshot_bytes is not None:
-                snap_target = data_dir / SNAPSHOT_FILENAME
-                snap_tmp = data_dir / f"{SNAPSHOT_FILENAME}.restore-tmp"
-                snap_tmp.write_bytes(master_snapshot_bytes)
-                snap_tmp.replace(snap_target)
+            pdf_original_moved = False
+            pdf_stage_installed = False
+            snapshot_original_moved = False
+            snapshot_stage_installed = False
+            db_original_moved = False
+            db_stage_installed = False
 
             from pdf_document_intelligence.db import connection as connection_module
 
-            with connection_module._lock:
-                if connection_module._conn is not None:
-                    connection_module._conn.close()
-                    connection_module._conn = None
-            try:
-                shutil.move(str(tmp_path), str(get_db_path()))
-            except OSError:
-                # tmp_path and get_db_path() are both under the data dir, so a
-                # same-filesystem move is an atomic rename - a failure here
-                # leaves the original DB file completely untouched. But the
-                # connection above was already closed regardless of whether the
-                # move succeeds, so without this the app would be left with no
-                # open DB connection at all - reopening against the (unchanged)
-                # original file is what "the original installation must still
-                # work after a failed restore" actually requires, not just the
-                # file being intact.
-                get_connection()
-                raise
-            restored_conn = get_connection()  # reopen + run any pending migrations
+            def close_live_connection() -> None:
+                with connection_module._lock:
+                    if connection_module._conn is not None:
+                        connection_module._conn.close()
+                        connection_module._conn = None
 
-            # Verify: every non-deleted document's PDF is actually present -
-            # logged, not raised, since the DB itself did restore successfully
-            # and a caller would rather see this in the response than have an
-            # otherwise-good restore fail outright over one missing file.
-            missing_pdfs = []
-            for row in restored_conn.execute("SELECT id FROM documents WHERE deleted_at IS NULL"):
-                if not (data_dir / "pdfs" / f"{row['id']}.pdf").is_file():
-                    missing_pdfs.append(row["id"])
+            def rollback_assets() -> None:
+                nonlocal pdf_stage_installed, snapshot_stage_installed
+                if is_legacy:
+                    return
+                if pdf_stage_installed and pdfs_dir.exists():
+                    shutil.rmtree(pdfs_dir, ignore_errors=True)
+                    pdf_stage_installed = False
+                if pdf_original_moved and old_pdfs.exists():
+                    _atomic_replace(old_pdfs, pdfs_dir)
+
+                if snapshot_stage_installed:
+                    snapshot_target.unlink(missing_ok=True)
+                    snapshot_stage_installed = False
+                if snapshot_original_moved and old_snapshot.exists():
+                    _atomic_replace(old_snapshot, snapshot_target)
+
+            def rollback_database() -> None:
+                nonlocal db_stage_installed
+                close_live_connection()
+                for suffix in ("-wal", "-shm"):
+                    Path(str(db_path) + suffix).unlink(missing_ok=True)
+                if db_stage_installed and db_path.exists():
+                    db_path.unlink(missing_ok=True)
+                    db_stage_installed = False
+                if db_original_moved and old_db.exists():
+                    _atomic_replace(old_db, db_path)
+                get_connection()
+
+            try:
+                if not is_legacy:
+                    if pdfs_dir.exists():
+                        _atomic_replace(pdfs_dir, old_pdfs)
+                        pdf_original_moved = True
+                    _atomic_replace(stage_pdfs, pdfs_dir)
+                    pdf_stage_installed = True
+
+                    if snapshot_target.exists():
+                        _atomic_replace(snapshot_target, old_snapshot)
+                        snapshot_original_moved = True
+                    if stage_snapshot.exists():
+                        _atomic_replace(stage_snapshot, snapshot_target)
+                        snapshot_stage_installed = True
+
+                # DB is the final live swap. Keep the original beside it
+                # until the restored connection opens and the document/PDF
+                # consistency check completes.
+                close_live_connection()
+                for suffix in ("-wal", "-shm"):
+                    Path(str(db_path) + suffix).unlink(missing_ok=True)
+
+                if db_path.exists():
+                    _atomic_replace(db_path, old_db)
+                    db_original_moved = True
+
+                _atomic_replace(tmp_path, db_path)
+                db_stage_installed = True
+                restored_conn = get_connection()
+
+                missing_pdfs = []
+                for row in restored_conn.execute("SELECT id FROM documents WHERE deleted_at IS NULL"):
+                    if not (data_dir / "pdfs" / f"{row['id']}.pdf").is_file():
+                        missing_pdfs.append(row["id"])
+            except Exception:
+                # True transaction semantics across filesystem + SQLite:
+                # any failure before the consistency check completes restores
+                # the old DB, old PDF directory and old master snapshot.
+                try:
+                    if db_original_moved:
+                        rollback_database()
+                    else:
+                        # The connection may have been closed immediately before
+                        # an attempted DB rename failed.
+                        get_connection()
+                finally:
+                    # File rollback must still happen even if reopening the
+                    # old DB itself unexpectedly raises.
+                    rollback_assets()
+                raise
+
+            # Commit point reached. Cleanup of rollback copies is best-effort
+            # and must never turn a successful restore into a reported failure.
+            if old_pdfs.exists():
+                shutil.rmtree(old_pdfs, ignore_errors=True)
+            for old_file in (old_snapshot, old_db):
+                try:
+                    old_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
             return {
                 "restored": True,
@@ -329,6 +408,6 @@ def restore_backup(zip_bytes: bytes) -> dict:
                 "missingPdfCount": len(missing_pdfs),
             }
     finally:
-        # Validation failures, backup failures, and interrupted restores should
-        # never leave candidate DB files accumulating in the data directory.
         tmp_path.unlink(missing_ok=True)
+        if stage_root.exists():
+            shutil.rmtree(stage_root, ignore_errors=True)
