@@ -16,6 +16,7 @@ these tests free of any real sleep/timing dependency.
 """
 from __future__ import annotations
 
+import hashlib
 import shutil
 import time
 from pathlib import Path
@@ -166,11 +167,39 @@ def test_manual_reprocess_still_works_on_an_inbox_imported_document(tmp_path):
     assert reprocessed["status"] == "complete"
 
 
-def test_inbox_status_endpoint_reports_the_folder_path():
+def test_inbox_status_endpoint_does_not_expose_absolute_server_path():
     client = TestClient(app)
     res = client.get("/api/inbox/status")
     assert res.status_code == 200
     body = res.json()
-    assert body["folder"] == str(inbox_watcher.inbox_dir)
+    assert body["folder"] == inbox_watcher.inbox_dir.name
+    assert str(inbox_watcher.inbox_dir) not in body["folder"]
     assert "watching" in body
+    assert "customFolder" in body
     assert "lastScanAt" in body
+    assert "lastError" in body
+
+
+def test_inbox_ingest_rejects_source_changed_after_watcher_hash(tmp_path):
+    """TOCTOU regression: the watcher hashes a stable source, but another
+    process replaces it before app.py copies it. The DB must never store the
+    old SHA for the new bytes."""
+    source = make_bigc_pdf(tmp_path / "race.pdf")
+    original = source.read_bytes()
+    expected_hash = hashlib.sha256(original).hexdigest()
+    expected_size = len(original)
+
+    # Keep a valid PDF signature but change the bytes after the hash was
+    # computed, matching the real race window between watcher and copy.
+    source.write_bytes(original + b"\n%changed-after-hash")
+
+    before_docs = len(store.list())
+    managed_dir = inbox_watcher.inbox_dir.parent / "pdfs"
+    before_files = set(managed_dir.glob("*.pdf")) if managed_dir.is_dir() else set()
+
+    result = _ingest_inbox_file(expected_hash, "race.pdf", expected_size, source)
+
+    assert result is None
+    assert len(store.list()) == before_docs
+    after_files = set(managed_dir.glob("*.pdf")) if managed_dir.is_dir() else set()
+    assert after_files == before_files
