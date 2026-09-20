@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 
 
 def _write_row(page, y: float, xs: list[float], values: list[str], size: float = 8) -> None:
