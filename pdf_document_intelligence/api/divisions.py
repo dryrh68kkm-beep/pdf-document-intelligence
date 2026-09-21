@@ -34,10 +34,24 @@ NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)  # weight_qty, pu_qty, sku_qty
 def _decimal(val) -> Decimal | None:
     """Money must never round-trip through float - the DB driver hands us
     a Python float (SQLite REAL affinity), so convert via str() rather than
-    Decimal(float) directly to avoid inheriting float's binary imprecision."""
+    Decimal(float) directly to avoid inheriting float's binary imprecision.
+
+    Live report (Console): GET .../divisions 500ing for specific documents
+    with no error visible anywhere else in the UI. Root cause: a corrupted
+    extracted amount (e.g. inf/-inf/nan, from a pathological OCR misread or
+    an upstream division-by-zero) survives Decimal(str(val)) with no
+    exception here, but later blows up at the *first* .quantize() call
+    below (Decimal('Infinity').quantize(...) raises InvalidOperation) -
+    which by then has already summed it into this document's running
+    totals, taking the whole summary down with it. Same "one bad row must
+    never crash the whole document's summary" rule this module already
+    applies to an unmapped division code or corrupted meta_json - treat a
+    non-finite amount as unusable (None) right at the parse boundary,
+    before it ever reaches a sum."""
     if val is None:
         return None
-    return Decimal(str(val))
+    d = Decimal(str(val))
+    return d if d.is_finite() else None
 
 
 def _active_document(repo: Repository, doc_id: str) -> dict:
