@@ -740,8 +740,14 @@ button { font-family: inherit; }
 .dash-date-shortcut-btn:hover { background: var(--surface-alt); color: var(--text); border-color: var(--accent); }
 
 /* ---------- Dashboard: Division value chart + department bar chart side by side ---------- */
-.dash-charts-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; align-items: start; }
-.dash-charts-row > div { min-width: 0; }
+/* User request ("ปรับขนาดกราฟให้สมดุลกัน"): equal-width columns, stretched to
+   the same height as each other (the taller of the two sets the row height)
+   rather than the earlier 1.3fr/1fr split with align-items: start, which let
+   the Division table's panel run much taller than the department chart's. */
+.dash-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: stretch; }
+.dash-charts-row > div { min-width: 0; display: flex; flex-direction: column; }
+.dash-charts-row .dash-panel { flex: 1; display: flex; flex-direction: column; }
+.dash-charts-row .dash-panel > div { flex: 1; }
 
 /* ---------- Dashboard: ranked Division value chart ---------- */
 .dash-division-value-panel { padding: 0; overflow: hidden; }
