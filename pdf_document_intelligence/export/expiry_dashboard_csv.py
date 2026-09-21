@@ -14,6 +14,12 @@ same master-catalog cost figure the frontend's Evidence panel already
 shows. The dashboard's auto-fetch enrichment joins this onto barcodes
 whose DESCRIPTION/SUB_DEPT_NAME/UNIT_PRICE the POS export left blank,
 instead of a second hand-maintained mapping.
+
+Only rows that didn't need manual review make it into this feed - see
+build_expiry_dashboard_rows's docstring. (The reverse direction - this
+pipeline checking a barcode against expiry-dashboard's own data while
+resolving a row - lives in catalog/expiry_dashboard_lookup.py and
+api/rows.py's resolve_expiry_dashboard, not here.)
 """
 from __future__ import annotations
 
@@ -36,10 +42,20 @@ def _safe(value: str) -> str:
 def build_expiry_dashboard_rows(docs: list[dict]) -> list[tuple[str, str, str, float | None]]:
     """One row per distinct barcode across all completed documents, last
     write wins on a repeated barcode (a later delivery's naming is the
-    more current one)."""
+    more current one).
+
+    A row still flagged reviewRequired (OCR/pdf_text reading not yet
+    confirmed by a human, and no master-catalog match resolved it either -
+    see api/rows.py's resolution chain) is skipped entirely: this feed
+    should only ever carry data expiry-dashboard's own users can trust,
+    not an unverified OCR guess. If every occurrence of a barcode across
+    every document is still pending review, that barcode is simply absent
+    from the export rather than exported with unverified data."""
     by_barcode: dict[str, tuple[str, str, str, float | None]] = {}
     for doc in docs:
         for product in doc.get("products", []):
+            if product.get("reviewRequired"):
+                continue
             barcode_field = product["fields"].get("barcode")
             name_field = product["fields"].get("name")
             price_field = product["fields"].get("unit_price")

@@ -1,8 +1,9 @@
 """build_expiry_dashboard_rows/export_expiry_dashboard_csv (the LP-Tools
 expiry-dashboard bridge) must: dedupe by barcode (last write wins), skip
-rows with no barcode, carry through the master-catalog unit_price, and
-neutralize formula-injection the same way export/excel.py does - this CSV
-is opened in Excel by the same users."""
+rows with no barcode, skip rows still pending manual review, carry
+through the master-catalog unit_price, and neutralize formula-injection
+the same way export/excel.py does - this CSV is opened in Excel by the
+same users."""
 from __future__ import annotations
 
 import csv
@@ -18,7 +19,13 @@ def _doc(*products: dict) -> dict:
     return {"products": list(products)}
 
 
-def _product(barcode: str | None, name: str, department: str, unit_price: float | None = None) -> dict:
+def _product(
+    barcode: str | None,
+    name: str,
+    department: str,
+    unit_price: float | None = None,
+    review_required: bool = False,
+) -> dict:
     return {
         "fields": {
             "barcode": {"value": barcode} if barcode is not None else None,
@@ -26,6 +33,7 @@ def _product(barcode: str | None, name: str, department: str, unit_price: float 
             "unit_price": {"value": unit_price} if unit_price is not None else None,
         },
         "department": department,
+        "reviewRequired": review_required,
     }
 
 
@@ -73,3 +81,18 @@ def test_csv_output_leaves_missing_price_blank():
     reader = csv.reader(io.StringIO(csv_bytes.decode("utf-8-sig")))
     rows = list(reader)
     assert rows[1][3] == ""
+
+
+def test_rows_still_pending_review_are_excluded():
+    docs = [_doc(_product("333", "Unverified", "CHILLED", review_required=True))]
+    rows = build_expiry_dashboard_rows(docs)
+    assert rows == []
+
+
+def test_a_confirmed_reading_in_one_doc_wins_over_a_pending_one_in_another():
+    docs = [
+        _doc(_product("444", "Unverified Guess", "CHILLED", review_required=True)),
+        _doc(_product("444", "Confirmed Name", "DAIRY", review_required=False)),
+    ]
+    rows = build_expiry_dashboard_rows(docs)
+    assert rows == [("444", "Confirmed Name", "DAIRY", None)]
