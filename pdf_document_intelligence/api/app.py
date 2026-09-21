@@ -861,11 +861,11 @@ def export_excel():
 
 @app.get("/api/export/expiry-dashboard.csv")
 def export_expiry_dashboard():
-    """Barcode -> description/sub-dept/division master feed for
-    LP-Tools/expiry-dashboard (see export/expiry_dashboard_csv.py). Drop
-    the file straight into expiry-dashboard's importer to backfill
-    DESCRIPTION/SUB_DEPT_NAME/DIV for barcodes the daily POS export
-    carries with those fields blank or stale."""
+    """Barcode -> description/sub-dept/unit-price master feed for
+    LP-Tools/expiry-dashboard (see export/expiry_dashboard_csv.py).
+    expiry-dashboard auto-fetches this over CORS to backfill
+    DESCRIPTION/SUB_DEPT_NAME/UNIT_PRICE for barcodes the daily POS export
+    carries with those fields blank."""
     doc_ids = [d["id"] for d in store.list() if d["status"] == "complete"]
     if not doc_ids:
         raise HTTPException(400, "No completed documents to export")
