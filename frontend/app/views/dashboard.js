@@ -741,12 +741,17 @@ export function renderDashboard(container, store) {
         : ""
     }
 
-    <div class="section-title">${dashboardOverview?.amountAvailable === false ? "จำนวนรายการตาม Division" : "มูลค่าตาม Division"}</div>
-    <div class="dash-panel dash-division-value-panel" id="dashDivisionValueChart"></div>
-
-    <div class="section-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</div>
-    <div class="dash-panel" id="dashDeptPiePanel">
-      <div id="dashDeptPie"></div>
+    <div class="dash-charts-row">
+      <div>
+        <div class="section-title">${dashboardOverview?.amountAvailable === false ? "จำนวนรายการตาม Division" : "มูลค่าตาม Division"}</div>
+        <div class="dash-panel dash-division-value-panel" id="dashDivisionValueChart"></div>
+      </div>
+      <div>
+        <div class="section-title">แผนกที่มีสินค้าเข้าเยอะสุด (ตามจำนวน)</div>
+        <div class="dash-panel" id="dashDeptPiePanel">
+          <div id="dashDeptPie"></div>
+        </div>
+      </div>
     </div>
 
     <div class="dash-product-list-head">

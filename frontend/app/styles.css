@@ -739,6 +739,10 @@ button { font-family: inherit; }
 }
 .dash-date-shortcut-btn:hover { background: var(--surface-alt); color: var(--text); border-color: var(--accent); }
 
+/* ---------- Dashboard: Division value chart + department bar chart side by side ---------- */
+.dash-charts-row { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.dash-charts-row > div { min-width: 0; }
+
 /* ---------- Dashboard: ranked Division value chart ---------- */
 .dash-division-value-panel { padding: 0; overflow: hidden; }
 .division-value-table-wrap { overflow-x: auto; }
@@ -793,6 +797,7 @@ button { font-family: inherit; }
   .table-toolbar .count-label { margin-left: 0; }
   .dash-filters { flex-direction: column; align-items: stretch; }
   .dash-filter-meta { margin-left: 0; }
+  .dash-charts-row { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {
