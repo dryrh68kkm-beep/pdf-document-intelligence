@@ -66,6 +66,7 @@ export const api = {
   allProducts: () => fetch(`${BASE}/api/products`).then(json),
   dashboardState: () => fetch(`${BASE}/api/state`).then(json),
   exportUrl: () => `${BASE}/api/export.xlsx`,
+  exportExpiryDashboardUrl: () => `${BASE}/api/export/expiry-dashboard.csv`,
 
   getDepartmentDivisions: () => fetch(`${BASE}/api/departments/divisions`).then(json),
   getDivisions: (docId) => fetch(`${BASE}/api/analytics/documents/${docId}/divisions`).then(json),

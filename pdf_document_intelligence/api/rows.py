@@ -4,6 +4,7 @@ resolution-priority chain for the `name` field:
 
     Official Master (exact barcode)  -- already applied in catalog/apply.py
         -> Local Verified Master (exact barcode)
+        -> expiry-dashboard's live daily product list (exact barcode)
         -> Official Master (article/SKU)  [not modeled by this doc type yet]
         -> Local Master (article/SKU)
         -> PDF/OCR reading already on the field
@@ -18,7 +19,9 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from pdf_document_intelligence.catalog.expiry_dashboard_lookup import lookup_barcode, resolve_data_path
 from pdf_document_intelligence.catalog.loader import get_default_catalog
+from pdf_document_intelligence.config.settings import Settings
 from pdf_document_intelligence.db.repository import Repository
 from pdf_document_intelligence.models.document import ExtractedTable, TableRow
 
@@ -75,6 +78,39 @@ def resolve_local_master(row: TableRow, repo: Repository) -> TableRow:
     return row.model_copy(update={"fields": fields})
 
 
+def resolve_expiry_dashboard(row: TableRow, settings: Settings) -> TableRow:
+    """Third-pass resolution: if `name` is still unresolved (neither the
+    Official nor Local Verified Master had this barcode), check
+    expiry-dashboard's own live daily product list
+    (catalog/expiry_dashboard_lookup.py) - a hit there means the store's
+    POS itself recognizes this exact barcode as a real, currently-stocked
+    product today, which is real-world ground truth same as the other two
+    tiers, just sourced from the sibling app instead of this app's own
+    catalog/DB."""
+    name_field = row.fields.get("name")
+    barcode_field = row.fields.get("barcode")
+    if not name_field or name_field.source == "master_catalog":
+        return row
+    barcode = str(barcode_field.value) if barcode_field and barcode_field.value else None
+    if not barcode:
+        return row
+    data_path = resolve_data_path(settings.expiry_dashboard_www_dir)
+    entry = lookup_barcode(barcode, data_path)
+    if not entry or not entry.get("description"):
+        return row
+    fields = dict(row.fields)
+    fields["name"] = name_field.model_copy(
+        update={
+            "value": entry["description"],
+            "source": "master_catalog",
+            "confidence": 1.0,
+            "review_required": False,
+            "validation_flags": [*name_field.validation_flags, "EXPIRY_DASHBOARD_MATCH"],
+        }
+    )
+    return row.model_copy(update={"fields": fields})
+
+
 def _resolution_status(row: TableRow) -> str:
     name_field = row.fields.get("name")
     if not name_field:
@@ -83,6 +119,8 @@ def _resolution_status(row: TableRow) -> str:
         flags = name_field.validation_flags
         if "LOCAL_MASTER_MATCH" in flags:
             return "LOCAL_MASTER"
+        if "EXPIRY_DASHBOARD_MATCH" in flags:
+            return "EXPIRY_DASHBOARD"
         return "OFFICIAL_MASTER"
     if any(fv.review_required for fv in row.fields.values()):
         return "MANUAL_REVIEW"
@@ -161,16 +199,18 @@ def flatten_row(document_id: str, table: ExtractedTable, row: TableRow) -> dict:
     }
 
 
-def prepare_flat_rows(document_id: str, result, repo: Repository) -> list[dict]:
+def prepare_flat_rows(document_id: str, result, repo: Repository, settings: Settings | None = None) -> list[dict]:
     """Applies local-master resolution and flattens every row - the
     DB-write-free half of `persist_document_result`, split out so a caller
     (store.py) can prepare rows and write them + the document's completion
     status in one atomic transaction (see
     `Repository.complete_document_with_rows`)."""
+    settings = settings or Settings()
     flat_rows: list[dict] = []
     for table in result.tables:
         for row in table.rows:
             resolved = resolve_local_master(row, repo)
+            resolved = resolve_expiry_dashboard(resolved, settings)
             flat_rows.append(flatten_row(document_id, table, resolved))
     return flat_rows
 

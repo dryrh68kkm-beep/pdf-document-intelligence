@@ -78,6 +78,19 @@ class Settings(BaseSettings):
     # leaving read endpoints open to anyone on the LAN as a Viewer.
     admin_passphrase: str = ""
 
+    # --- expiry-dashboard reverse lookup (LP-Tools sibling app) ---
+    # A barcode this pipeline OCR's off a packing list is checked against
+    # expiry-dashboard's own daily data.csv/data.xlsx (see
+    # catalog/expiry_dashboard_lookup.py) as an extra confirmation signal
+    # during resolution. Default matches the LP-Tools folder layout this
+    # was built for (ExpiryApp and pdf-document-intelligence as sibling
+    # folders); set PDI_EXPIRY_DASHBOARD_WWW_DIR to point elsewhere, or ""
+    # to disable the lookup entirely (a missing file is already a silent
+    # no-op, so disabling isn't required just because the file isn't there
+    # yet - only needed if the two apps genuinely aren't deployed side by
+    # side, to skip the stat() call).
+    expiry_dashboard_www_dir: str = "../ExpiryApp/www"
+
 
 def get_settings() -> Settings:
     return Settings()
