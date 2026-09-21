@@ -73,6 +73,14 @@ def _reconciliation(doc: dict) -> dict:
         # summary for every other document too - the Division rollup below
         # doesn't need this field at all, only the reconciliation badge does.
         return {"status": None, "errors": 0}
+    if not isinstance(meta, dict):
+        # Live report (Console, diagnosticId ERR-F24754DF): meta_json can be
+        # syntactically valid JSON that isn't an object at all - e.g. "null"
+        # - which json.loads() happily returns (as None) with no exception
+        # the except above would ever see. meta.get(...) below then raises
+        # AttributeError, which isn't a TypeError/ValueError either - same
+        # "must not 500 the whole document" rule as a truly malformed string.
+        return {"status": None, "errors": 0}
     return {
         "status": "PASSED" if meta.get("reconciled") else "FAILED",
         "errors": sum(1 for i in meta.get("validationIssues", []) if i.get("severity") == "error"),
