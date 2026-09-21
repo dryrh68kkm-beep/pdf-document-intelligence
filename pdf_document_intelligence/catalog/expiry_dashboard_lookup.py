@@ -4,13 +4,15 @@ currently-stocked product according to expiry-dashboard's own daily POS
 export (data.csv or data.xlsx, written by that app's fetch-data.ps1) - the
 same file its www/index.html auto-loads on startup.
 
-This is deliberately a live file read, not an import/snapshot like
-catalog/snapshot.py: expiry-dashboard's data file is overwritten fresh
-every day by the store's own network-folder sync, so "current" here means
-"whatever that file says right now", re-read whenever it changes rather
-than captured once. A missing/unreadable file (the other app not
-installed, or not run yet today) is a normal, silent no-match - this
-lookup is an extra confirmation signal, never a hard dependency.
+Every live read is merged (upsert only) into a persistent snapshot - see
+catalog/expiry_dashboard_snapshot.py's module docstring for why a live
+read alone isn't enough: expiry-dashboard's file only ever lists today's
+near-expiry items, so a barcode confirmed yesterday can vanish from
+today's file without ever having stopped being a real product. A
+missing/unreadable live file (the other app not installed, or not run
+yet today) falls back to whatever the snapshot has already learned,
+rather than losing every match learned so far - this lookup is an extra
+confirmation signal, never a hard dependency, but a durable one.
 """
 from __future__ import annotations
 
@@ -20,8 +22,10 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from pdf_document_intelligence.catalog.expiry_dashboard_snapshot import load_snapshot, merge_into_snapshot
+
 _cache: dict[str, dict[str, str]] = {}
-_cache_key: tuple[str, float, int] | None = None
+_cache_key: tuple[str, str, float, int] | None = None
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -54,23 +58,37 @@ def _build_index(path: Path) -> dict[str, dict[str, str]]:
     return index
 
 
-def load_expiry_dashboard_index(path: Path) -> dict[str, dict[str, str]]:
-    """Cached by (path, mtime, size) - re-parsed only when the file the
-    other app just rewrote actually differs from what's cached, so a
-    file that hasn't changed today costs nothing beyond one stat() call."""
+def load_expiry_dashboard_index(
+    path: Path | None, snapshot_path: Path | None = None
+) -> dict[str, dict[str, str]]:
+    """Cached by (snapshot path, live path, mtime, size) - re-parsed only
+    when the file the other app just rewrote actually differs from what's
+    cached, so a file that hasn't changed today costs nothing beyond one
+    stat() call. When there's no live file to read (missing today, or the
+    other app was never pointed at one), returns the persistent snapshot
+    as-is - every barcode ever confirmed, never wiped just because today's
+    read didn't happen."""
     global _cache, _cache_key
-    try:
-        stat = path.stat()
-    except OSError:
-        return {}
-    key = (str(path), stat.st_mtime, stat.st_size)
-    if key != _cache_key:
+    if path is not None:
         try:
-            _cache = _build_index(path)
-        except (OSError, csv.Error, KeyError, ValueError):
-            return {}
-        _cache_key = key
-    return _cache
+            stat = path.stat()
+        except OSError:
+            path = None
+        else:
+            key = (str(snapshot_path), str(path), stat.st_mtime, stat.st_size)
+            if key == _cache_key:
+                return _cache
+            try:
+                live_entries = _build_index(path)
+            except (OSError, csv.Error, KeyError, ValueError):
+                path = None
+            else:
+                _cache = merge_into_snapshot(live_entries, snapshot_path)
+                _cache_key = key
+                return _cache
+    # No usable live file this call - serve whatever the persistent
+    # snapshot already has rather than nothing.
+    return load_snapshot(snapshot_path)
 
 
 def resolve_data_path(www_dir: str) -> Path | None:
@@ -87,7 +105,9 @@ def resolve_data_path(www_dir: str) -> Path | None:
     return None
 
 
-def lookup_barcode(barcode: str | None, path: Path | None) -> dict[str, str] | None:
-    if not barcode or not path:
+def lookup_barcode(
+    barcode: str | None, path: Path | None, snapshot_path: Path | None = None
+) -> dict[str, str] | None:
+    if not barcode:
         return None
-    return load_expiry_dashboard_index(path).get(str(barcode))
+    return load_expiry_dashboard_index(path, snapshot_path).get(str(barcode))

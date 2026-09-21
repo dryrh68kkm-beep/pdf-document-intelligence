@@ -78,7 +78,7 @@ def resolve_local_master(row: TableRow, repo: Repository) -> TableRow:
     return row.model_copy(update={"fields": fields})
 
 
-def resolve_expiry_dashboard(row: TableRow, settings: Settings) -> TableRow:
+def resolve_expiry_dashboard(row: TableRow, settings: Settings, snapshot_path=None) -> TableRow:
     """Third-pass resolution: if `name` is still unresolved (neither the
     Official nor Local Verified Master had this barcode), check
     expiry-dashboard's own live daily product list
@@ -86,7 +86,12 @@ def resolve_expiry_dashboard(row: TableRow, settings: Settings) -> TableRow:
     POS itself recognizes this exact barcode as a real, currently-stocked
     product today, which is real-world ground truth same as the other two
     tiers, just sourced from the sibling app instead of this app's own
-    catalog/DB."""
+    catalog/DB. Every match is also durable: see
+    catalog/expiry_dashboard_snapshot.py - a barcode confirmed once stays
+    resolvable even after it drops out of expiry-dashboard's own file.
+    `snapshot_path` overrides where that persistent snapshot lives; tests
+    pass a tmp_path so they never touch the real app data directory,
+    production always uses the real one (leave it unset)."""
     name_field = row.fields.get("name")
     barcode_field = row.fields.get("barcode")
     if not name_field or name_field.source == "master_catalog":
@@ -95,7 +100,7 @@ def resolve_expiry_dashboard(row: TableRow, settings: Settings) -> TableRow:
     if not barcode:
         return row
     data_path = resolve_data_path(settings.expiry_dashboard_www_dir)
-    entry = lookup_barcode(barcode, data_path)
+    entry = lookup_barcode(barcode, data_path, snapshot_path)
     if not entry or not entry.get("description"):
         return row
     fields = dict(row.fields)
