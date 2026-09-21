@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
@@ -76,6 +77,18 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PDF Document Intelligence", lifespan=_lifespan)
+# expiry-dashboard (LP-Tools sibling app, its own localhost:PORT) fetches
+# /api/export/expiry-dashboard.csv directly from the browser to auto-fill
+# its master-data enrichment (see that repo's tryAutoLoadMasterEnrichment).
+# Both tools only ever run on the same machine as loopback HTTP servers, so
+# this only ever opens the API to another process on the same PC - never a
+# real network origin - and only for that GET.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 _executor = ThreadPoolExecutor(max_workers=2)
 _settings = Settings()
 # Not a hard concurrency limit (max_workers already caps that) - a backlog
