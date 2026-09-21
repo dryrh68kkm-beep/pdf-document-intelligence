@@ -25,7 +25,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
@@ -41,6 +41,7 @@ from pdf_document_intelligence.db import backup as backup_module
 from pdf_document_intelligence.db.paths import get_data_dir, get_inbox_dir, get_pdf_path
 from pdf_document_intelligence.db.repository import new_id
 from pdf_document_intelligence.export.excel import export_many_to_excel
+from pdf_document_intelligence.export.expiry_dashboard_csv import export_expiry_dashboard_csv
 from pdf_document_intelligence.loader.preflight import PreflightError
 from pdf_document_intelligence.pipeline.orchestrator import process_document
 
@@ -842,6 +843,25 @@ def export_excel():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filename="pdf-document-intelligence-export.xlsx",
         background=BackgroundTask(out_path.unlink, missing_ok=True),
+    )
+
+
+@app.get("/api/export/expiry-dashboard.csv")
+def export_expiry_dashboard():
+    """Barcode -> description/sub-dept/division master feed for
+    LP-Tools/expiry-dashboard (see export/expiry_dashboard_csv.py). Drop
+    the file straight into expiry-dashboard's importer to backfill
+    DESCRIPTION/SUB_DEPT_NAME/DIV for barcodes the daily POS export
+    carries with those fields blank or stale."""
+    doc_ids = [d["id"] for d in store.list() if d["status"] == "complete"]
+    if not doc_ids:
+        raise HTTPException(400, "No completed documents to export")
+    results = [document_detail_json(store.get(did), _doc_products(did)) for did in doc_ids]
+    csv_bytes = export_expiry_dashboard_csv(results)
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="expiry-dashboard-master.csv"'},
     )
 
 

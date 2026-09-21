@@ -302,6 +302,11 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   window.location.href = api.exportUrl();
 });
 
+document.getElementById("exportExpiryDashboardBtnIcon").innerHTML = icons.download;
+document.getElementById("exportExpiryDashboardBtn").addEventListener("click", () => {
+  window.location.href = api.exportExpiryDashboardUrl();
+});
+
 // Filter icon-button: decorative on views without an inline filter bar,
 // focuses the first filter control already rendered by the active view
 // (department/status/etc. selects that already exist per-view) when one is
