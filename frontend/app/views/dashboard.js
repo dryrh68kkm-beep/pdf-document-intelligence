@@ -230,6 +230,21 @@ function focusItemsSummaryCard(focusGroups) {
     </div>`;
 }
 
+// Offline, filesystem-only link to a locally-running expiry-dashboard
+// instance (separate app, same machine - see catalog/expiry_link.py). Renders
+// nothing at all when the link isn't configured on this machine (the normal
+// case) or the source file isn't there yet, rather than showing an empty/zero
+// card that would look like a bug.
+function expiryLinkCard(summary) {
+  if (!summary || !summary.configured || !summary.available) return "";
+  return `
+    <div class="kpi-icon-card" title="จับคู่บาร์โค้ดกับข้อมูลใกล้หมดอายุจาก expiry-dashboard (${fmtNum(summary.matchedCount)}/${fmtNum(summary.itemCount)} รายการจับคู่ราคาได้)">
+      <div class="kpi-icon-badge tone-solid" style="background:var(--warning);">${icons.warningTriangle}</div>
+      <div class="kpi-value">฿ ${fmtBaht(summary.totalValue)}</div>
+      <div class="kpi-label">มูลค่าสินค้าใกล้หมดอายุ (${fmtNum(summary.matchedCount)} รายการ)</div>
+    </div>`;
+}
+
 // Naive independent Math.round() on each Division's share can sum to 99%
 // or 101% - the summary table must foot to exactly 100% (user requirement).
 // Largest-remainder rounding: floor every share, then hand the leftover
@@ -550,7 +565,7 @@ export function renderDashboard(container, store) {
   const {
     documents, products, panel, departmentDivisions,
     dashboardDateFrom, dashboardDateTo, dashboardDivisionFilter, dashboardDocumentFilter,
-    dashboardOverview, dashboardLastRefreshedAt, dashboardRefreshing,
+    dashboardOverview, dashboardLastRefreshedAt, dashboardRefreshing, expiryLinkSummary,
   } = store.state;
   departmentDivisionsRef = departmentDivisions || {};
 
@@ -693,6 +708,7 @@ export function renderDashboard(container, store) {
       ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.rowCount) : "…", "จำนวนรายการ", icons.box, "var(--success)")}
       ${kpiIconCard(dashboardOverview ? fmtNum(dashboardOverview.totals.documentCount) : "…", "จำนวนเอกสาร", icons.building, "var(--purple)")}
       ${focusItemsSummaryCard(focusGroups)}
+      ${expiryLinkCard(expiryLinkSummary)}
     </div>
 
     ${
