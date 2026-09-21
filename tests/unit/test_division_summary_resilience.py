@@ -92,6 +92,23 @@ def test_non_finite_amount_does_not_crash_the_summary(tmp_path):
     assert summary["documentTotals"]["amount"] == 0.0
 
 
+def test_meta_json_valid_but_not_an_object_does_not_crash_the_summary(tmp_path):
+    """Live report (Console, diagnosticId ERR-F24754DF): meta_json = "null"
+    is syntactically valid JSON (json.loads() returns None, no exception),
+    but meta.get(...) on a non-dict raises AttributeError - a distinct
+    failure from the malformed-JSON-text case above, since AttributeError
+    isn't a TypeError/ValueError the existing except clause would catch."""
+    repo = _repo(tmp_path)
+    _seed(repo, tmp_path)
+    repo._conn.execute("UPDATE documents SET meta_json = ? WHERE id = ?", ("null", "doc-1"))
+    repo._conn.commit()
+
+    summary = build_division_summary(repo, "doc-1")
+
+    assert summary["reconciliation"] == {"status": None, "errors": 0}
+    assert summary["documentTotals"]["rowCount"] == 1
+
+
 def test_validation_issue_missing_severity_key_does_not_crash_the_summary(tmp_path):
     import json
 
