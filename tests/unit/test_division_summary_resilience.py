@@ -71,6 +71,27 @@ def test_corrupted_meta_json_does_not_crash_the_summary(tmp_path):
     assert summary["documentTotals"]["rowCount"] == 1
 
 
+def test_non_finite_amount_does_not_crash_the_summary(tmp_path):
+    """Live report (browser Console): GET .../divisions returning 500 for
+    specific documents with no visible cause elsewhere in the UI.
+    Reproduces the exact failure - Decimal('Infinity').quantize(...)
+    raises decimal.InvalidOperation, which _decimal() must now prevent
+    from ever reaching a sum in the first place (see its own docstring)."""
+    repo = _repo(tmp_path)
+    _seed(repo, tmp_path)
+    repo._conn.execute(
+        "UPDATE product_rows SET amount = ? WHERE document_id = ?", (float("inf"), "doc-1")
+    )
+    repo._conn.commit()
+
+    summary = build_division_summary(repo, "doc-1")
+
+    assert summary["documentTotals"]["rowCount"] == 1
+    # The non-finite amount is treated as unusable, not summed as "inf baht" -
+    # same as any other row with no amount at all.
+    assert summary["documentTotals"]["amount"] == 0.0
+
+
 def test_validation_issue_missing_severity_key_does_not_crash_the_summary(tmp_path):
     import json
 
