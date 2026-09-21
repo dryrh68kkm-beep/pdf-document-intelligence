@@ -453,6 +453,11 @@ function renderDepartmentBarChart(host, rows) {
 
   host.innerHTML = `
     <div class="dept-bar-chart">
+      <div class="dept-bar-chart-row dept-bar-chart-head">
+        <div>แผนก</div>
+        <div aria-hidden="true"></div>
+        <div class="dept-bar-chart-value">จำนวน · สัดส่วน</div>
+      </div>
       ${entries
         .map(
           ([dept, qty], i) => `
