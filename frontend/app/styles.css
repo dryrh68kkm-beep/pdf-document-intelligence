@@ -704,8 +704,15 @@ button { font-family: inherit; }
 .recon-fill { background: var(--success); height: 100%; border-radius: 4px; }
 
 /* ---------- Department horizontal bar chart (Dashboard, by quantity) ---------- */
-.dept-bar-chart { display: flex; flex-direction: column; gap: 10px; }
-.dept-bar-chart-row { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 10px; font-size: 12.5px; }
+/* Row rhythm (padding/border/font) matches .division-value-table's <td> rows
+   (see below) so this chart and the Division value table - same row count,
+   placed side by side in .dash-charts-row - read as a balanced pair instead
+   of one looking visually "lighter" than the other despite equal height. */
+.dept-bar-chart { display: flex; flex-direction: column; }
+.dept-bar-chart-row { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 10px; font-size: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.dept-bar-chart-row:last-child { border-bottom: 0; }
+.dept-bar-chart-head { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+.dept-bar-chart-head .dept-bar-chart-value { color: var(--text-muted); }
 .dept-bar-chart-label { display: flex; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dept-bar-chart-row .recon-track { height: 10px; }
 .dept-bar-chart-value { color: var(--text-faint); white-space: nowrap; text-align: right; }
