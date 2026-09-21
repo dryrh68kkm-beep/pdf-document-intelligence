@@ -101,6 +101,7 @@ export const api = {
   officialMasterLookup: (barcode) =>
     fetch(`${BASE}/api/master/official/lookup?barcode=${encodeURIComponent(barcode)}`).then(json),
   masterSnapshotStatus: () => fetch(`${BASE}/api/master/snapshot/status`).then(json),
+  expiryLinkSummary: () => fetch(`${BASE}/api/expiry-link/summary`).then(json),
   importMasterCatalog: (file) => {
     const form = new FormData();
     form.append("file", file);

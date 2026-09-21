@@ -705,6 +705,19 @@ def master_snapshot_status():
     return _snapshot_status_payload()
 
 
+@app.get("/api/expiry-link/summary")
+def expiry_link_summary():
+    """Offline, filesystem-only link to a locally-running expiry-dashboard
+    instance (separate app, same machine) - see catalog/expiry_link.py.
+    Never makes a network call; simply absent (configured=False) when the
+    PDF_INTELLIGENCE_EXPIRY_LINK_CSV env var isn't set."""
+    from pdf_document_intelligence.catalog import expiry_link as expiry_link_module
+
+    source_path = expiry_link_module.configured_source_path()
+    price_by_barcode = store.repo.latest_unit_prices_by_barcode() if source_path else {}
+    return expiry_link_module.build_summary(source_path, price_by_barcode)
+
+
 @app.post("/api/master/import", dependencies=[Depends(_require_admin)])
 async def import_master_catalog(file: UploadFile):
     import json

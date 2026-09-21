@@ -182,6 +182,11 @@ class Store {
       // refreshed, and whether a refresh is in flight right now.
       dashboardLastRefreshedAt: null,
       dashboardRefreshing: false,
+      // Offline, filesystem-only link to a locally-running expiry-dashboard
+      // instance (separate app - see catalog/expiry_link.py). null until
+      // the first refresh resolves; { configured: false } when the env var
+      // isn't set on this machine (the normal case, feature simply hidden).
+      expiryLinkSummary: null,
     };
     this._listeners = [];
     this._divisionCache = new Map();
@@ -322,11 +327,16 @@ class Store {
   }
 
   async _doRefreshAll() {
-    const [documents, dashboard, rawProducts, departmentDivisions] = await Promise.all([
+    const [documents, dashboard, rawProducts, departmentDivisions, expiryLinkSummary] = await Promise.all([
       api.listDocuments(),
       api.dashboardState(),
       api.allProducts(),
       api.getDepartmentDivisions(),
+      // Never lets a failure here block the rest of the Dashboard - this
+      // link is inherently optional (depends on another app being present
+      // on the same machine), so it degrades to "unavailable" instead of
+      // failing refreshAll() the way a core data fetch must.
+      api.expiryLinkSummary().catch(() => ({ configured: false, available: false })),
     ]);
     // Each product row's own document is looked up once here (rather than
     // per-render in every view) so any view can show "which document date
@@ -352,7 +362,7 @@ class Store {
     // whole cache on every refresh. Deleted/reprocessing IDs are removed; an
     // edited document is invalidated explicitly before refreshAll().
     this._pruneDivisionCache(documents);
-    this.set({ documents, dashboard, products, currentDocumentId, departmentDivisions });
+    this.set({ documents, dashboard, products, currentDocumentId, departmentDivisions, expiryLinkSummary });
     // Combined into a single set() instead of two independent ones (each of
     // refreshDivisions()/refreshDashboardOverview() used to call this.set()
     // on its own, so whichever Promise settled first fired a full re-render

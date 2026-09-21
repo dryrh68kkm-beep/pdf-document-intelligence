@@ -588,6 +588,24 @@ class Repository:
             params.append(exclude_row_id)
         return [dict(r) for r in self._conn.execute(q, params)]
 
+    def latest_unit_prices_by_barcode(self) -> dict[str, float]:
+        """barcode -> unit_price from the most recently created active row
+        for that barcode, across every processed document. Used to price
+        externally-sourced stock (e.g. the expiry-dashboard link) against
+        this app's own extracted prices without a per-barcode query - a
+        single pass over active priced rows, latest write per barcode wins
+        because rows are read oldest-first."""
+        rows = self._conn.execute(
+            """SELECT barcode, unit_price FROM product_rows
+               WHERE deleted_at IS NULL AND barcode IS NOT NULL AND barcode != ''
+                 AND unit_price IS NOT NULL
+               ORDER BY created_at ASC"""
+        ).fetchall()
+        result: dict[str, float] = {}
+        for row in rows:
+            result[row["barcode"]] = row["unit_price"]
+        return result
+
     def list_local_master(self, search: str | None = None) -> list[dict]:
         q = "SELECT * FROM local_product_master"
         params: list[Any] = []
