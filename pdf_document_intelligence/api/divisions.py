@@ -81,10 +81,22 @@ def _reconciliation(doc: dict) -> dict:
         # AttributeError, which isn't a TypeError/ValueError either - same
         # "must not 500 the whole document" rule as a truly malformed string.
         return {"status": None, "errors": 0}
-    return {
-        "status": "PASSED" if meta.get("reconciled") else "FAILED",
-        "errors": sum(1 for i in meta.get("validationIssues", []) if i.get("severity") == "error"),
-    }
+    try:
+        # A third shape of corrupted meta_json (live reports have now shown
+        # three distinct ones): "validationIssues" present but not a list of
+        # objects - e.g. a string, a number, or a list of non-dict items.
+        # meta is a dict at this point, but nothing upstream of this function
+        # guarantees what's *inside* it - iterating a non-list raises
+        # TypeError, and i.get(...) on a non-dict item raises AttributeError.
+        # Neither is worth chasing shape-by-shape again: catch both here so
+        # any future variant of "meta_json parses but its insides are
+        # unexpected" degrades to the same neutral badge instead of a 500.
+        return {
+            "status": "PASSED" if meta.get("reconciled") else "FAILED",
+            "errors": sum(1 for i in meta.get("validationIssues", []) if i.get("severity") == "error"),
+        }
+    except (AttributeError, TypeError):
+        return {"status": None, "errors": 0}
 
 
 def build_division_summary(repo: Repository, doc_id: str) -> dict:

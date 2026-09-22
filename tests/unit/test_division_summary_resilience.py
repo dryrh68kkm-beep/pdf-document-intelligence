@@ -109,6 +109,27 @@ def test_meta_json_valid_but_not_an_object_does_not_crash_the_summary(tmp_path):
     assert summary["documentTotals"]["rowCount"] == 1
 
 
+def test_validation_issues_not_a_list_does_not_crash_the_summary(tmp_path):
+    """Live report (Console, several new diagnosticIds): a fourth
+    corrupted-meta_json shape - "validationIssues" is present and meta is a
+    dict (so the isinstance guard above doesn't catch it), but its value
+    isn't a list of objects. Iterating a string yields characters, and
+    i.get(...) on a str raises AttributeError - a case the earlier
+    isinstance(meta, dict) fix didn't cover."""
+    import json
+
+    repo = _repo(tmp_path)
+    _seed(repo, tmp_path)
+    meta = json.dumps({"reconciled": True, "validationIssues": "not-a-list"})
+    repo._conn.execute("UPDATE documents SET meta_json = ? WHERE id = ?", (meta, "doc-1"))
+    repo._conn.commit()
+
+    summary = build_division_summary(repo, "doc-1")
+
+    assert summary["reconciliation"] == {"status": None, "errors": 0}
+    assert summary["documentTotals"]["rowCount"] == 1
+
+
 def test_validation_issue_missing_severity_key_does_not_crash_the_summary(tmp_path):
     import json
 
