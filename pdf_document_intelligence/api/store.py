@@ -96,8 +96,8 @@ class DocumentStore:
         path = get_pdf_path(doc_id)
         return path.read_bytes() if path.exists() else None
 
-    def list(self) -> list[dict]:
-        return self._repo.list_documents()
+    def list(self, include_deleted: bool = False) -> list[dict]:
+        return self._repo.list_documents(include_deleted=include_deleted)
 
     def remove(self, doc_id: str) -> bool:
         """Soft-deletes the DB record (document + its product rows, so

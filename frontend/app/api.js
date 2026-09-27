@@ -57,13 +57,21 @@ export const api = {
       return { status: res.status, body };
     });
   },
-  listDocuments: () => fetch(`${BASE}/api/documents`).then(json),
+  // `since` (a previous response's own `updatedAt` cursor) makes both
+  // calls incremental - only documents/rows that changed after it come
+  // back, including a just-deleted one (`deletedAt` set). encodeURIComponent
+  // is required, not cosmetic: an ISO timestamp's "+00:00" offset contains
+  // a literal "+", which a query string decodes as a space if left raw,
+  // silently corrupting the cursor comparison server-side.
+  listDocuments: (since) =>
+    fetch(`${BASE}/api/documents${since ? `?since=${encodeURIComponent(since)}` : ""}`).then(json),
   getDocument: (id) => fetch(`${BASE}/api/documents/${id}`).then(json),
   deleteDocument: (id) => fetch(`${BASE}/api/documents/${id}`, { method: "DELETE", headers: adminHeaders() }).then(json),
   reprocessDocument: (id) =>
     fetch(`${BASE}/api/documents/${id}/reprocess`, { method: "POST", headers: adminHeaders() }).then(json),
   pdfUrl: (id) => `${BASE}/api/documents/${id}/pdf`,
-  allProducts: () => fetch(`${BASE}/api/products`).then(json),
+  allProducts: (since) =>
+    fetch(`${BASE}/api/products${since ? `?since=${encodeURIComponent(since)}` : ""}`).then(json),
   dashboardState: () => fetch(`${BASE}/api/state`).then(json),
   exportUrl: () => `${BASE}/api/export.xlsx`,
   exportExpiryDashboardUrl: () => `${BASE}/api/export/expiry-dashboard.csv`,

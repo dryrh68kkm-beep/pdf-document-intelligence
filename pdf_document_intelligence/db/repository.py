@@ -142,12 +142,87 @@ class Repository:
         row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         return dict(row) if row else None
 
-    def list_documents(self, include_deleted: bool = False) -> list[dict]:
-        q = "SELECT * FROM documents"
+    # Every document row carries an "effective" updated_at - the later of
+    # its own updated_at and the max updated_at among its product_rows -
+    # used as this expression everywhere a document's updated_at is read
+    # (both list_documents() and list_documents_since() below). A
+    # correction (update_product_row_field) or undo only bumps the row's
+    # own updated_at, never the parent document's, but the document's
+    # *embedded* summary stats (rowCount/totalAmount/reviewCount in
+    # serialize.document_summary_json) are computed from those same rows
+    # at request time, not stored columns - so a document whose only
+    # change was one of its rows being corrected must still count as
+    # "changed" for incremental-refresh purposes (see list_documents_since()
+    # below), or a caller's cached copy of that document's stats would go
+    # stale forever. Deriving this from the data itself, applied
+    # unconditionally rather than only inside the incremental query, is
+    # what keeps the cursor exchange correct: list_documents()'s plain
+    # updated_at must already be this same "effective" value, or a client
+    # using it as tomorrow's `since` cursor would immediately (and
+    # incorrectly) see this document as "changed again" purely because its
+    # rows were written a few microseconds after the document row itself
+    # in the same completion transaction.
+    _EFFECTIVE_UPDATED_AT_SQL = """MAX(
+        d.updated_at,
+        COALESCE((SELECT MAX(r.updated_at) FROM product_rows r WHERE r.document_id = d.id), d.updated_at)
+    )"""
+
+    def _documents_with_effective_updated_at(
+        self, *, since: str | None, include_deleted: bool
+    ) -> list[dict]:
+        conditions = []
+        params: list[Any] = []
         if not include_deleted:
-            q += " WHERE deleted_at IS NULL"
-        q += " ORDER BY uploaded_at DESC"
-        return [dict(r) for r in self._conn.execute(q)]
+            conditions.append("d.deleted_at IS NULL")
+        if since is not None:
+            conditions.append(f"{self._EFFECTIVE_UPDATED_AT_SQL} > ?")
+            params.append(since)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        order = "effective_updated_at ASC" if since is not None else "d.uploaded_at DESC"
+        rows = self._conn.execute(
+            f"""
+            SELECT d.*, {self._EFFECTIVE_UPDATED_AT_SQL} AS effective_updated_at
+            FROM documents d{where}
+            ORDER BY {order}
+            """,
+            params,
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["updated_at"] = d.pop("effective_updated_at")
+            result.append(d)
+        return result
+
+    def list_documents(self, include_deleted: bool = False) -> list[dict]:
+        return self._documents_with_effective_updated_at(since=None, include_deleted=include_deleted)
+
+    def list_documents_since(self, since: str) -> list[dict]:
+        """Documents changed since `since` (exclusive) - for an incremental
+        Dashboard refresh (user request: re-fetching every document/row on
+        every refresh got slow as the document count grew) instead of
+        re-fetching everything every time. See _EFFECTIVE_UPDATED_AT_SQL's
+        own comment for what "changed" means here.
+
+        Includes soft-deleted documents (deleted_at set) - unlike
+        list_documents(), which is exclusively for the active list - so an
+        incremental caller can detect and prune a just-deleted document
+        from its own local copy instead of it lingering there forever."""
+        return self._documents_with_effective_updated_at(since=since, include_deleted=True)
+
+    def list_product_rows_since(self, since: str) -> list[dict]:
+        """Product rows changed since `since` (exclusive), for the same
+        incremental-refresh purpose as list_documents_since() - see its
+        own docstring. Includes soft-deleted rows (a reprocess replaces
+        rows by soft-deleting the old ones and inserting new ones, not
+        updating in place) so an incremental caller can prune a replaced/
+        deleted row from its own local copy."""
+        return [
+            dict(r)
+            for r in self._conn.execute(
+                "SELECT * FROM product_rows WHERE updated_at > ? ORDER BY updated_at ASC", (since,)
+            )
+        ]
 
     def update_progress(self, doc_id: str, stage: str, current: int, total: int) -> None:
         with get_write_lock(), self._conn:
