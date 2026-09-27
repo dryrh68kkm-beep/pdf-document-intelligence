@@ -457,9 +457,15 @@ def list_documents():
     docs = store.list()
     result = []
     for d in docs:
-        rows = _doc_products(d["id"]) if d["status"] == "complete" else []
-        stats = _row_stats(rows) if d["status"] == "complete" else None
-        result.append(document_summary_json(d, stats))
+        try:
+            rows = _doc_products(d["id"]) if d["status"] == "complete" else []
+            stats = _row_stats(rows) if d["status"] == "complete" else None
+            result.append(document_summary_json(d, stats))
+        except Exception:
+            # Same last-resort net as list_all_products() above, for the
+            # same reason: one document's corrupted stored data must not
+            # take the entire document list down with it.
+            _logger.exception("Failed to serialize document %s - skipping it", d.get("id"))
     return result
 
 
@@ -552,7 +558,25 @@ def delete_document(doc_id: str):
 def list_all_products():
     docs = {d["id"]: d for d in store.list()}
     rows = store.repo.list_product_rows()
-    return [product_row_json(r, docs[r["document_id"]]["filename"]) for r in rows if r["document_id"] in docs]
+    results = []
+    for row in rows:
+        doc = docs.get(row["document_id"])
+        if doc is None:
+            continue
+        try:
+            results.append(product_row_json(row, doc["filename"]))
+        except Exception:
+            # Live reports: a single row with corrupted stored JSON (bad
+            # fields_json/review_reasons/etc.) used to 500 this entire
+            # endpoint - every document's product list, not just the one
+            # row - since this comprehension has no per-row isolation.
+            # serialize.py's own helpers now tolerate the specific
+            # corruption shapes already seen in production; this is the
+            # last-resort net for whatever shape shows up next, so one bad
+            # row is skipped (and logged, with its id, for follow-up)
+            # instead of taking every other document's products down with it.
+            _logger.exception("Failed to serialize product row %s - skipping it", row.get("id"))
+    return results
 
 
 @app.get("/api/products/{row_id}")

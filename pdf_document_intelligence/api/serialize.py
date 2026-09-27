@@ -10,12 +10,52 @@ corrected value with the original evidence still attached underneath it.
 from __future__ import annotations
 
 import json
+from numbers import Real
 
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN as _EDITABLE_FIELD_COLUMN
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
 
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)
 IDENTITY_COLUMN = "article"
+
+
+def _validation_issue_counts(meta: dict) -> tuple[int, int]:
+    """Count validationIssues by severity, tolerating any corrupted shape.
+
+    Live reports (Console): GET /api/products and GET /api/documents both
+    500ing - much wider blast radius than the Division-summary crashes
+    fixed earlier (divisions.py's own _reconciliation()), because these two
+    endpoints serialize every document/row in the whole app, not one
+    document at a time. A single corrupted meta_json - validationIssues
+    missing "severity" (plain KeyError from i["severity"], not even the
+    safer i.get(...)) or not a list of objects at all - used to take down
+    every document's listing, not just its own. Same defensive rule as
+    divisions.py, applied here too."""
+    issues = meta.get("validationIssues", [])
+    if not isinstance(issues, list):
+        return 0, 0
+    errors = warnings = 0
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        severity = issue.get("severity")
+        if severity == "error":
+            errors += 1
+        elif severity == "warning":
+            warnings += 1
+    return errors, warnings
+
+
+def _safe_json_loads(raw, default):
+    """json.loads() tolerating corrupted/absent stored JSON - a single bad
+    row's fields_json/review_reasons/non_product_reasons must not take down
+    every other row's serialization in the same list response."""
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def _row_id(row: dict) -> str:
@@ -36,14 +76,20 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
         "error": doc["error"],
     }
     if doc["status"] == "complete" and doc.get("meta_json"):
-        meta = json.loads(doc["meta_json"])
+        meta = _safe_json_loads(doc["meta_json"], {})
+        if not isinstance(meta, dict):
+            meta = {}
         stats = row_stats or {}
-        quality = meta.get("quality") or {}
+        quality = meta.get("quality")
+        if not isinstance(quality, dict):
+            quality = {}
+        errors, warnings = _validation_issue_counts(meta)
+        confidence = meta.get("confidence")
         base.update(
             {
                 "pages": doc["page_count"],
                 "documentType": meta.get("documentType"),
-                "confidence": round(meta["confidence"], 2) if meta.get("confidence") is not None else None,
+                "confidence": round(confidence, 2) if isinstance(confidence, Real) else None,
                 "status_document": meta.get("statusDocument"),
                 "reconciled": meta.get("reconciled"),
                 "qualityScore": quality.get("score"),
@@ -57,8 +103,8 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
                     "warnings": quality.get("warning_count", 0),
                     "masterMatched": quality.get("master_matched_rows", 0),
                 },
-                "errors": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "error"),
-                "warnings": sum(1 for i in meta.get("validationIssues", []) if i["severity"] == "warning"),
+                "errors": errors,
+                "warnings": warnings,
                 "rowCount": stats.get("rowCount", 0),
                 "departmentCount": stats.get("departmentCount", 0),
                 "reviewCount": stats.get("reviewCount", 0),
@@ -70,29 +116,43 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
     return base
 
 
+def _round_if_real(value):
+    """round() raises TypeError on a non-numeric value and doesn't raise
+    on inf/nan - guards against the former (a corrupted confidence stored
+    as e.g. a string), matching the "corrupted extracted field must not
+    take down the whole row's serialization" rule applied elsewhere in
+    this module."""
+    return round(value, 3) if isinstance(value, Real) else None
+
+
 def _field_json(field_name: str, fv_json: dict | None, row: dict) -> dict:
     fv_json = dict(fv_json or {})
     column = _EDITABLE_FIELD_COLUMN.get(field_name)
     current_value = row.get(column) if column else fv_json.get("value")
+    bbox = fv_json.get("bbox")
     return {
         "value": current_value,
         "raw": fv_json.get("raw_value"),
         "type": fv_json.get("type"),
         "source": fv_json.get("source"),
-        "confidence": round(fv_json["confidence"], 3) if fv_json.get("confidence") is not None else None,
+        "confidence": _round_if_real(fv_json.get("confidence")),
         "review": bool(fv_json.get("review_required")),
         "flags": fv_json.get("validation_flags", []),
-        "page": fv_json.get("bbox", {}).get("page"),
-        "bbox": fv_json.get("bbox"),
+        "page": bbox.get("page") if isinstance(bbox, dict) else None,
+        "bbox": bbox,
         "ocrRaw": fv_json.get("ocr_raw_value"),
-        "ocrConfidence": round(fv_json["ocr_confidence"], 3) if fv_json.get("ocr_confidence") is not None else None,
+        "ocrConfidence": _round_if_real(fv_json.get("ocr_confidence")),
         "corrected": current_value != fv_json.get("value") if column else False,
     }
 
 
 def product_row_json(row: dict, doc_filename: str) -> dict:
-    fields_raw = json.loads(row["fields_json"])
+    fields_raw = _safe_json_loads(row["fields_json"], {})
+    if not isinstance(fields_raw, dict):
+        fields_raw = {}
     fields = {name: _field_json(name, fv, row) for name, fv in fields_raw.items()}
+    review_reasons = _safe_json_loads(row.get("review_reasons"), [])
+    non_product_reasons = _safe_json_loads(row.get("non_product_reasons"), [])
     return {
         "rowId": _row_id(row),
         "docId": row["document_id"],
@@ -101,10 +161,10 @@ def product_row_json(row: dict, doc_filename: str) -> dict:
         "page": row["source_page"],
         "band": row["confidence_band"],
         "reviewRequired": bool(row["review_required"]),
-        "reviewReasons": json.loads(row.get("review_reasons") or "[]"),
+        "reviewReasons": review_reasons if isinstance(review_reasons, list) else [],
         "resolutionStatus": row["resolution_status"],
         "suspectedNonProduct": bool(row["suspected_non_product"]),
-        "nonProductReasons": json.loads(row.get("non_product_reasons") or "[]"),
+        "nonProductReasons": non_product_reasons if isinstance(non_product_reasons, list) else [],
         "fields": fields,
         # PR12: the version token a client echoes back on PATCH
         # (expectedUpdatedAt) so a second editor's concurrent save on the
@@ -118,7 +178,9 @@ def document_detail_json(doc: dict, product_rows: list[dict]) -> dict:
     detail = document_summary_json(doc, stats)
     if doc["status"] != "complete" or not doc.get("meta_json"):
         return detail
-    meta = json.loads(doc["meta_json"])
+    meta = _safe_json_loads(doc["meta_json"], {})
+    if not isinstance(meta, dict):
+        meta = {}
     detail["numericColumns"] = NUMERIC_COLUMNS
     detail["engineVersion"] = meta.get("engineVersion")
     detail["ocrEngineVersion"] = meta.get("ocrEngineVersion")
