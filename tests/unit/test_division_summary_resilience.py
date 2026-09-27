@@ -27,7 +27,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pdf_document_intelligence.api.divisions as divisions_module
-from pdf_document_intelligence.api.divisions import build_division_summary
+from pdf_document_intelligence.api.divisions import build_division_departments, build_division_summary
 from pdf_document_intelligence.api.rows import persist_document_result
 from pdf_document_intelligence.db.connection import open_independent_connection
 from pdf_document_intelligence.db.repository import Repository
@@ -116,7 +116,15 @@ def test_validation_issues_not_a_list_does_not_crash_the_summary(tmp_path):
     dict (so the isinstance guard above doesn't catch it), but its value
     isn't a list of objects. Iterating a string yields characters, and
     i.get(...) on a str raises AttributeError - a case the earlier
-    isinstance(meta, dict) fix didn't cover."""
+    isinstance(meta, dict) fix didn't cover.
+
+    _reconciliation() now delegates error-counting to
+    serialize._validation_issue_counts(), which tolerates this shape by
+    returning (0, 0) rather than raising - so "reconciled" (a separate,
+    perfectly readable field) is no longer needlessly wiped out to None
+    just because validationIssues alone was malformed, unlike the
+    all-or-nothing behavior a hand-rolled try/except around both fields
+    together used to produce."""
     import json
 
     repo = _repo(tmp_path)
@@ -127,7 +135,7 @@ def test_validation_issues_not_a_list_does_not_crash_the_summary(tmp_path):
 
     summary = build_division_summary(repo, "doc-1")
 
-    assert summary["reconciliation"] == {"status": None, "errors": 0}
+    assert summary["reconciliation"] == {"status": "PASSED", "errors": 0}
     assert summary["documentTotals"]["rowCount"] == 1
 
 
@@ -177,3 +185,41 @@ def test_a_row_that_fails_for_an_unforeseen_reason_is_skipped_not_crashed(tmp_pa
 
     assert summary["documentTotals"]["rowCount"] == 1
     assert summary["dataQuality"]["unprocessableRowCount"] == 1
+
+
+def test_department_drilldown_skips_a_row_that_fails_unexpectedly(tmp_path):
+    """Code review finding: build_division_departments() (the per-Division
+    drill-down endpoint) never received the per-row try/except
+    build_division_summary() got in PR #121 - a row that fails for any
+    reason used to 500 the whole drill-down even though the document's
+    own top-level summary degrades gracefully. Reproduced with a
+    corrupted (non-numeric) weight_qty value, since that's a real shape
+    this loop's `b[...] += val` can hit (SQLite's dynamic typing does not
+    guarantee a REAL-affinity column actually holds a float)."""
+    from pdf_document_intelligence.api.divisions import division_for_department
+
+    repo = _repo(tmp_path)
+    repo.create_document("doc-1", sha256="a", filename="doc1.pdf", file_size=1)
+    good_row = make_row(0, "BEVERAGE", "8850000000001", "ART1", "น้ำอัดลม", 10.0, 2, 4)
+    poison_row = make_row(1, "BEVERAGE", "8850000000002", "ART2", "ของเสีย", 1.0, 1, 1)
+    repo.set_document_complete("doc-1", 1, {"confidence": 0.97, "statusDocument": "AUTO_APPROVED", "reconciled": True})
+    persist_document_result(
+        "doc-1", make_result("doc-1", "doc1.pdf", [("BEVERAGE", [good_row, poison_row])]), repo
+    )
+    repo._conn.execute(
+        "UPDATE product_rows SET weight_qty = 'not-a-number' WHERE document_id = ? AND row_index = 1",
+        ("doc-1",),
+    )
+    repo._conn.commit()
+
+    division_code, _name = division_for_department("BEVERAGE")
+    result = build_division_departments(repo, "doc-1", division_code)
+
+    # The call itself must not raise - that's the actual fix. rowCount may
+    # still count the poisoned row (incremented before its own weight_qty
+    # accumulation failed) - the same acceptable secondary-counter
+    # imprecision build_division_summary()'s equivalent fix already
+    # accepts for a row that fails partway through. What matters is that
+    # the corrupted value never reached the running weight total.
+    assert result["departments"][0]["rowCount"] == 2
+    assert result["departments"][0]["weight"] == 10.0

@@ -22,6 +22,8 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 
+from pdf_document_intelligence.api.json_safety import safe_json_loads
+from pdf_document_intelligence.api.serialize import _validation_issue_counts
 from pdf_document_intelligence.db.repository import Repository
 from pdf_document_intelligence.templates.department_groups import (
     division_for_department,
@@ -65,41 +67,27 @@ def _active_document(repo: Repository, doc_id: str) -> dict:
 
 
 def _reconciliation(doc: dict) -> dict:
-    import json
-
+    # Code review finding: this used to hand-roll its own json.loads()
+    # try/except and its own validationIssues-by-severity loop - a
+    # duplicate of exactly the logic json_safety.safe_json_loads() and
+    # serialize._validation_issue_counts() exist to share (both were
+    # written after three separate corrupted-meta_json shapes were found
+    # live: malformed JSON text, valid-JSON-but-not-an-object, and
+    # validationIssues not a list of objects). Reusing them here instead
+    # of a fourth hand-rolled copy is what "never duplicate this fix
+    # again" (json_safety.py's own docstring) actually means in practice.
     if doc["status"] != "complete" or not doc.get("meta_json"):
         return {"status": None, "errors": 0}
-    try:
-        meta = json.loads(doc["meta_json"])
-    except (TypeError, ValueError):
-        # A corrupted/truncated meta_json must not 500 the whole Dashboard
-        # summary for every other document too - the Division rollup below
-        # doesn't need this field at all, only the reconciliation badge does.
-        return {"status": None, "errors": 0}
+    # None as the fallback (not {}) matters: a genuine parse failure must
+    # produce status=None ("unknown - couldn't even read the metadata"),
+    # not fall through and compute a real status from an empty dict
+    # (which would wrongly read as "FAILED"). json.loads("null") also
+    # legitimately returns None - conveniently wanting the same outcome.
+    meta = safe_json_loads(doc["meta_json"], None)
     if not isinstance(meta, dict):
-        # Live report (Console, diagnosticId ERR-F24754DF): meta_json can be
-        # syntactically valid JSON that isn't an object at all - e.g. "null"
-        # - which json.loads() happily returns (as None) with no exception
-        # the except above would ever see. meta.get(...) below then raises
-        # AttributeError, which isn't a TypeError/ValueError either - same
-        # "must not 500 the whole document" rule as a truly malformed string.
         return {"status": None, "errors": 0}
-    try:
-        # A third shape of corrupted meta_json (live reports have now shown
-        # three distinct ones): "validationIssues" present but not a list of
-        # objects - e.g. a string, a number, or a list of non-dict items.
-        # meta is a dict at this point, but nothing upstream of this function
-        # guarantees what's *inside* it - iterating a non-list raises
-        # TypeError, and i.get(...) on a non-dict item raises AttributeError.
-        # Neither is worth chasing shape-by-shape again: catch both here so
-        # any future variant of "meta_json parses but its insides are
-        # unexpected" degrades to the same neutral badge instead of a 500.
-        return {
-            "status": "PASSED" if meta.get("reconciled") else "FAILED",
-            "errors": sum(1 for i in meta.get("validationIssues", []) if i.get("severity") == "error"),
-        }
-    except (AttributeError, TypeError):
-        return {"status": None, "errors": 0}
+    errors, _warnings = _validation_issue_counts(meta)
+    return {"status": "PASSED" if meta.get("reconciled") else "FAILED", "errors": errors}
 
 
 def build_division_summary(repo: Repository, doc_id: str) -> dict:
@@ -282,17 +270,28 @@ def build_division_departments(repo: Repository, doc_id: str, division_code: str
         division = division_for_department(row["department"])
         if division is None or division[0] != division_code:
             continue
-        b = dept_buckets[row["department"]]
-        b["rowCount"] += 1
-        if row["review_required"]:
-            b["reviewCount"] += 1
-        for col in NUMERIC_COLUMNS:
-            val = row.get(col)
-            if val is not None:
-                b[{"weight_qty": "weight", "pu_qty": "puQty", "sku_qty": "skuQty"}[col]] += val
-        row_amount = _decimal(row.get("amount"))
-        if row_amount is not None:
-            b["amount"] += row_amount
+        # Code review finding: this loop never got the per-row try/except
+        # build_division_summary() above received in PR #121 - a
+        # corrupted row could still 500 this Division's department
+        # drill-down even though the document's top-level summary now
+        # degrades gracefully. Same structural fix, same reasoning.
+        try:
+            b = dept_buckets[row["department"]]
+            b["rowCount"] += 1
+            if row["review_required"]:
+                b["reviewCount"] += 1
+            for col in NUMERIC_COLUMNS:
+                val = row.get(col)
+                if val is not None:
+                    b[{"weight_qty": "weight", "pu_qty": "puQty", "sku_qty": "skuQty"}[col]] += val
+            row_amount = _decimal(row.get("amount"))
+            if row_amount is not None:
+                b["amount"] += row_amount
+        except Exception:
+            _logger.exception(
+                "build_division_departments: row %s in document %s could not be processed - skipping it",
+                row.get("id"), doc_id,
+            )
 
     departments = [
         {

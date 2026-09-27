@@ -9,11 +9,14 @@ corrected value with the original evidence still attached underneath it.
 """
 from __future__ import annotations
 
+import logging
 from numbers import Real
 
 from pdf_document_intelligence.api.json_safety import safe_json_loads as _safe_json_loads
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN as _EDITABLE_FIELD_COLUMN
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
+
+_logger = logging.getLogger("pdf_document_intelligence")
 
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)
 IDENTITY_COLUMN = "article"
@@ -184,7 +187,22 @@ def document_detail_json(doc: dict, product_rows: list[dict]) -> dict:
     detail["templateVersion"] = meta.get("templateVersion")
     detail["processingLog"] = meta.get("processingLog", [])
     detail["validationIssues"] = meta.get("validationIssues", [])
-    detail["products"] = [product_row_json(r, doc["filename"]) for r in product_rows]
+    # Code review finding: this list comprehension had no per-row
+    # isolation, unlike list_all_products()/list_documents() (app.py) -
+    # one row's corrupted fields_json would 500 this document's whole
+    # detail view (and GET /api/export.xlsx / .../expiry-dashboard.csv,
+    # which both call this for every document in one request), the same
+    # wide-blast-radius bug class already fixed elsewhere this session.
+    products = []
+    for row in product_rows:
+        try:
+            products.append(product_row_json(row, doc["filename"]))
+        except Exception:
+            _logger.exception(
+                "document_detail_json: row %s in document %s could not be serialized - skipping it",
+                row.get("id"), doc.get("id"),
+            )
+    detail["products"] = products
     return detail
 
 

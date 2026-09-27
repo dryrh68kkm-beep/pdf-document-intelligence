@@ -10,7 +10,7 @@ DB needed) - fast and deterministic.
 """
 from __future__ import annotations
 
-from pdf_document_intelligence.api.serialize import document_summary_json, product_row_json
+from pdf_document_intelligence.api.serialize import document_detail_json, document_summary_json, product_row_json
 
 
 def _row(**overrides) -> dict:
@@ -138,3 +138,31 @@ def test_document_summary_json_tolerates_quality_not_a_dict():
     doc = _doc(meta_json=json.dumps({"quality": "not-a-dict"}))
     summary = document_summary_json(doc)
     assert summary["qualityScore"] is None
+
+
+def test_document_detail_json_skips_a_row_that_fails_to_serialize(monkeypatch):
+    """Code review finding: document_detail_json()'s products list
+    comprehension had no per-row isolation, unlike list_all_products()/
+    list_documents() (app.py) - a single corrupted row used to 500
+    GET /api/documents/{id} and the two export endpoints that call this
+    for every document in one request. product_row_json() itself now
+    tolerates every known corrupted-JSON shape (see the tests above), so
+    this forces an unforeseen failure via monkeypatch to prove the
+    wrapping try/except itself, not one more already-fixed shape."""
+    import pdf_document_intelligence.api.serialize as serialize_module
+
+    doc = _doc(meta_json="{}")
+    good_row = _row(id="row-good", row_index=0)
+    bad_row = _row(id="row-bad", row_index=1)
+
+    real_product_row_json = serialize_module.product_row_json
+
+    def _flaky(row, doc_filename):
+        if row["id"] == "row-bad":
+            raise RuntimeError("simulated unforeseen corruption")
+        return real_product_row_json(row, doc_filename)
+
+    monkeypatch.setattr(serialize_module, "product_row_json", _flaky)
+    detail = document_detail_json(doc, [good_row, bad_row])
+
+    assert [p["rowId"] for p in detail["products"]] == ["row-good"]
