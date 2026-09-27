@@ -19,6 +19,38 @@ function inDocumentDateRange(documentDate, dateFrom, dateTo) {
   return true;
 }
 
+// Incremental refresh (user request: the Dashboard re-fetched every
+// document/row on every refresh, which got slow as the document count
+// grew): upserts `delta` (a since-cursor response, possibly empty) into
+// `existing` by id, dropping any entry whose deletedAt came back set.
+// Always returns a NEW array - even when nothing changed - never mutates
+// `existing` in place, so state.js's own reference-equality caches (see
+// _dateScopedSelections() below) still invalidate correctly whenever the
+// identity of `documents`/`products` actually changes.
+function mergeById(existing, delta, idKey) {
+  if (!delta.length) return existing;
+  const byId = new Map(existing.map((item) => [item[idKey], item]));
+  for (const item of delta) {
+    if (item.deletedAt) {
+      byId.delete(item[idKey]);
+    } else {
+      byId.set(item[idKey], item);
+    }
+  }
+  return [...byId.values()];
+}
+
+// The next `since` cursor to send: the highest `updatedAt` seen among
+// `delta`, or unchanged if `delta` was empty (nothing happened, so the
+// last cursor is still exactly correct to poll from again).
+function maxUpdatedAt(delta, current) {
+  let max = current;
+  for (const item of delta) {
+    if (item.updatedAt && (!max || item.updatedAt > max)) max = item.updatedAt;
+  }
+  return max;
+}
+
 // `items` covers only the documents whose per-document Division summary
 // fetch actually succeeded - a document in the selected date range whose
 // summary errored has no per-division/amount breakdown to contribute here,
@@ -206,6 +238,11 @@ class Store {
     };
     this._refreshAllInFlight = null;
     this._refreshAllQueued = false;
+    // Incremental refresh cursors (see mergeById()/maxUpdatedAt() above) -
+    // null until the first _doRefreshAll() completes a full fetch, reset
+    // only by a hard page reload (a fresh Store instance), never mid-session.
+    this._lastDocSyncedAt = null;
+    this._lastProductSyncedAt = null;
   }
 
   subscribe(fn) {
@@ -327,10 +364,19 @@ class Store {
   }
 
   async _doRefreshAll() {
-    const [documents, dashboard, rawProducts, departmentDivisions, expiryLinkSummary] = await Promise.all([
-      api.listDocuments(),
+    // Incremental refresh (user request: re-fetching every document/row on
+    // every refresh got slow as the document count grew): the first call
+    // in this tab's lifetime (no cursor yet) fetches the full active list,
+    // exactly as before. Every call after that sends the last cursor and
+    // gets back only what changed - api.js's `since` param, backed by
+    // Repository.list_documents_since()/list_product_rows_since() - and
+    // merges it into the existing arrays instead of replacing them.
+    const docSince = this._lastDocSyncedAt;
+    const productSince = this._lastProductSyncedAt;
+    const [docDelta, dashboard, productDelta, departmentDivisions, expiryLinkSummary] = await Promise.all([
+      api.listDocuments(docSince),
       api.dashboardState(),
-      api.allProducts(),
+      api.allProducts(productSince),
       api.getDepartmentDivisions(),
       // Never lets a failure here block the rest of the Dashboard - this
       // link is inherently optional (depends on another app being present
@@ -338,16 +384,25 @@ class Store {
       // failing refreshAll() the way a core data fetch must.
       api.expiryLinkSummary().catch(() => ({ configured: false, available: false })),
     ]);
+    const documents = docSince ? mergeById(this.state.documents, docDelta, "id") : docDelta;
+    this._lastDocSyncedAt = maxUpdatedAt(docDelta, docSince);
+
     // Each product row's own document is looked up once here (rather than
     // per-render in every view) so any view can show "which document date
     // did this row come in on" without its own documents/products join -
     // the same documentDate field Dashboard/Products/Documents already
     // scope by (see inDocumentDateRange() above), just carried onto the row.
     const documentDateById = new Map(documents.map((doc) => [doc.id, doc.documentDate]));
-    const products = rawProducts.map((p) => ({
+    const mergedRawProducts = productSince ? mergeById(this.state.products, productDelta, "rowId") : productDelta;
+    this._lastProductSyncedAt = maxUpdatedAt(productDelta, productSince);
+    const products = mergedRawProducts.map((p) => ({
       ...p,
       documentDate: documentDateById.get(p.docId) ?? null,
-      _search: buildSearchIndex(p),
+      // Skip recomputing the search index for a row this refresh didn't
+      // touch (it already has one, carried over by mergeById()) - only a
+      // genuinely new/changed row (from `productDelta`, which never
+      // carries `_search`) needs it built.
+      _search: p._search ?? buildSearchIndex(p),
     }));
     const previousDocumentId = this.state.currentDocumentId;
     const dateFilter = this.state.dashboardDateFilter;

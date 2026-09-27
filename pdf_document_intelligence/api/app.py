@@ -453,13 +453,22 @@ async def upload_document(file: UploadFile, force: bool = False):
 
 
 @app.get("/api/documents")
-def list_documents():
-    docs = store.list()
+def list_documents(since: str | None = Query(default=None)):
+    # Incremental refresh (user request: the Dashboard re-fetched every
+    # document on every refresh, which got slow as the document count
+    # grew) - `since` is a previous response's own `updatedAt` cursor
+    # (the highest one seen); only documents that changed after it come
+    # back, including a just-deleted one (`deletedAt` set) so the caller
+    # can prune it locally. Omitting `since` keeps the exact full-active-
+    # list behavior every other caller (Documents/Products/Review pages,
+    # a fresh page load) already relies on.
+    docs = store.repo.list_documents_since(since) if since else store.list()
     result = []
     for d in docs:
         try:
-            rows = _doc_products(d["id"]) if d["status"] == "complete" else []
-            stats = _row_stats(rows) if d["status"] == "complete" else None
+            is_active_complete = d["status"] == "complete" and d.get("deleted_at") is None
+            rows = _doc_products(d["id"]) if is_active_complete else []
+            stats = _row_stats(rows) if is_active_complete else None
             result.append(document_summary_json(d, stats))
         except Exception:
             # Same last-resort net as list_all_products() above, for the
@@ -555,9 +564,18 @@ def delete_document(doc_id: str):
 
 
 @app.get("/api/products")
-def list_all_products():
-    docs = {d["id"]: d for d in store.list()}
-    rows = store.repo.list_product_rows()
+def list_all_products(since: str | None = Query(default=None)):
+    # Same incremental-refresh purpose as list_documents() above - see its
+    # own comment. A row belonging to a since-deleted document must still
+    # come back here (with its own `deletedAt`) so the caller can prune it,
+    # so filenames are looked up against *every* document (include_deleted),
+    # not just the active list the full/non-incremental path below uses.
+    if since:
+        docs = {d["id"]: d for d in store.list(include_deleted=True)}
+        rows = store.repo.list_product_rows_since(since)
+    else:
+        docs = {d["id"]: d for d in store.list()}
+        rows = store.repo.list_product_rows()
     results = []
     for row in rows:
         doc = docs.get(row["document_id"])

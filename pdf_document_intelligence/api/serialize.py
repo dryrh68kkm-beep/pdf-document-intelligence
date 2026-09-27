@@ -68,6 +68,12 @@ def document_summary_json(doc: dict, row_stats: dict | None = None) -> dict:
         "filename": doc["filename"],
         "status": doc["status"],
         "uploadedAt": doc["uploaded_at"],
+        # Used by the frontend's incremental refresh as its next "since"
+        # cursor (see Repository.list_documents_since()'s docstring) and
+        # to detect a just-deleted document to prune locally - not shown
+        # in the UI.
+        "updatedAt": doc.get("updated_at"),
+        "deletedAt": doc.get("deleted_at"),
         "progress": {
             "stage": doc["progress_stage"],
             "current": doc["progress_current"],
@@ -170,6 +176,9 @@ def product_row_json(row: dict, doc_filename: str) -> dict:
         # (expectedUpdatedAt) so a second editor's concurrent save on the
         # same row is rejected instead of silently overwriting the first.
         "updatedAt": row["updated_at"],
+        # Lets an incremental refresh (list_product_rows_since()) detect a
+        # replaced/deleted row to prune locally - not shown in the UI.
+        "deletedAt": row.get("deleted_at"),
     }
 
 
