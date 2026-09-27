@@ -9,9 +9,9 @@ corrected value with the original evidence still attached underneath it.
 """
 from __future__ import annotations
 
-import json
 from numbers import Real
 
+from pdf_document_intelligence.api.json_safety import safe_json_loads as _safe_json_loads
 from pdf_document_intelligence.db.field_columns import FIELD_TO_COLUMN as _EDITABLE_FIELD_COLUMN
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
 
@@ -44,18 +44,6 @@ def _validation_issue_counts(meta: dict) -> tuple[int, int]:
         elif severity == "warning":
             warnings += 1
     return errors, warnings
-
-
-def _safe_json_loads(raw, default):
-    """json.loads() tolerating corrupted/absent stored JSON - a single bad
-    row's fields_json/review_reasons/non_product_reasons must not take down
-    every other row's serialization in the same list response."""
-    if not raw:
-        return default
-    try:
-        return json.loads(raw)
-    except (TypeError, ValueError):
-        return default
 
 
 def _row_id(row: dict) -> str:
