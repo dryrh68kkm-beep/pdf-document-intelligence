@@ -16,6 +16,7 @@ never has to reason about double-counting itself.
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from decimal import Decimal
 
@@ -27,6 +28,8 @@ from pdf_document_intelligence.templates.department_groups import (
     get_default_divisions,
 )
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
+
+_logger = logging.getLogger("pdf_document_intelligence")
 
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)  # weight_qty, pu_qty, sku_qty
 
@@ -125,74 +128,93 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
     resolved_ocr = 0
     unresolved = 0
     clean_rows = 0
+    unprocessable_row_count = 0
 
     for row in rows:
         if row["suspected_non_product"]:
             continue
 
-        doc_row_count += 1
-        if row["review_required"]:
-            review_required += 1
-        status = row["resolution_status"]
-        if status == "CORRECTED":
-            corrected += 1
-        elif status in ("OFFICIAL_MASTER", "LOCAL_MASTER"):
-            resolved_master += 1
-        elif status == "OCR":
-            resolved_ocr += 1
-        elif status == "MANUAL_REVIEW":
-            unresolved += 1
-        if not row["review_required"] and status != "MANUAL_REVIEW":
-            clean_rows += 1
+        # Live reports: three specific corrupted-field shapes (non-finite
+        # amount, meta_json variants - none of which live inside this loop
+        # at all) each took the whole document's summary down in turn, and
+        # each fix only closed the one shape actually seen. Rather than
+        # keep discovering a 4th/5th/Nth shape one incident at a time, this
+        # try/except is the structural fix: whatever about THIS row turns
+        # out to be unprocessable - any field, any reason - skips only this
+        # row (counted and logged, per this module's "never hide a gap"
+        # rule via dataQuality.unprocessableRowCount) instead of failing
+        # the other however-many rows' worth of summary along with it.
+        try:
+            doc_row_count += 1
+            if row["review_required"]:
+                review_required += 1
+            status = row["resolution_status"]
+            if status == "CORRECTED":
+                corrected += 1
+            elif status in ("OFFICIAL_MASTER", "LOCAL_MASTER"):
+                resolved_master += 1
+            elif status == "OCR":
+                resolved_ocr += 1
+            elif status == "MANUAL_REVIEW":
+                unresolved += 1
+            if not row["review_required"] and status != "MANUAL_REVIEW":
+                clean_rows += 1
 
-        for col in NUMERIC_COLUMNS:
-            val = row.get(col)
-            if val is not None:
-                doc_totals[col] += val
-        row_amount = _decimal(row.get("amount"))
-        if row_amount is not None:
-            amount_available = True
-            doc_amount += row_amount
-
-        division = division_for_department(row["department"])
-        if division is None:
-            unmapped_departments.add(row["department"])
-            unmapped_row_count += 1
+            for col in NUMERIC_COLUMNS:
+                val = row.get(col)
+                if val is not None:
+                    doc_totals[col] += val
+            row_amount = _decimal(row.get("amount"))
             if row_amount is not None:
-                unmapped_amount += row_amount
-            continue
+                amount_available = True
+                doc_amount += row_amount
 
-        code, _ = division
-        bucket = buckets.get(code)
-        if bucket is None:
-            # Defensive: get_default_divisions() (which builds `buckets`)
-            # and division_for_department() (via
-            # get_default_department_to_division_code()) are both
-            # independent lru_cache(maxsize=1) readers over the same
-            # on-disk master snapshot, populated lazily on first call -
-            # every code division_for_department() can return is always
-            # present in a freshly-built `buckets` in normal operation
-            # (_clear_catalog_caches() always clears all of them together
-            # on a Product Master reimport), but a code appearing in one
-            # and not the other must still never turn one unusual row into
-            # a 500 that fails this document's *entire* Division summary -
-            # fold it into "unmapped" instead, the same bucket a department
-            # with no division mapping at all already uses.
-            unmapped_departments.add(row["department"])
-            unmapped_row_count += 1
+            division = division_for_department(row["department"])
+            if division is None:
+                unmapped_departments.add(row["department"])
+                unmapped_row_count += 1
+                if row_amount is not None:
+                    unmapped_amount += row_amount
+                continue
+
+            code, _ = division
+            bucket = buckets.get(code)
+            if bucket is None:
+                # Defensive: get_default_divisions() (which builds `buckets`)
+                # and division_for_department() (via
+                # get_default_department_to_division_code()) are both
+                # independent lru_cache(maxsize=1) readers over the same
+                # on-disk master snapshot, populated lazily on first call -
+                # every code division_for_department() can return is always
+                # present in a freshly-built `buckets` in normal operation
+                # (_clear_catalog_caches() always clears all of them together
+                # on a Product Master reimport), but a code appearing in one
+                # and not the other must still never turn one unusual row into
+                # a 500 that fails this document's *entire* Division summary -
+                # fold it into "unmapped" instead, the same bucket a department
+                # with no division mapping at all already uses.
+                unmapped_departments.add(row["department"])
+                unmapped_row_count += 1
+                if row_amount is not None:
+                    unmapped_amount += row_amount
+                continue
+            bucket["rowCount"] += 1
+            bucket["departments"].add(row["department"])
+            if row["review_required"]:
+                bucket["reviewCount"] += 1
+            for col in NUMERIC_COLUMNS:
+                val = row.get(col)
+                if val is not None:
+                    bucket[{"weight_qty": "weight", "pu_qty": "puQty", "sku_qty": "skuQty"}[col]] += val
             if row_amount is not None:
-                unmapped_amount += row_amount
-            continue
-        bucket["rowCount"] += 1
-        bucket["departments"].add(row["department"])
-        if row["review_required"]:
-            bucket["reviewCount"] += 1
-        for col in NUMERIC_COLUMNS:
-            val = row.get(col)
-            if val is not None:
-                bucket[{"weight_qty": "weight", "pu_qty": "puQty", "sku_qty": "skuQty"}[col]] += val
-        if row_amount is not None:
-            bucket["amount"] += row_amount
+                bucket["amount"] += row_amount
+        except Exception:
+            unprocessable_row_count += 1
+            doc_row_count -= 1  # this row never actually completed processing
+            _logger.exception(
+                "build_division_summary: row %s in document %s could not be processed - skipping it",
+                row.get("id"), doc_id,
+            )
 
     division_list = []
     for code, name in divisions:
@@ -233,6 +255,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             "unmappedDepartments": sorted(unmapped_departments),
             "unmappedRowCount": unmapped_row_count,
             "unmappedAmount": float(unmapped_amount.quantize(Decimal("0.01"))),
+            "unprocessableRowCount": unprocessable_row_count,
         },
         "reconciliation": _reconciliation(doc),
     }
