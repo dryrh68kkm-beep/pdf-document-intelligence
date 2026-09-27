@@ -317,7 +317,21 @@ class Store {
   }
 
   async refreshDocuments({ silent = false } = {}) {
-    const documents = await api.listDocuments();
+    // Poll/upload refreshes must never re-download the whole document
+    // history after the initial page bootstrap. Use the same updatedAt
+    // cursor as refreshAll(): the server returns only newly-created or
+    // changed documents (progress/status/delete), then merge that delta
+    // into the in-memory list already displayed by the tab.
+    //
+    // A fresh tab still performs one full bootstrap in _doRefreshAll() so
+    // historical data is available to the UI. From that point onward,
+    // dropping a new PDF into Add Files or data/inbox only transfers the
+    // new/changed document records instead of every old document again.
+    const since = this._lastDocSyncedAt;
+    const delta = await api.listDocuments(since);
+    const documents = since ? mergeById(this.state.documents, delta, "id") : delta;
+    this._lastDocSyncedAt = maxUpdatedAt(delta, since);
+
     // A deleted/reprocessing document must not keep a stale cached Division
     // summary, but completed documents that did not change can safely retain
     // theirs. This keeps the existing Dashboard path while avoiding repeated

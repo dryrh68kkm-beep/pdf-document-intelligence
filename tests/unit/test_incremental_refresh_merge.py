@@ -107,3 +107,56 @@ def test_max_updated_at_keeps_current_cursor_when_delta_is_empty():
 def test_max_updated_at_never_goes_backwards():
     delta = [{"updatedAt": "2025-01-01T00:00:00+00:00"}]  # older than the current cursor
     assert _run("maxUpdatedAt", delta, "2026-01-01T00:00:00+00:00") == "2026-01-01T00:00:00+00:00"
+
+
+
+def _method_source(source: str, signature: str) -> str:
+    start = source.index(signature)
+    paren_start = source.index("(", start)
+    paren_depth = 0
+    i = paren_start
+    while True:
+        if source[i] == "(":
+            paren_depth += 1
+        elif source[i] == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        i += 1
+
+    brace_start = source.index("{", i)
+    depth = 0
+    i = brace_start
+    while True:
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : i + 1]
+        i += 1
+
+
+def test_refresh_documents_uses_the_incremental_cursor_after_bootstrap():
+    """Regression for the live UI poll/upload path: once _doRefreshAll()
+    has established the cursor, refreshDocuments must ask only for the
+    delta instead of re-fetching every historical document every 1.5/5s
+    or every time a new PDF is dropped."""
+    source = STATE.read_text(encoding="utf-8")
+    method = _method_source(source, "async refreshDocuments(")
+
+    assert "const since = this._lastDocSyncedAt" in method
+    assert "api.listDocuments(since)" in method
+    assert 'mergeById(this.state.documents, delta, "id")' in method
+    assert "this._lastDocSyncedAt = maxUpdatedAt(delta, since)" in method
+    assert "api.listDocuments()" not in method
+
+
+def test_poll_and_upload_paths_reuse_refresh_documents_delta_sync():
+    """Both ways a user introduces a new file should share the same
+    incremental document sync rather than having a hidden full-list path."""
+    main = (ROOT / "frontend" / "app" / "main.js").read_text(encoding="utf-8")
+
+    # Manual Add Files calls this immediately after POST; pollLoop calls it
+    # for auto-inbox files and for progress transitions.
+    assert main.count("store.refreshDocuments({ silent: true })") >= 3
