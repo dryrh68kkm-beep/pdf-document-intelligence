@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pdf_document_intelligence.api.divisions as divisions_module
 from pdf_document_intelligence.api.divisions import build_division_summary
 from pdf_document_intelligence.api.rows import persist_document_result
 from pdf_document_intelligence.db.connection import open_independent_connection
@@ -143,3 +144,36 @@ def test_validation_issue_missing_severity_key_does_not_crash_the_summary(tmp_pa
 
     assert summary["reconciliation"]["status"] == "PASSED"
     assert summary["reconciliation"]["errors"] == 0
+
+
+def test_a_row_that_fails_for_an_unforeseen_reason_is_skipped_not_crashed(tmp_path):
+    """Structural fix (not one more shape-specific patch): whatever about a
+    row turns out to be unprocessable - something other than the three
+    specific corrupted-field shapes already fixed above - must skip only
+    that row, never the rest of the document's summary. Proven here with
+    an arbitrary/unforeseen failure (division_for_department raising for
+    one specific row) rather than another known corruption shape, since
+    the whole point of this fix is to stop needing a new test per shape."""
+    repo = _repo(tmp_path)
+    repo.create_document("doc-1", sha256="a", filename="doc1.pdf", file_size=1)
+    good_row = make_row(0, "BAKERY", "8850000000001", "ART1", "ขนมปัง A", 10.0, 2, 4)
+    poison_row = make_row(1, "BAKERY", "8850000000002", "ART2", "ของเสีย", 1.0, 1, 1)
+    repo.set_document_complete("doc-1", 1, {"confidence": 0.97, "statusDocument": "AUTO_APPROVED", "reconciled": True})
+    persist_document_result(
+        "doc-1", make_result("doc-1", "doc1.pdf", [("BAKERY", [good_row, poison_row])]), repo
+    )
+
+    real_division_for_department = divisions_module.division_for_department
+    call_count = {"n": 0}
+
+    def _flaky(department):
+        call_count["n"] += 1
+        if call_count["n"] == 2:  # the second row processed
+            raise RuntimeError("simulated unforeseen corruption")
+        return real_division_for_department(department)
+
+    with patch("pdf_document_intelligence.api.divisions.division_for_department", side_effect=_flaky):
+        summary = build_division_summary(repo, "doc-1")
+
+    assert summary["documentTotals"]["rowCount"] == 1
+    assert summary["dataQuality"]["unprocessableRowCount"] == 1
