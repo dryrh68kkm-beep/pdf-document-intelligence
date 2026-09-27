@@ -11,11 +11,15 @@ them) - never fabricates a total that isn't backed by extracted evidence.
 """
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
+from pdf_document_intelligence.api.json_safety import safe_json_loads
 from pdf_document_intelligence.db.repository import Repository
 from pdf_document_intelligence.templates.department_groups import major_department_for
 from pdf_document_intelligence.templates.packing_list_bigc import RECONCILIATION_COLUMNS
+
+_logger = logging.getLogger("pdf_document_intelligence")
 
 NUMERIC_COLUMNS = list(RECONCILIATION_COLUMNS)
 NUMERIC_LABELS = {"weight_qty": "น้ำหนักรวม (กก.)", "pu_qty": "PU รวม", "sku_qty": "SKU qty รวม"}
@@ -46,58 +50,79 @@ def build_dashboard_state(repo: Repository) -> dict:
     doc_filename = {d["id"]: d["filename"] for d in docs}
 
     for row in all_rows:
-        if row["suspected_non_product"]:
-            dept_non_product[row["department"]] += 1
-            non_product_items.append(
-                {
-                    "rowId": row["id"], "docId": row["document_id"],
-                    "docFilename": doc_filename.get(row["document_id"]),
-                    "department": row["department"], "name": row["resolved_product_name"],
-                    "reasons": _json_list(row.get("non_product_reasons")), "page": row["source_page"],
-                }
-            )
-            continue
+        # Live report: GET /api/state 500ing broke the entire initial page
+        # load (not just one document's summary) - this loop has no
+        # per-row isolation, and it aggregates over every row in the whole
+        # app in one pass, so one row's corrupted stored data (the same
+        # class of bug already fixed in divisions.py/serialize.py) took
+        # every other document's dashboard numbers down with it too. Same
+        # "one bad row must never crash the whole batch" structural fix.
+        try:
+            if row["suspected_non_product"]:
+                dept_non_product[row["department"]] += 1
+                non_product_items.append(
+                    {
+                        "rowId": row["id"], "docId": row["document_id"],
+                        "docFilename": doc_filename.get(row["document_id"]),
+                        "department": row["department"], "name": row["resolved_product_name"],
+                        "reasons": _json_list(row.get("non_product_reasons")), "page": row["source_page"],
+                    }
+                )
+                continue
 
-        total_rows += 1
-        dept_rows[row["department"]] += 1
-        resolution_counts[row["resolution_status"]] += 1
-        identity = row["identity_code"]
-        if identity:
-            dept_skus[row["department"]].add(identity)
+            total_rows += 1
+            dept_rows[row["department"]] += 1
+            resolution_counts[row["resolution_status"]] += 1
+            identity = row["identity_code"]
+            if identity:
+                dept_skus[row["department"]].add(identity)
 
-        if row["review_required"]:
-            dept_review[row["department"]] += 1
-            review_items.append(
-                {
-                    "rowId": row["id"], "docId": row["document_id"],
-                    "docFilename": doc_filename.get(row["document_id"]),
-                    "department": row["department"], "name": row["resolved_product_name"],
-                    "band": row["confidence_band"], "flags": _json_list(row.get("review_reasons")),
-                    "page": row["source_page"], "priority": _review_priority(row),
-                }
-            )
+            if row["review_required"]:
+                dept_review[row["department"]] += 1
+                review_items.append(
+                    {
+                        "rowId": row["id"], "docId": row["document_id"],
+                        "docFilename": doc_filename.get(row["document_id"]),
+                        "department": row["department"], "name": row["resolved_product_name"],
+                        "band": row["confidence_band"], "flags": _json_list(row.get("review_reasons")),
+                        "page": row["source_page"], "priority": _review_priority(row),
+                    }
+                )
 
-        for col in NUMERIC_COLUMNS:
-            val = row.get(col)
-            if val is not None:
-                dept_totals[row["department"]][col] += val
-                grand_totals[col] += val
+            for col in NUMERIC_COLUMNS:
+                val = row.get(col)
+                if val is not None:
+                    dept_totals[row["department"]][col] += val
+                    grand_totals[col] += val
+        except Exception:
+            # rowCount/dept totals may be off by one for this specific row
+            # if the failure happened partway through updating them - an
+            # acceptable tradeoff for a row whose own data is already
+            # compromised, same as divisions.py's equivalent per-row net.
+            _logger.exception("build_dashboard_state: row %s could not be processed - skipping it", row.get("id"))
 
     review_items.sort(key=lambda i: i["priority"])
 
     all_dept_names = set(dept_rows) | set(dept_non_product)
-    departments = [
-        {
-            "name": name,
-            "majorDepartment": major_department_for(name),
-            "skuCount": len(dept_skus[name]),
-            "rowCount": dept_rows[name],
-            "reviewCount": dept_review[name],
-            "nonProductCount": dept_non_product[name],
-            "totals": {c: round(v, 3) for c, v in dept_totals[name].items()},
-        }
-        for name in all_dept_names
-    ]
+    departments = []
+    for name in all_dept_names:
+        try:
+            departments.append(
+                {
+                    "name": name,
+                    "majorDepartment": major_department_for(name),
+                    "skuCount": len(dept_skus[name]),
+                    "rowCount": dept_rows[name],
+                    "reviewCount": dept_review[name],
+                    "nonProductCount": dept_non_product[name],
+                    "totals": {c: round(v, 3) for c, v in dept_totals[name].items()},
+                }
+            )
+        except Exception:
+            # Same per-item isolation as the row loop above, one level up:
+            # one unusual department name must not take every other
+            # department's totals down with it.
+            _logger.exception("build_dashboard_state: department %r could not be summarized - skipping it", name)
     departments.sort(key=lambda d: d["totals"].get("sku_qty", 0), reverse=True)
 
     resolved_total = sum(resolution_counts.values()) or 1
@@ -142,13 +167,15 @@ _REASON_PRIORITY = {
 
 def _review_priority(row: dict) -> int:
     reasons = _json_list(row.get("review_reasons"))
-    ranks = [_REASON_PRIORITY.get(r, 4) for r in reasons]
+    # A reason must be hashable to use as a dict key - a corrupted stored
+    # value (a dict/list instead of a string) would otherwise raise
+    # TypeError here, same corruption class this module already guards
+    # for elsewhere. Just treat an unranked/unhashable reason as the
+    # lowest priority (4) rather than losing this row's ranking entirely.
+    ranks = [_REASON_PRIORITY.get(r, 4) if isinstance(r, str) else 4 for r in reasons]
     return min(ranks, default=4)
 
 
 def _json_list(raw) -> list:
-    import json
-
-    if not raw:
-        return []
-    return json.loads(raw) if isinstance(raw, str) else raw
+    parsed = safe_json_loads(raw, []) if isinstance(raw, str) else (raw or [])
+    return parsed if isinstance(parsed, list) else []
