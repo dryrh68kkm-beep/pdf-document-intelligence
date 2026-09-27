@@ -112,7 +112,19 @@ def test_max_updated_at_never_goes_backwards():
 
 def _method_source(source: str, signature: str) -> str:
     start = source.index(signature)
-    brace_start = source.index("{", start)
+    paren_start = source.index("(", start)
+    paren_depth = 0
+    i = paren_start
+    while True:
+        if source[i] == "(":
+            paren_depth += 1
+        elif source[i] == ")":
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        i += 1
+
+    brace_start = source.index("{", i)
     depth = 0
     i = brace_start
     while True:
