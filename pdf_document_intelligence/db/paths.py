@@ -53,6 +53,21 @@ def get_pdf_path(document_id: str) -> Path:
     return get_data_dir() / "pdfs" / f"{document_id}.pdf"
 
 
+def get_logs_dir() -> Path:
+    """Where the app's rotating log file lives (see logging_setup.py) -
+    user request: a 500's diagnosticId used to be recoverable only by
+    catching the server's terminal window live, before it scrolled past
+    or the window was closed. A real file under the data dir survives
+    both."""
+    logs_dir = get_data_dir() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return logs_dir
+
+
+def get_log_path() -> Path:
+    return get_logs_dir() / "app.log"
+
+
 def get_inbox_dir() -> Path:
     """Where Auto PDF Folder Import watches for dropped-in PDFs.
 

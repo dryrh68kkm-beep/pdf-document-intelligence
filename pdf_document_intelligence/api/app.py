@@ -44,7 +44,14 @@ from pdf_document_intelligence.db.repository import new_id
 from pdf_document_intelligence.export.excel import export_many_to_excel
 from pdf_document_intelligence.export.expiry_dashboard_csv import export_expiry_dashboard_csv
 from pdf_document_intelligence.loader.preflight import PreflightError
+from pdf_document_intelligence.logging_setup import configure_logging
 from pdf_document_intelligence.pipeline.orchestrator import process_document
+
+# Must run before this module's own _logger (or any other module's) logs
+# anything - see logging_setup.py's own docstring. No import above this
+# point actually emits a log record at import time (each submodule only
+# does its own logging.getLogger(...) assignment), so this is early enough.
+configure_logging()
 
 _logger = logging.getLogger("pdf_document_intelligence")
 
