@@ -1,4 +1,6 @@
-const BASE = "";
+// Served from "/" standalone, or from a sub-path (e.g. "/m/pdf/") when
+// mounted inside Store Suite - derive the prefix so "/api/..." follows.
+const BASE = window.location.pathname.replace(/\/[^/]*$/, "");
 const ADMIN_PASSPHRASE_KEY = "pdi_admin_passphrase";
 
 // PR13 (Viewer/Admin permission gate): the passphrase lives only in this

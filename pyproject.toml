@@ -45,4 +45,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["pdf_document_intelligence*"]
+include = ["pdf_document_intelligence*", "store_suite*"]
+
+[tool.setuptools.package-data]
+store_suite = ["web/**/*"]

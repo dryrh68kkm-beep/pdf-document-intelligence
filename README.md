@@ -1,3 +1,35 @@
+# Store Suite — all three programs in one
+
+`store_suite/` combines **PDF Document Intelligence**, **Expiry Dashboard**
+(expiry-dashboard) and **Stock Atlas** (Ooslayout) into a single program:
+one server, one port (8000), one launcher, one data hub keyed by barcode.
+
+```text
+Windows:  double-click StoreSuite.bat      (first run installs, then opens the browser)
+Mac/Linux: ./StoreSuite.sh
+```
+
+| Tab | What it is |
+|---|---|
+| ภาพรวม | KPIs + expiring items joined with the home (fixture) they were counted in, OOS state and PDF-master presence. Click a row for the full cross-program card |
+| วันหมดอายุ | the Expiry Dashboard page, reading the shared `data.csv` |
+| ผังร้าน / OOS | Stock Atlas; its LAN-server API is built in, so layout / OOS / Pick Check state is shared by every device |
+| เอกสาร PDF | the original PDF app, unchanged, mounted at `/m/pdf/` |
+
+**How they sync** (nothing is copied into a second database):
+
+- Expiry file (`NEARLY_EXPIRED_*` from the network folder set under *ตั้งค่า*, or dropped in by hand) is validated and becomes the one `data.csv`. The dashboard shows it, and the PDF pipeline uses it to confirm barcodes.
+- The Expiry page auto-fetches the PDF app's master feed (`/m/pdf/api/export/expiry-dashboard.csv`) to fill blank names/departments.
+- The hub joins Atlas count data + OOS state + PDF rows + expiry rows on the barcode: `GET /api/suite/product/{barcode}`, `/api/suite/search?q=`, `/api/suite/expiry-locations`, `/api/suite/overview`.
+- *ซิงค์ข้อมูล* (and a background timer, default every 10 min) pulls fresh expiry data and writes `expiry-locations.csv` into Atlas' export folder (`/m/atlas/export/expiry-locations.csv`) for other programs.
+- Searching a barcode in the top bar can open it directly in any tab's own search box.
+
+Data lives in `%LOCALAPPDATA%\store-suite` (override: `STORE_SUITE_DATA_DIR`); the PDF app keeps its existing data dir, so current documents carry over. Settings: `config.json` there (or the ตั้งค่า dialog). Only LAN / loopback clients are accepted unless `lanOnly` is turned off.
+
+The expiry page and Atlas are vendored under `store_suite/web/modules/`; refresh them from the sibling repos with `python scripts/sync_modules.py --siblings <folder>`. Tests: `pytest tests/suite`.
+
+---
+
 # pdf-document-intelligence
 
 Accuracy-first, deterministic PDF document intelligence for local/offline use.

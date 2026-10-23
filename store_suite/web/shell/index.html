@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Store Suite</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--ink:#1c2630;--mute:#6a7886;--line:#dde3e9;--brand:#0b6b4d;--brand-ink:#fff;--warn:#b45309;--bad:#b42318;--ok:#0b6b4d;--chip:#e8f2ee}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10161c;--card:#18212a;--ink:#e6edf3;--mute:#8d9bab;--line:#2a3541;--brand:#3fb68b;--brand-ink:#08140f;--warn:#e0a458;--bad:#f2766b;--ok:#3fb68b;--chip:#1c2e27}}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{font:14px/1.45 "IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.logo{font-weight:700;font-size:16px;letter-spacing:.2px;margin-right:4px}
+nav{display:flex;gap:4px}
+nav button{border:0;background:none;color:var(--mute);font:inherit;padding:8px 14px;border-radius:8px;cursor:pointer}
+nav button:hover{background:var(--chip)}nav button[aria-selected=true]{background:var(--brand);color:var(--brand-ink);font-weight:600}
+.grow{flex:1}
+.search{position:relative;min-width:260px;flex:1;max-width:460px}
+.search input{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.hits{position:absolute;z-index:20;top:100%;left:0;right:0;margin-top:4px;background:var(--card);border:1px solid var(--line);border-radius:8px;max-height:60vh;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.hit{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line)}.hit:hover{background:var(--chip)}.hit small{color:var(--mute);display:block}
+button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;padding:7px 12px;border-radius:8px;cursor:pointer}
+button.btn:hover{border-color:var(--brand)}button.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+button:disabled{opacity:.55;cursor:default}
+.syncinfo{color:var(--mute);font-size:12px}
+main{flex:1;position:relative;min-height:0}
+.view{position:absolute;inset:0;display:none}.view.on{display:block}
+iframe{border:0;width:100%;height:100%;background:var(--bg)}
+.page{padding:16px;overflow:auto;height:100%}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:default}
+.kpi .n{font-size:28px;font-weight:700;line-height:1.1}.kpi .l{color:var(--mute);font-size:12px;margin-top:2px}.kpi.bad .n{color:var(--bad)}.kpi.warn .n{color:var(--warn)}
+.kpi h3{margin:0 0 6px;font-size:12px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+section.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:16px}
+section.card h2{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mute);font-size:12px;font-weight:600;position:sticky;top:0;background:var(--card)}
+tr.row{cursor:pointer}tr.row:hover{background:var(--chip)}
+.tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--chip)}
+.tag.bad{color:var(--bad);background:transparent;border:1px solid var(--bad)}.tag.warn{color:var(--warn);background:transparent;border:1px solid var(--warn)}
+.tablewrap{max-height:52vh;overflow:auto}
+select,input.sm{padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);padding:18px;max-width:560px;width:calc(100% - 32px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--mute);font-size:12px}dialog input[type=text],dialog input[type=number]{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:4px 10px}.kv dt{color:var(--mute)}.kv dd{margin:0}
+.err{color:var(--bad)}.ok{color:var(--ok)}
+@media (max-width:700px){header{padding:8px}.syncinfo{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">Store Suite</span>
+  <nav role="tablist" id="tabs">
+    <button role="tab" data-v="home" aria-selected="true">ภาพรวม</button>
+    <button role="tab" data-v="expiry" aria-selected="false">วันหมดอายุ</button>
+    <button role="tab" data-v="atlas" aria-selected="false">ผังร้าน / OOS</button>
+    <button role="tab" data-v="pdf" aria-selected="false">เอกสาร PDF</button>
+  </nav>
+  <div class="search"><input id="q" type="search" placeholder="ค้นหาบาร์โค้ด / ชื่อสินค้า" autocomplete="off"><div class="hits" id="hits" hidden></div></div>
+  <span class="grow"></span>
+  <span class="syncinfo" id="syncinfo"></span>
+  <button class="btn primary" id="syncBtn">ซิงค์ข้อมูล</button>
+  <button class="btn" id="cfgBtn" title="ตั้งค่า">ตั้งค่า</button>
+</header>
+<main>
+  <div class="view on" id="v-home"><div class="page">
+    <div class="kpis" id="kpis"></div>
+    <section class="card">
+      <h2>สินค้าใกล้หมดอายุ + บ้านที่ต้องไปเก็บ
+        <select id="days"><option value="0">หมดอายุแล้ว</option><option value="7">≤ 7 วัน</option><option value="30" selected>≤ 30 วัน</option><option value="90">≤ 90 วัน</option><option value="9999">ทั้งหมด</option></select>
+        <label class="tag"><input type="checkbox" id="onlyLoc"> เฉพาะที่รู้บ้าน</label>
+        <span class="grow"></span><span class="syncinfo" id="locCount"></span>
+      </h2>
+      <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>แผนก</th><th>คงเหลือ</th><th>เหลือ (วัน)</th><th>บ้าน (Fixture)</th><th>สถานะ</th></tr></thead><tbody id="locBody"></tbody></table></div>
+    </section>
+  </div></div>
+  <div class="view" id="v-expiry"></div>
+  <div class="view" id="v-atlas"></div>
+  <div class="view" id="v-pdf"></div>
+</main>
+
+<dialog id="prod"><h3 id="pTitle"></h3><div id="pBody"></div><div class="acts" id="pActs"></div></dialog>
+
+<dialog id="cfg"><h3>ตั้งค่า</h3>
+  <label>โฟลเดอร์ต้นทางไฟล์ NEARLY_EXPIRED (เช่น \\10.x.x.x\share\…) — เว้นว่าง = ไม่ดึงอัตโนมัติ</label>
+  <input type="text" id="cSrc">
+  <label>ชื่อไฟล์ (ไม่ต้องใส่นามสกุล)</label>
+  <input type="text" id="cBase">
+  <label>ซิงค์อัตโนมัติทุก (นาที) — 0 = ปิด</label>
+  <input type="number" id="cAuto" min="0">
+  <label>นำเข้าไฟล์วันหมดอายุเอง (.csv / .txt / .xlsx)</label>
+  <input type="file" id="cFile" accept=".csv,.txt,.xlsx">
+  <div id="cMsg" class="syncinfo"></div>
+  <div class="acts"><button class="btn" id="cClose">ปิด</button><button class="btn primary" id="cSave">บันทึก</button></div>
+</dialog>
+
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const SRC={expiry:"/m/expiry/",atlas:"/m/atlas/",pdf:"/m/pdf/"};
+const frames={};
+const api=async(u,o)=>{const r=await fetch(u,o);if(!r.ok){let m="";try{m=(await r.json()).detail||""}catch(_){}throw Error(m||("HTTP "+r.status))}return r.json()};
+let cur="home";
+
+function show(v){
+  cur=v;
+  document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.v===v));
+  document.querySelectorAll(".view").forEach(x=>x.classList.toggle("on",x.id==="v-"+v));
+  if(SRC[v]&&!frames[v]){const f=document.createElement("iframe");f.src=SRC[v];f.title=v;$("#v-"+v).append(f);frames[v]=f}
+  try{localStorage.setItem("suite-tab",v)}catch(_){}
+  if(v==="home")loadHome();
+}
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>show(b.dataset.v));
+
+function goSearch(module,q){
+  show(module);
+  const f=frames[module],send=()=>f.contentWindow.postMessage({type:"suite:search",q},location.origin);
+  // the page may still be booting - retry briefly until its shim answers
+  let n=0;const t=setInterval(()=>{try{send()}catch(_){}if(++n>=6)clearInterval(t)},500);
+}
+
+const fmt=n=>n==null?"–":Number(n).toLocaleString("th-TH");
+function ago(iso){if(!iso)return"ยังไม่เคย";const s=(Date.now()-new Date(iso))/1000;return s<90?"เมื่อสักครู่":s<5400?Math.round(s/60)+" นาทีที่แล้ว":s<172800?Math.round(s/3600)+" ชม.ที่แล้ว":Math.round(s/86400)+" วันที่แล้ว"}
+
+async function loadHome(){
+  try{
+    const o=await api("/api/suite/overview"),e=o.expiry,a=o.atlas,p=o.pdf;
+    $("#kpis").innerHTML=`
+     <div class="kpi bad"><h3>หมดอายุแล้ว</h3><div class="n">${fmt(e.expired)}</div><div class="l">จาก ${fmt(e.rows)} รายการในไฟล์</div></div>
+     <div class="kpi warn"><h3>หมดอายุใน 7 วัน</h3><div class="n">${fmt(e.within7)}</div><div class="l">ภายใน 30 วัน ${fmt(e.within30)}</div></div>
+     <div class="kpi"><h3>รู้บ้านแล้ว</h3><div class="n">${fmt(o.links.expiryAndCounted)}</div><div class="l">สินค้าใกล้หมดอายุที่พบในผลนับ Atlas</div></div>
+     <div class="kpi ${a.oosOpen?"warn":""}"><h3>OOS ค้างตรวจ</h3><div class="n">${fmt(a.oosOpen)}</div><div class="l">${fmt(o.links.expiryAndOos)} รายการซ้อนกับของใกล้หมดอายุ</div></div>
+     <div class="kpi"><h3>บาร์โค้ดจาก PDF</h3><div class="n">${fmt(p.barcodes)}</div><div class="l">รอตรวจ ${fmt(p.needReview)} · ตรงกับใกล้หมดอายุ ${fmt(o.links.expiryAndPdf)}</div></div>`;
+    const ls=o.lastSync||{};
+    $("#syncinfo").textContent="ซิงค์ล่าสุด: "+ago(ls.at)+(ls.ok===false?" (มีข้อผิดพลาด)":"");
+    $("#syncinfo").className="syncinfo"+(ls.ok===false?" err":"");
+  }catch(x){$("#kpis").innerHTML=`<div class="kpi bad"><h3>โหลดไม่ได้</h3><div class="l">${esc(x.message)}</div></div>`}
+  loadLoc();
+}
+let locRows=[];
+async function loadLoc(){
+  try{
+    const d=await api(`/api/suite/expiry-locations?maxDays=${$("#days").value}&limit=1000`);
+    locRows=d.rows;renderLoc(d.total);
+  }catch(x){$("#locBody").innerHTML=`<tr><td colspan=7 class="err">${esc(x.message)}</td></tr>`}
+}
+function renderLoc(total){
+  const rows=locRows.filter(r=>!$("#onlyLoc").checked||r.homes.length);
+  $("#locCount").textContent=`แสดง ${fmt(rows.length)} จาก ${fmt(total)}`;
+  $("#locBody").innerHTML=rows.length?rows.map(r=>`<tr class="row" data-b="${esc(r.barcode)}">
+    <td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${esc(r.subDept)}</td><td>${fmt(r.qty)}</td>
+    <td>${r.daysLeft==null?"–":r.daysLeft<0?`<span class="tag bad">เกิน ${-r.daysLeft}</span>`:r.daysLeft<=7?`<span class="tag warn">${r.daysLeft}</span>`:r.daysLeft}</td>
+    <td>${r.homes.length?esc(r.homes.slice(0,6).join(", "))+(r.homes.length>6?` +${r.homes.length-6}`:""):'<span class="syncinfo">ไม่พบในผลนับ</span>'}</td>
+    <td>${r.oos?'<span class="tag warn">OOS ค้าง</span> ':""}${r.inPdf?'<span class="tag">มีใน PDF</span>':""}</td></tr>`).join(""):`<tr><td colspan=7 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`;
+}
+$("#days").onchange=loadLoc;$("#onlyLoc").onchange=()=>renderLoc(locRows.length);
+$("#locBody").onclick=e=>{const tr=e.target.closest("tr[data-b]");if(tr)openProduct(tr.dataset.b)};
+
+async function openProduct(b){
+  const p=await api("/api/suite/product/"+encodeURIComponent(b));
+  $("#pTitle").textContent=p.name||p.barcode;
+  const ex=p.expiry.map(x=>`${fmt(x.qty)} ชิ้น · เหลือ ${x.daysLeft??"–"} วัน${x.subDept?" · "+esc(x.subDept):""}`).join("<br>")||"–";
+  $("#pBody").innerHTML=`<dl class="kv">
+   <dt>บาร์โค้ด</dt><dd>${esc(p.barcode)}</dd>
+   <dt>วันหมดอายุ</dt><dd>${ex}</dd>
+   <dt>บ้าน (Atlas)</dt><dd>${p.homes.length?p.homes.map(h=>`${esc(h.home)} (${fmt(h.qty)})`).join(", "):"ไม่พบในผลนับ"}</dd>
+   <dt>OOS</dt><dd>${p.oos?(p.oos.checked?"ตรวจแล้ว":"ค้างตรวจ")+" · SOH "+fmt(p.oos.soh):"–"}</dd>
+   <dt>เอกสาร PDF</dt><dd>${p.pdf?esc(p.pdf.documents.join(", "))+(p.pdf.department?" · "+esc(p.pdf.department):""):"–"}</dd></dl>`;
+  $("#pActs").innerHTML=`<button class="btn" data-m="expiry">เปิดใน วันหมดอายุ</button><button class="btn" data-m="atlas">เปิดใน ผังร้าน</button><button class="btn" data-m="pdf">เปิดใน PDF</button><button class="btn primary" data-m="">ปิด</button>`;
+  $("#pActs").onclick=e=>{const m=e.target.dataset?.m;if(m===undefined)return;$("#prod").close();if(m)goSearch(m,p.barcode)};
+  $("#prod").showModal();
+}
+
+let st;$("#q").oninput=()=>{clearTimeout(st);const v=$("#q").value.trim();if(v.length<2){$("#hits").hidden=true;return}
+  st=setTimeout(async()=>{try{const r=await api("/api/suite/search?q="+encodeURIComponent(v));
+    $("#hits").innerHTML=r.length?r.map(p=>`<div class="hit" data-b="${esc(p.barcode)}">${esc(p.name||"(ไม่มีชื่อ)")}<small>${esc(p.barcode)} · ${[p.expiry.length?"ใกล้หมดอายุ":"",p.homes.length?"บ้าน "+p.homes.slice(0,3).map(h=>h.home).join(","):"",p.oos?"OOS":"",p.pdf?"PDF":""].filter(Boolean).join(" · ")||"—"}</small></div>`).join(""):'<div class="hit">ไม่พบ</div>';
+    $("#hits").hidden=false}catch(_){}},250)};
+$("#hits").onclick=e=>{const h=e.target.closest(".hit[data-b]");if(h){$("#hits").hidden=true;openProduct(h.dataset.b)}};
+document.addEventListener("click",e=>{if(!e.target.closest(".search"))$("#hits").hidden=true});
+
+$("#syncBtn").onclick=async()=>{const b=$("#syncBtn");b.disabled=true;b.textContent="กำลังซิงค์…";
+  try{const r=await api("/api/suite/sync",{method:"POST"});
+    for(const f of Object.values(frames))try{f.contentWindow.postMessage({type:"suite:synced"},location.origin)}catch(_){}
+    if(frames.expiry)frames.expiry.src=SRC.expiry;  // reload so the page reads the fresh data.csv
+    await loadHome();
+    if(!r.ok)alert("ซิงค์ไม่สมบูรณ์:\n"+r.steps.filter(s=>s.ok===false).map(s=>s.step+": "+s.error).join("\n"));
+  }catch(x){alert("ซิงค์ไม่สำเร็จ: "+x.message)}
+  b.disabled=false;b.textContent="ซิงค์ข้อมูล"};
+
+$("#cfgBtn").onclick=async()=>{const c=await api("/api/suite/config");
+  $("#cSrc").value=c.expirySourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";$("#cAuto").value=c.autoSyncMinutes??10;$("#cMsg").textContent="";$("#cfg").showModal()};
+$("#cClose").onclick=()=>$("#cfg").close();
+$("#cSave").onclick=async()=>{try{
+  await api("/api/suite/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({expirySourceFolder:$("#cSrc").value.trim(),expirySourceBasename:$("#cBase").value.trim(),autoSyncMinutes:Math.max(0,+$("#cAuto").value||0)})});
+  $("#cMsg").textContent="บันทึกแล้ว";$("#cMsg").className="syncinfo ok"}catch(x){$("#cMsg").textContent=x.message;$("#cMsg").className="syncinfo err"}};
+$("#cFile").onchange=async()=>{const f=$("#cFile").files[0];if(!f)return;const fd=new FormData();fd.append("file",f);
+  try{const r=await api("/api/suite/expiry/upload",{method:"POST",body:fd});$("#cMsg").textContent=`นำเข้าแล้ว ${fmt(r.rows)} แถว`;$("#cMsg").className="syncinfo ok";loadHome()}
+  catch(x){$("#cMsg").textContent=x.message;$("#cMsg").className="syncinfo err"}};
+
+let first="home";try{first=localStorage.getItem("suite-tab")||"home"}catch(_){}
+show(["home","expiry","atlas","pdf"].includes(first)?first:"home");
+setInterval(()=>{if(cur==="home"&&!document.hidden)loadHome()},60000);
+</script>
+</body>
+</html>
