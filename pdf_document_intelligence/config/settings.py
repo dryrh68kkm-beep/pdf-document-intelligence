@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     # side, to skip the stat() call).
     expiry_dashboard_www_dir: str = "../ExpiryApp/www"
 
+    # --- Cross-program reference data (see catalog/cross_reference.py) ---
+    # os.pathsep-separated candidate files, first existing wins. Empty = off.
+    cross_reference_count_files: str = ""
+    cross_reference_oos_files: str = ""
+
 
 def get_settings() -> Settings:
     return Settings()

@@ -26,6 +26,14 @@ Mac/Linux: ./StoreSuite.sh
 
 Data lives in `%LOCALAPPDATA%\store-suite` (override: `STORE_SUITE_DATA_DIR`); the PDF app keeps its existing data dir, so current documents carry over. Settings: `config.json` there (or the ตั้งค่า dialog). Only LAN / loopback clients are accepted unless `lanOnly` is turned off.
 
+**Accuracy cross-checks (automatic, no manual input).** While reading a PDF, every
+row is compared with the other programs' data (`catalog/cross_reference.py`):
+
+- *Names*: an exact barcode hit in the Stock Atlas count database / OOS reports (after Official Master, Local Master and the expiry data) supplies the name instead of OCR (`CROSS_REFERENCE_MATCH`).
+- *Barcodes*: a barcode no source knows whose GTIN check digit fails is replaced only if exactly one check-digit-valid known barcode is a single edit away (substitution, swap, missing or extra digit). The original reading stays in `raw_value` (`BARCODE_CROSS_REPAIRED`). A valid-looking unknown barcode is changed only when the printed name also matches (≥ 0.8); otherwise it is just flagged (`BARCODE_SUGGESTION:<code>`, `BARCODE_CHECKSUM_FAIL`, `BARCODE_AMBIGUOUS_NEIGHBORS`) - never guessed.
+- On the 21k real barcodes in the Atlas count DB, a simulated one-digit misread was repaired to the right barcode 95% of the time and to a wrong one 0 times (the rest are left for review).
+- Inside Store Suite this is wired up by default; standalone, set `PDI_CROSS_REFERENCE_COUNT_FILES` / `PDI_CROSS_REFERENCE_OOS_FILES`.
+
 The expiry page and Atlas are vendored under `store_suite/web/modules/`; refresh them from the sibling repos with `python scripts/sync_modules.py --siblings <folder>`. Tests: `pytest tests/suite`.
 
 ---

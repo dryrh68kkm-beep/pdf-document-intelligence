@@ -35,7 +35,11 @@ _REQUIRED_COLUMNS = {"article_code", "barcode", "resolved_product_name", "weight
 _EXTRACTION_TRUST_REASONS = {
     "TEXT_LAYER_UNRELIABLE", "COLUMN_OVERFLOW_SPLIT", "OCR_LOW_CONFIDENCE",
     "SOURCE_CONFLICT", "CATALOG_NAME_MISMATCH",
+    # Cross-program barcode checks (catalog/cross_reference.py): a human
+    # edit supersedes them, but they block *bulk* confirm below.
+    "BARCODE_CHECKSUM_FAIL", "BARCODE_AMBIGUOUS_NEIGHBORS",
 }
+_BARCODE_SUGGESTION_PREFIX = "BARCODE_SUGGESTION:"
 
 # Re-exported: api/app.py catches this as `review_api.RowConflictError`. The
 # class itself lives in db/errors.py (not here) because repository.py must
@@ -164,6 +168,7 @@ def _recompute_review_flags(row: dict, changed_column: str, new_value) -> tuple[
     merged[changed_column] = new_value
     reasons = set(json.loads(row.get("review_reasons") or "[]"))
     reasons -= _EXTRACTION_TRUST_REASONS
+    reasons = {r for r in reasons if not r.startswith(_BARCODE_SUGGESTION_PREFIX)}
     reasons.discard("AMOUNT_MISMATCH")
 
     qty = merged.get("sku_qty") if merged.get("sku_qty") is not None else merged.get("pu_qty")

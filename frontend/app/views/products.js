@@ -8,6 +8,7 @@ const RESOLUTION_LABEL = {
   OFFICIAL_MASTER: "Official Master",
   LOCAL_MASTER: "Local Master",
   EXPIRY_DASHBOARD: "Expiry Dashboard",
+  CROSS_REFERENCE: "Stock Atlas",
   OCR: "OCR/PDF",
   MANUAL_REVIEW: "Review",
   CORRECTED: "แก้ไขแล้ว",

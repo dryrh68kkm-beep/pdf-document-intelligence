@@ -28,6 +28,13 @@ from store_suite.paths import WEB_DIR, expiry_dir
 # The PDF pipeline's reverse lookup reads the expiry feed from this folder;
 # it must be set before the PDF app (and its Settings) is imported.
 os.environ.setdefault("PDI_EXPIRY_DASHBOARD_WWW_DIR", str(expiry_dir()))
+# ...and so must the Stock Atlas data it cross-checks barcodes/names against
+# (shared count state if Atlas has saved one, else the count DB bundled with Atlas).
+os.environ.setdefault(
+    "PDI_CROSS_REFERENCE_COUNT_FILES",
+    os.pathsep.join([str(atlas_api.state_file("count")), str(WEB_DIR / "modules" / "atlas" / "count-data.json")]),
+)
+os.environ.setdefault("PDI_CROSS_REFERENCE_OOS_FILES", str(atlas_api.state_file("oos")))
 
 from pdf_document_intelligence.api import app as pdf_module  # noqa: E402
 

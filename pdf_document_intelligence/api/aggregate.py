@@ -26,6 +26,8 @@ NUMERIC_LABELS = {"weight_qty": "น้ำหนักรวม (กก.)", "pu_
 RESOLUTION_LABELS = {
     "OFFICIAL_MASTER": "Official Master",
     "LOCAL_MASTER": "Local Master",
+    "EXPIRY_DASHBOARD": "Expiry Dashboard",
+    "CROSS_REFERENCE": "Stock Atlas",
     "OCR": "OCR/PDF",
     "MANUAL_REVIEW": "Review",
     "CORRECTED": "แก้ไขแล้ว",
@@ -132,7 +134,7 @@ def build_dashboard_state(repo: Repository) -> dict:
             "count": resolution_counts.get(status, 0),
             "percent": round(100 * resolution_counts.get(status, 0) / resolved_total, 1),
         }
-        for status in ("OFFICIAL_MASTER", "LOCAL_MASTER", "OCR", "MANUAL_REVIEW", "CORRECTED")
+        for status in ("OFFICIAL_MASTER", "LOCAL_MASTER", "EXPIRY_DASHBOARD", "CROSS_REFERENCE", "OCR", "MANUAL_REVIEW", "CORRECTED")
         if resolution_counts.get(status)
     ]
 

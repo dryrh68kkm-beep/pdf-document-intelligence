@@ -11,6 +11,13 @@ const FLAG_LABEL = {
   CATALOG_MATCH: "พบ Barcode นี้ในฐานข้อมูลสินค้ากลาง — ใช้ชื่อจากฐานข้อมูลแทนการอ่านจาก PDF/OCR",
   LOCAL_MASTER_MATCH: "พบ Barcode นี้ใน Local Product Master ที่ผู้ใช้ยืนยันเอง",
   CATALOG_CHECKED_NOT_FOUND: "✓ ตรวจสอบกับ Official Master แล้ว — ไม่พบ Barcode นี้ในฐานข้อมูล จึงใช้ชื่อจาก PDF/OCR แทน (ไม่ใช่ยังไม่ตรวจ)",
+  EXPIRY_DASHBOARD_MATCH: "พบ Barcode นี้ในข้อมูล Expiry Dashboard ของร้าน — ใช้ชื่อจากระบบร้านแทนการอ่านจาก PDF/OCR",
+  CROSS_REFERENCE_MATCH: "พบ Barcode นี้ในข้อมูลของ Stock Atlas (ผลนับสต็อก/OOS) — ใช้ชื่อจากระบบร้านแทนการอ่านจาก PDF/OCR",
+  STOCK_ATLAS_COUNT: "แหล่งข้อมูล: ผลนับสต็อกใน Stock Atlas",
+  STOCK_ATLAS_OOS: "แหล่งข้อมูล: รายงาน OOS ใน Stock Atlas",
+  BARCODE_CROSS_REPAIRED: "แก้ Barcode อัตโนมัติ: ค่าที่อ่านได้ไม่ผ่าน check digit และไม่พบในระบบใด แต่ผิดจาก Barcode ที่รู้จักเพียง 1 ตำแหน่ง (มีตัวเดียวที่เป็นไปได้) — ค่าที่อ่านเดิมเก็บไว้ในช่อง raw",
+  BARCODE_CHECKSUM_FAIL: "Barcode นี้ไม่ผ่านการตรวจ check digit และไม่พบในระบบใด — น่าจะอ่านผิด ควรเทียบกับต้นฉบับ",
+  BARCODE_AMBIGUOUS_NEIGHBORS: "Barcode นี้ไม่ผ่านการตรวจ check digit และใกล้เคียงกับ Barcode ที่รู้จักหลายตัว — ระบบไม่เดา ควรเทียบกับต้นฉบับ",
   AMOUNT_MISMATCH: "จำนวน x ราคาต่อหน่วย ไม่ตรงกับยอดเงินที่บันทึกไว้",
   MISSING_DEPARTMENT: "ยังไม่ระบุแผนก",
 };
@@ -84,7 +91,7 @@ function fieldBlock(name, fv, editable) {
         </div>
         <ul class="dp-reasons">${(fv.flags || [])
           .filter((f) => !(f === "CATALOG_CHECKED_NOT_FOUND" && fv.source === "master_catalog"))
-          .map((f) => `<li>${FLAG_LABEL[f] || f}</li>`)
+          .map((f) => `<li>${FLAG_LABEL[f] || (f.startsWith("BARCODE_SUGGESTION:") ? `ระบบเทียบแล้ว Barcode นี้อาจเป็น ${escapeHtml(f.split(":")[1])} (ใกล้เคียงสินค้าที่รู้จัก 1 ตำแหน่ง) — ยังไม่เปลี่ยนให้ เพราะชื่อไม่ยืนยัน` : escapeHtml(f))}</li>`)
           .join("")}</ul>
       </div>`;
   }

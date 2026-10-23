@@ -139,7 +139,7 @@ def build_division_summary(repo: Repository, doc_id: str) -> dict:
             status = row["resolution_status"]
             if status == "CORRECTED":
                 corrected += 1
-            elif status in ("OFFICIAL_MASTER", "LOCAL_MASTER"):
+            elif status in ("OFFICIAL_MASTER", "LOCAL_MASTER", "EXPIRY_DASHBOARD", "CROSS_REFERENCE"):
                 resolved_master += 1
             elif status == "OCR":
                 resolved_ocr += 1

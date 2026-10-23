@@ -5,6 +5,7 @@ resolution-priority chain for the `name` field:
     Official Master (exact barcode)  -- already applied in catalog/apply.py
         -> Local Verified Master (exact barcode)
         -> expiry-dashboard's live daily product list (exact barcode)
+        -> Stock Atlas count / OOS data (exact barcode)
         -> Official Master (article/SKU)  [not modeled by this doc type yet]
         -> Local Master (article/SKU)
         -> PDF/OCR reading already on the field
@@ -19,6 +20,13 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from pdf_document_intelligence.catalog.apply import apply_catalog_to_row
+from pdf_document_intelligence.catalog.cross_reference import (
+    gtin_valid,
+    name_similarity,
+    neighbors,
+    reference_name,
+)
 from pdf_document_intelligence.catalog.expiry_dashboard_lookup import lookup_barcode, resolve_data_path
 from pdf_document_intelligence.catalog.loader import get_default_catalog
 from pdf_document_intelligence.config.settings import Settings
@@ -116,6 +124,113 @@ def resolve_expiry_dashboard(row: TableRow, settings: Settings, snapshot_path=No
     return row.model_copy(update={"fields": fields})
 
 
+# A name matched this closely means the neighbouring barcode really is the
+# product printed on the document, not just a lookalike number.
+_REPAIR_NAME_SIMILARITY = 0.8
+
+
+def _known_name(barcode: str, repo: Repository, settings: Settings, snapshot_path=None) -> tuple[bool, str | None]:
+    """Is this barcode known to ANY independent source, and under what name?"""
+    entry = get_default_catalog().get(barcode)
+    if entry:
+        return True, entry.name
+    local = repo.find_local_master_by_barcode(barcode)
+    if local:
+        return True, local["product_name"]
+    live = lookup_barcode(barcode, resolve_data_path(settings.expiry_dashboard_www_dir), snapshot_path)
+    if live:
+        return True, live.get("description") or None
+    ref = reference_name(barcode, settings)
+    if ref:
+        return True, ref[0]
+    return False, None
+
+
+def repair_barcode(row: TableRow, repo: Repository, settings: Settings, snapshot_path=None) -> TableRow:
+    """Cross-check the barcode against every program's data before anything
+    else trusts it. A barcode no source has ever seen and whose GTIN check
+    digit fails is a read error, not a new product; when exactly one
+    check-digit-valid KNOWN barcode is a single edit away it is adopted
+    (original reading kept in raw_value). Anything less certain is only
+    flagged - never guessed."""
+    bc_field = row.fields.get("barcode")
+    barcode = str(bc_field.value) if bc_field and bc_field.value else ""
+    if not barcode.isdigit():
+        return row
+    known, _ = _known_name(barcode, repo, settings, snapshot_path)
+    if known:
+        return row
+
+    candidates: dict[str, str | None] = {}
+    for cand in neighbors(barcode):
+        if gtin_valid(cand):
+            found, name = _known_name(cand, repo, settings, snapshot_path)
+            if found:
+                candidates[cand] = name
+    checksum_ok = gtin_valid(barcode)
+    name_field = row.fields.get("name")
+    extracted_name = name_field.value if name_field else None
+
+    fields = dict(row.fields)
+    if len(candidates) == 1:
+        cand, cand_name = next(iter(candidates.items()))
+        corroborated = (not checksum_ok) or (
+            bool(cand_name and extracted_name) and name_similarity(extracted_name, cand_name) >= _REPAIR_NAME_SIMILARITY
+        )
+        if corroborated:
+            flags = [f for f in bc_field.validation_flags if f != "INVALID_BARCODE_FORMAT"]
+            fields["barcode"] = bc_field.model_copy(
+                update={
+                    "value": cand,
+                    "validation_flags": [*flags, "BARCODE_CROSS_REPAIRED"],
+                    "review_required": False,
+                    "confidence": max(bc_field.confidence, 0.9),
+                }
+            )
+            if name_field:
+                fields["name"] = name_field.model_copy(
+                    update={"validation_flags": [f for f in name_field.validation_flags if f != "CATALOG_CHECKED_NOT_FOUND"]}
+                )
+            return apply_catalog_to_row(row.model_copy(update={"fields": fields}), get_default_catalog())
+        fields["barcode"] = bc_field.model_copy(
+            update={"validation_flags": [*bc_field.validation_flags, f"BARCODE_SUGGESTION:{cand}"], "review_required": True}
+        )
+    elif not checksum_ok:
+        flag = "BARCODE_CHECKSUM_FAIL" if not candidates else "BARCODE_AMBIGUOUS_NEIGHBORS"
+        fields["barcode"] = bc_field.model_copy(
+            update={"validation_flags": [*bc_field.validation_flags, flag], "review_required": True}
+        )
+    else:
+        return row
+    return row.model_copy(update={"fields": fields})
+
+
+def resolve_cross_reference(row: TableRow, settings: Settings) -> TableRow:
+    """Fourth-pass name resolution: Stock Atlas' stock-count database and OOS
+    reports (the store's own system names, keyed by exact barcode)."""
+    name_field = row.fields.get("name")
+    barcode_field = row.fields.get("barcode")
+    if not name_field or name_field.source == "master_catalog":
+        return row
+    barcode = str(barcode_field.value) if barcode_field and barcode_field.value else None
+    if not barcode:
+        return row
+    ref = reference_name(barcode, settings)
+    if not ref:
+        return row
+    fields = dict(row.fields)
+    fields["name"] = name_field.model_copy(
+        update={
+            "value": ref[0],
+            "source": "master_catalog",
+            "confidence": 1.0,
+            "review_required": False,
+            "validation_flags": [*name_field.validation_flags, "CROSS_REFERENCE_MATCH", ref[1]],
+        }
+    )
+    return row.model_copy(update={"fields": fields})
+
+
 def _resolution_status(row: TableRow) -> str:
     name_field = row.fields.get("name")
     if not name_field:
@@ -126,6 +241,8 @@ def _resolution_status(row: TableRow) -> str:
             return "LOCAL_MASTER"
         if "EXPIRY_DASHBOARD_MATCH" in flags:
             return "EXPIRY_DASHBOARD"
+        if "CROSS_REFERENCE_MATCH" in flags:
+            return "CROSS_REFERENCE"
         return "OFFICIAL_MASTER"
     if any(fv.review_required for fv in row.fields.values()):
         return "MANUAL_REVIEW"
@@ -214,8 +331,10 @@ def prepare_flat_rows(document_id: str, result, repo: Repository, settings: Sett
     flat_rows: list[dict] = []
     for table in result.tables:
         for row in table.rows:
-            resolved = resolve_local_master(row, repo)
+            resolved = repair_barcode(row, repo, settings)
+            resolved = resolve_local_master(resolved, repo)
             resolved = resolve_expiry_dashboard(resolved, settings)
+            resolved = resolve_cross_reference(resolved, settings)
             flat_rows.append(flatten_row(document_id, table, resolved))
     return flat_rows
 
