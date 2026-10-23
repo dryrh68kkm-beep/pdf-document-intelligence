@@ -41,7 +41,9 @@ def settings(tmp_path: Path):
     count.write_text(json.dumps({"products": [[GOOD, "2001", "SIMPLUS พัดลม DFSH013PIBC-BB"], [OTHER, "2002", "จุกนมซิลิโคน"]], "rows": [], "files": []}), encoding="utf-8")
     oos = tmp_path / "oos.json"
     oos.write_text(json.dumps({"items": [{"barcode": "1234567890128", "name": "สินค้าจาก OOS"}]}), encoding="utf-8")
-    return Settings(expiry_dashboard_www_dir="", cross_reference_count_files=str(count), cross_reference_oos_files=str(oos))
+    pog = tmp_path / "pog.json"
+    pog.write_text(json.dumps({"list": [{"name": "POG A", "bays": [{"items": [{"bc": "4006381333931", "name": "ปากกา POG"}]}]}]}), encoding="utf-8")
+    return Settings(expiry_dashboard_www_dir="", cross_reference_count_files=str(count), cross_reference_pog_files=str(pog), cross_reference_oos_files=str(oos))
 
 
 @pytest.fixture(autouse=True)
@@ -107,3 +109,11 @@ def test_no_reference_files_means_no_change():
     s = Settings(expiry_dashboard_www_dir="")
     assert resolve_cross_reference(_row(GOOD), s).fields["name"].value == "พัดลม OCR"
     assert name_similarity("abc", "abd") > 0.5
+
+
+def test_name_and_repair_use_pog_data(settings):
+    r = resolve_cross_reference(_row("4006381333931"), settings)
+    assert r.fields["name"].value == "ปากกา POG" and "STOCK_ATLAS_POG" in r.fields["name"].validation_flags
+    bad = "4006381333941"  # one digit misread
+    assert not gtin_valid(bad)
+    assert repair_barcode(_row(bad, "ปากกา"), _Repo(), settings).fields["barcode"].value == "4006381333931"

@@ -14,6 +14,7 @@ const FLAG_LABEL = {
   EXPIRY_DASHBOARD_MATCH: "พบ Barcode นี้ในข้อมูล Expiry Dashboard ของร้าน — ใช้ชื่อจากระบบร้านแทนการอ่านจาก PDF/OCR",
   CROSS_REFERENCE_MATCH: "พบ Barcode นี้ในข้อมูลของ Stock Atlas (ผลนับสต็อก/OOS) — ใช้ชื่อจากระบบร้านแทนการอ่านจาก PDF/OCR",
   STOCK_ATLAS_COUNT: "แหล่งข้อมูล: ผลนับสต็อกใน Stock Atlas",
+  STOCK_ATLAS_POG: "แหล่งข้อมูล: POG (แผนผังชั้นวาง) ใน Stock Atlas",
   STOCK_ATLAS_OOS: "แหล่งข้อมูล: รายงาน OOS ใน Stock Atlas",
   BARCODE_CROSS_REPAIRED: "แก้ Barcode อัตโนมัติ: ค่าที่อ่านได้ไม่ผ่าน check digit และไม่พบในระบบใด แต่ผิดจาก Barcode ที่รู้จักเพียง 1 ตำแหน่ง (มีตัวเดียวที่เป็นไปได้) — ค่าที่อ่านเดิมเก็บไว้ในช่อง raw",
   BARCODE_CHECKSUM_FAIL: "Barcode นี้ไม่ผ่านการตรวจ check digit และไม่พบในระบบใด — น่าจะอ่านผิด ควรเทียบกับต้นฉบับ",

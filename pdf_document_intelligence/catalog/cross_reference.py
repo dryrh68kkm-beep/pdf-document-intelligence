@@ -4,6 +4,8 @@ Besides its own Official/Local Master, the PDF pipeline can check what it
 read against independent records the store's other programs already hold:
 
   * Stock Atlas stock-count database (barcode -> product name, ~20k items)
+  * Stock Atlas POG (planogram) files  (barcode -> product name, every
+                                        product on the shelves)
   * Stock Atlas OOS reports            (barcode -> product name)
   * expiry-dashboard daily export      (see expiry_dashboard_lookup.py)
 
@@ -16,7 +18,7 @@ Two uses (wired in api/rows.py):
      the original reading stays in the field's `raw_value`.
 
 Files are given as os.pathsep-separated lists (first existing wins) via
-PDI_CROSS_REFERENCE_COUNT_FILES / PDI_CROSS_REFERENCE_OOS_FILES, so the app
+PDI_CROSS_REFERENCE_COUNT_FILES / _POG_FILES / _OOS_FILES, so the app
 still runs fine standalone (no files = no extra evidence).
 """
 from __future__ import annotations
@@ -72,6 +74,18 @@ def _read_oos_names(path: Path) -> dict[str, str]:
     return out
 
 
+def _read_pog_names(path: Path) -> dict[str, str]:
+    """Atlas' shared 'pog' state: list of POGs -> bays -> items {bc, name}."""
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    out: dict[str, str] = {}
+    for pog in data.get("list") or []:
+        for bay in (pog.get("bays") or []) if isinstance(pog, dict) else []:
+            for it in (bay.get("items") or []) if isinstance(bay, dict) else []:
+                if isinstance(it, dict) and it.get("bc") and it.get("name"):
+                    out.setdefault(_clean_barcode(it["bc"]), str(it["name"]).strip())
+    return out
+
+
 def _load(spec: str, reader) -> dict[str, str]:
     path = _first_existing(spec)
     if path is None:
@@ -96,6 +110,9 @@ def reference_name(barcode: str, settings) -> tuple[str, str] | None:
     name = _load(settings.cross_reference_count_files, _read_count_names).get(barcode)
     if name:
         return name, "STOCK_ATLAS_COUNT"
+    name = _load(settings.cross_reference_pog_files, _read_pog_names).get(barcode)
+    if name:
+        return name, "STOCK_ATLAS_POG"
     name = _load(settings.cross_reference_oos_files, _read_oos_names).get(barcode)
     if name:
         return name, "STOCK_ATLAS_OOS"

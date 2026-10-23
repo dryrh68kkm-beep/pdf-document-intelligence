@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     # --- Cross-program reference data (see catalog/cross_reference.py) ---
     # os.pathsep-separated candidate files, first existing wins. Empty = off.
     cross_reference_count_files: str = ""
+    cross_reference_pog_files: str = ""
     cross_reference_oos_files: str = ""
 
 

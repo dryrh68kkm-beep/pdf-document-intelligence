@@ -34,6 +34,7 @@ os.environ.setdefault(
     "PDI_CROSS_REFERENCE_COUNT_FILES",
     os.pathsep.join([str(atlas_api.state_file("count")), str(WEB_DIR / "modules" / "atlas" / "count-data.json")]),
 )
+os.environ.setdefault("PDI_CROSS_REFERENCE_POG_FILES", str(atlas_api.state_file("pog")))
 os.environ.setdefault("PDI_CROSS_REFERENCE_OOS_FILES", str(atlas_api.state_file("oos")))
 
 from pdf_document_intelligence.api import app as pdf_module  # noqa: E402
