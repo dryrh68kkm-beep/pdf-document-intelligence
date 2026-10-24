@@ -19,8 +19,7 @@ echo Collecting information, please wait...
   if exist ".venv\Scripts\python.exe" ( .venv\Scripts\python.exe --version 2>&1 ) else ( echo NO .venv folder - run StoreSuite.bat first )
   echo.
   echo --- can the program be imported? ---
-  if exist ".venv\Scripts\python.exe" .venv\Scripts\python.exe -X faulthandler -c "import store_suite.app; print('import OK')" 2>&1
-  echo exit code: %ERRORLEVEL%
+  if exist ".venv\Scripts\python.exe" .venv\Scripts\python.exe -X faulthandler -c "import store_suite.app; print('import OK')" 2>&1 && echo result: finished normally || echo result: CRASHED or failed
   echo.
   echo --- installed packages ---
   if exist ".venv\Scripts\python.exe" .venv\Scripts\python.exe -m pip list --disable-pip-version-check 2>&1
