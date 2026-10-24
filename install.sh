@@ -40,7 +40,7 @@ echo "== 3/3 ติดตั้ง Python dependencies =="
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -q --upgrade pip
-python -m pip install -q -e ".[ocr,api,dev]"
+python -m pip install --retries 10 --timeout 60 --disable-pip-version-check -e ".[ocr,api]"
 
 echo ""
 echo "ติดตั้งเสร็จสมบูรณ์!"

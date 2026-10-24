@@ -40,7 +40,7 @@ echo Using: %PY%
 %PY% -m venv .venv || (echo Could not create .venv & pause & exit /b 1)
 call .venv\Scripts\activate.bat
 python -m pip install -q --upgrade pip
-python -m pip install -e ".[api,ocr]" || (pause & exit /b 1)
+python -m pip install --retries 10 --timeout 60 --disable-pip-version-check -e ".[api,ocr]" || (pause & exit /b 1)
 goto start
 
 :run
