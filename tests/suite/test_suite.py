@@ -129,6 +129,7 @@ def test_oos_and_expiry_are_kept_apart(client):
     assert [r["barcode"] for r in pend["rows"]] == ["8859847102864"] and pend["total"] == 1
     assert all("daysLeft" not in r and "homes" not in r for r in pend["rows"])
     assert client.get("/api/suite/oos?pending=false").json()["total"] == 2
+    assert "source" in pend and "importedAt" in pend
 
     client.post("/api/suite/sync")
     csv_text = client.get("/m/atlas/export/expiry-locations.csv").text

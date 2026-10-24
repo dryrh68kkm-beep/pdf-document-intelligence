@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import ipaddress
 import logging
 import os
@@ -148,7 +149,14 @@ def expiry_locations(maxDays: float | None = 30, limit: int = 500):
 @app.get("/api/suite/oos")
 def oos(pending: bool = True, limit: int = 1000):
     rows = hub.oos_items(pending)
-    return {"total": len(rows), "rows": rows[: max(1, min(limit, 5000))]}
+    state = atlas_api.read_state("oos") or {}
+    src = state.get("source")
+    return {
+        "total": len(rows),
+        "rows": rows[: max(1, min(limit, 5000))],
+        "source": src if isinstance(src, str) else json.dumps(src, ensure_ascii=False) if src else "",
+        "importedAt": state.get("importedAt") or "",
+    }
 
 
 @app.post("/api/suite/shutdown")

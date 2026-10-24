@@ -87,6 +87,7 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
           <label class="tag"><input type="checkbox" id="oosAll"> รวมที่ตรวจแล้ว</label>
           <span class="grow"></span><span class="syncinfo" id="oosCount"></span>
         </h2>
+        <div class="syncinfo" id="oosSrc" style="margin-bottom:8px"></div>
         <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>SOH</th><th>สถานะ</th></tr></thead><tbody id="oosBody"></tbody></table></div>
       </section>
     </div>
@@ -162,6 +163,9 @@ let oosRows=[];
 async function loadOos(){
   try{const d=await api(`/api/suite/oos?pending=${$("#oosAll").checked?"false":"true"}&limit=1000`);oosRows=d.rows;
     $("#oosCount").textContent=`แสดง ${fmt(d.rows.length)} จาก ${fmt(d.total)}`;
+    const big=d.total>=5000;
+    $("#oosSrc").className="syncinfo"+(big?" err":"");
+    $("#oosSrc").textContent=(d.source?`นำเข้าจาก: ${d.source}`:"")+(d.importedAt?` · เมื่อ ${new Date(d.importedAt).toLocaleString("th-TH")}`:"")+(big?" — จำนวนมากผิดปกติ รายงาน OOS ปกติมีไม่กี่ร้อยรายการ อาจนำเข้าไฟล์ผิด (เช่น ไฟล์ผลนับสต็อก) ถ้าใช่ ให้กด “ล้าง OOS” ในแท็บ ผังร้าน / OOS → งาน OOS แล้วนำเข้าไฟล์ที่ถูกต้อง":"");
     $("#oosBody").innerHTML=d.rows.length?d.rows.map(r=>`<tr class="row" data-o="${esc(r.barcode)}"><td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${fmt(r.soh)}</td><td>${r.checked?`<span class="tag">ตรวจแล้ว</span>`:`<span class="tag warn">ค้างตรวจ</span>`}${r.promo?' <span class="tag">โปร</span>':""}</td></tr>`).join(""):`<tr><td colspan=4 class="syncinfo">ไม่มีรายการ OOS — นำเข้าไฟล์ OOS ในแท็บ “ผังร้าน / OOS”</td></tr>`;
   }catch(x){$("#oosBody").innerHTML=`<tr><td colspan=4 class="err">${esc(x.message)}</td></tr>`}
 }
