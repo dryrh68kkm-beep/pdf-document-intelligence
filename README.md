@@ -9,6 +9,8 @@ Windows:  double-click StoreSuite.bat      (first run installs, then opens the b
 Mac/Linux: ./StoreSuite.sh
 ```
 
+The first run of `StoreSuite.bat` also puts a **Store Suite** icon on the Desktop (starts with no console window, log in `%LOCALAPPDATA%\store-suite\last-run.log`; `StopStoreSuite.bat` stops it; starting it twice just reopens the running one).
+
 | Tab | What it is |
 |---|---|
 | ภาพรวม | KPIs + expiring items joined with the home (fixture) they were counted in, OOS state and PDF-master presence. Click a row for the full cross-program card |
