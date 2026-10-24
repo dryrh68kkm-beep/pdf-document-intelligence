@@ -8,8 +8,10 @@ if ((Test-Path $b64) -and -not (Test-Path $ico)) {
 $w = New-Object -ComObject WScript.Shell
 $desktop = [Environment]::GetFolderPath('Desktop')
 $s = $w.CreateShortcut((Join-Path $desktop 'Store Suite.lnk'))
-$s.TargetPath = (Join-Path $env:WINDIR 'System32\wscript.exe')
-$s.Arguments = '"' + (Join-Path $app 'StoreSuite_hidden.vbs') + '"'
+# Starts StoreSuite.bat directly (normal window): works where Windows Script Host is blocked,
+# and any error stays visible instead of vanishing.
+$s.TargetPath = (Join-Path $app 'StoreSuite.bat')
+$s.WindowStyle = 1
 $s.WorkingDirectory = $app
 if (Test-Path $ico) { $s.IconLocation = $ico + ',0' }
 $s.Description = 'Store Suite'

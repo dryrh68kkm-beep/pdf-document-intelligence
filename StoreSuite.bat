@@ -47,8 +47,8 @@ goto start
 call .venv\Scripts\activate.bat
 
 :start
-if not exist ".shortcut_done" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make_shortcut.ps1" && echo done> ".shortcut_done"
+if not exist ".shortcut_v2" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make_shortcut.ps1" && echo done> ".shortcut_v2"
 )
 echo Starting Store Suite at http://localhost:8000  (Ctrl+C to stop)
 python scripts\run_suite.py

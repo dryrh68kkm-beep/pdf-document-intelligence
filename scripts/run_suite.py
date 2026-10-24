@@ -1,6 +1,16 @@
 """Launcher for Store Suite: start the one server, open the browser when ready."""
 from __future__ import annotations
 
+import sys
+
+if sys.stdout is None or sys.stderr is None:  # pythonw: no console, so everything - even import errors - goes to a log file
+    import os as _os
+    import pathlib as _pl
+
+    _d = _pl.Path(_os.environ.get("STORE_SUITE_DATA_DIR") or (_pl.Path(_os.environ.get("LOCALAPPDATA", _pl.Path.home())) / "store-suite"))
+    _d.mkdir(parents=True, exist_ok=True)
+    sys.stdout = sys.stderr = open(_d / "last-run.log", "w", encoding="utf-8", buffering=1)
+
 import atexit
 import json
 import os
@@ -49,9 +59,6 @@ def main() -> None:
     if _already_running(url):  # double-clicked twice: just show the running one
         webbrowser.open(url)
         return
-    if sys.stdout is None or sys.stderr is None:  # pythonw (Desktop shortcut): no console, so log to a file
-        log = open(get_data_dir() / "last-run.log", "w", encoding="utf-8", buffering=1)
-        sys.stdout = sys.stderr = log
     pid_file = get_data_dir() / "server.pid"
     pid_file.write_text(str(os.getpid()))
     atexit.register(lambda: pid_file.unlink(missing_ok=True))
