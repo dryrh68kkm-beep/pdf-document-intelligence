@@ -59,8 +59,8 @@ echo [OK] Thai OCR language pack found.
 echo == 2/3 Installing Python dependencies ==
 python -m venv .venv
 call .venv\Scripts\activate.bat
-pip install -q --upgrade pip
-pip install -q -e ".[ocr,api,dev]"
+python -m pip install -q --upgrade pip
+python -m pip install -q -e ".[ocr,api,dev]"
 if errorlevel 1 (
   echo [ERROR] pip install failed - see the messages above for details.
   pause

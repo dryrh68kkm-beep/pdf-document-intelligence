@@ -4,6 +4,15 @@ REM First run: installs Python 3.11 (via winget) if missing, creates .venv, inst
 REM Plain ASCII only.
 cd /d "%~dp0"
 
+echo %~dp0 | findstr /i /c:".zip\\" /c:"\\Temp\\" >nul
+if not errorlevel 1 (
+  echo This folder looks like it is still inside the zip file / a temp folder.
+  echo Right-click StoreSuite.zip, choose Extract All, move the extracted
+  echo StoreSuite folder somewhere permanent ^(e.g. C:\StoreSuite^), then run it from there.
+  pause
+  exit /b 1
+)
+
 if exist ".venv\Scripts\python.exe" goto run
 
 call :findpy
@@ -30,6 +39,7 @@ if not defined PY (
 echo Using: %PY%
 %PY% -m venv .venv || (echo Could not create .venv & pause & exit /b 1)
 call .venv\Scripts\activate.bat
+python -m pip install -q --upgrade pip
 python -m pip install -e ".[api,ocr]" || (pause & exit /b 1)
 goto start
 
