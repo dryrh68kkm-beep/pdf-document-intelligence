@@ -45,7 +45,7 @@ from pdf_document_intelligence.api import app as pdf_module  # noqa: E402
 pdf_app = pdf_module.app
 _logger = logging.getLogger("store_suite")
 
-hub = Hub(pdf_products=pdf_module.list_all_products)
+hub = Hub(pdf_products=pdf_module.list_all_products, pdf_documents=pdf_module.store.list)
 
 
 async def _auto_sync_loop() -> None:

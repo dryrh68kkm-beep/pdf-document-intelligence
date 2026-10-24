@@ -45,8 +45,10 @@ def _bc(v) -> str:
 
 
 class Hub:
-    def __init__(self, pdf_products: Callable[[], list[dict]] | None = None) -> None:
+    def __init__(self, pdf_products: Callable[[], list[dict]] | None = None, pdf_documents: Callable[[], list[dict]] | None = None) -> None:
         self._pdf_products = pdf_products
+        self._pdf_documents = pdf_documents
+        self._pdf_stats: dict = {"docs": 0, "completeDocs": 0, "errorDocs": 0, "rows": 0, "needReview": 0, "nonProduct": 0}
         self._lock = threading.Lock()
         self._count_cache: tuple | None = None
         self._count_idx: dict[str, dict] = {}
@@ -104,8 +106,17 @@ class Hub:
         if now - self._pdf_cache[0] < _PDF_TTL or self._pdf_products is None:
             return self._pdf_cache[1]
         idx: dict[str, dict] = {}
+        stats = {"docs": 0, "completeDocs": 0, "errorDocs": 0, "rows": 0, "needReview": 0, "nonProduct": 0}
         try:
+            for d in (self._pdf_documents() if self._pdf_documents else []):
+                stats["docs"] += 1
+                stats["completeDocs"] += d.get("status") == "complete"
+                stats["errorDocs"] += d.get("status") == "error"
             for p in self._pdf_products():
+                if not p.get("deletedAt"):
+                    stats["rows"] += 1
+                    stats["needReview"] += bool(p.get("reviewRequired"))
+                    stats["nonProduct"] += bool(p.get("suspectedNonProduct"))
                 fields = p.get("fields") or {}
                 barcode = _bc((fields.get("barcode") or {}).get("value"))
                 if not barcode or p.get("deletedAt"):
@@ -120,6 +131,7 @@ class Hub:
             self._pdf_cache = (now, self._pdf_cache[1])  # keep serving the last good index; retry after the TTL
             return self._pdf_cache[1]
         self._pdf_cache = (now, idx)
+        self._pdf_stats = stats
         return idx
 
     # ---------- joined views ----------
@@ -208,17 +220,57 @@ class Hub:
         ex_rows = expiry_data.load_rows()
         loc = self.expiry_locations(max_days=None)
         status = expiry_data.read_status()
-        oos = atlas_api.read_state("oos") or {}
-        oos_items = [i for i in oos.get("items") or [] if isinstance(i, dict)]
+        data_file = expiry_data.data_file()
+        oos_state = atlas_api.read_state("oos") or {}
+        oos_items = [i for i in oos_state.get("items") or [] if isinstance(i, dict)]
         layout = atlas_api.read_state("layout") or {}
-        pdf = self.pdf_index()
+        self.pdf_index()
+
+        def days(x):
+            return x["daysLeft"]
+
+        buckets = {"expired": 0, "d0_7": 0, "d8_30": 0, "d31_90": 0, "over90": 0, "unknown": 0}
+        by_dept: dict[str, dict] = {}
+        total_qty = expired_qty = 0.0
+        for x in loc:
+            d, q = days(x), x["qty"] or 0
+            k = ("unknown" if d is None else "expired" if d < 0 else "d0_7" if d <= 7 else "d8_30" if d <= 30 else "d31_90" if d <= 90 else "over90")
+            buckets[k] += 1
+            total_qty += q
+            expired_qty += q if k == "expired" else 0
+            e = by_dept.setdefault(x["subDept"] or "(ไม่ระบุ)", {"name": x["subDept"] or "(ไม่ระบุ)", "items": 0, "expired": 0, "within7": 0, "within30": 0, "qty": 0.0})
+            e["items"] += 1
+            e["qty"] += q
+            e["expired"] += k == "expired"
+            e["within7"] += k == "d0_7"
+            e["within30"] += k in ("d0_7", "d8_30")
+        depts = sorted(by_dept.values(), key=lambda e: (-e["expired"], -e["within7"], -e["items"]))[:15]
+
+        soh = [_num(i.get("soh")) for i in oos_items]
+        by_result: dict[str, int] = {}
+        for i in oos_items:
+            if i.get("result"):
+                by_result[str(i["result"])] = by_result.get(str(i["result"]), 0) + 1
+        src = oos_state.get("source")
+        file_updated = None
+        if data_file:
+            try:
+                file_updated = datetime.fromtimestamp(data_file.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+            except OSError:
+                pass
         return {
             "expiry": {
                 "rows": len(ex_rows),
-                "expired": sum(1 for x in loc if x["daysLeft"] is not None and x["daysLeft"] < 0),
-                "within7": sum(1 for x in loc if x["daysLeft"] is not None and 0 <= x["daysLeft"] <= 7),
-                "within30": sum(1 for x in loc if x["daysLeft"] is not None and 0 <= x["daysLeft"] <= 30),
+                "expired": buckets["expired"],
+                "within7": buckets["d0_7"],
+                "within30": buckets["d0_7"] + buckets["d8_30"],
                 "located": sum(1 for x in loc if x["homes"]),
+                "buckets": buckets,
+                "byDept": depts,
+                "totalQty": total_qty,
+                "expiredQty": expired_qty,
+                "file": data_file.name if data_file else "",
+                "fileUpdated": file_updated,
                 "lastFetch": status.get("lastAttempt"),
                 "lastFetchOk": status.get("success"),
                 "error": status.get("errorMessage") or "",
@@ -227,10 +279,17 @@ class Hub:
                 "maps": len(layout.get("maps") or []),
                 "oosOpen": sum(1 for i in oos_items if not i.get("result")),
                 "oosTotal": len(oos_items),
+                "oosNegative": sum(1 for v in soh if v is not None and v < 0),
+                "oosZero": sum(1 for v in soh if v == 0),
+                "oosPositive": sum(1 for v in soh if v is not None and v > 0),
+                "oosPromo": sum(1 for i in oos_items if i.get("promo")),
+                "oosByResult": by_result,
+                "oosSource": src if isinstance(src, str) else (json.dumps(src, ensure_ascii=False) if src else ""),
+                "oosImportedAt": oos_state.get("importedAt") or "",
                 "countedProducts": len(self.count_index()),
                 "sharedLayout": atlas_api.state_file("layout").is_file(),
             },
-            "pdf": {"barcodes": len(pdf), "needReview": sum(1 for e in pdf.values() if e["reviewRequired"])},
+            "pdf": {**self._pdf_stats, "barcodes": len(self.pdf_index())},
             "lastSync": self.last_sync,
         }
 

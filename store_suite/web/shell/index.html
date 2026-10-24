@@ -29,6 +29,14 @@ main{flex:1;position:relative;min-height:0}
 iframe{border:0;width:100%;height:100%;background:var(--bg)}
 .page{padding:16px;overflow:auto;height:100%}
 .seg{display:flex;gap:6px;margin-bottom:14px}.seg button{border:1px solid var(--line);background:var(--card);color:var(--mute);font:inherit;padding:7px 16px;border-radius:999px;cursor:pointer}.seg button[aria-selected=true]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:600}
+.srcs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.src{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:12px;color:var(--mute);min-width:210px;flex:1}
+.src b{display:block;color:var(--ink);font-size:13px;margin-bottom:2px}.src.bad{border-color:var(--bad)}.src.bad b{color:var(--bad)}
+.grid2{display:grid;align-items:start;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+.bar{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--bg);margin:6px 0 10px}.bar i{display:block;min-width:2px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--mute)}.legend span:before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:var(--c)}
+table.sortable th[data-k]{cursor:pointer;user-select:none}table.sortable th[data-k]:hover{color:var(--ink)}
+.kpi .l small{display:block}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:default}
 .kpi .n{font-size:28px;font-weight:700;line-height:1.1}.kpi .l{color:var(--mute);font-size:12px;margin-top:2px}.kpi.bad .n{color:var(--bad)}.kpi.warn .n{color:var(--warn)}
@@ -68,28 +76,48 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
 </header>
 <main>
   <div class="view on" id="v-home"><div class="page">
-    <div class="seg" id="seg"><button data-s="exp" aria-selected="true">สินค้าหมดอายุ</button><button data-s="oos" aria-selected="false">OOS / Pick Check</button></div>
+    <div class="srcs" id="srcs"></div>
+    <div class="seg" id="seg"><button data-s="exp" aria-selected="true">สินค้าหมดอายุ</button><button data-s="oos" aria-selected="false">OOS / Pick Check</button><button data-s="pdf" aria-selected="false">เอกสาร PDF</button></div>
+
     <div id="p-exp">
       <div class="kpis" id="kpisExp"></div>
+      <div class="grid2">
+        <section class="card"><h2>ช่วงวันที่เหลือ</h2><div id="bucketBar"></div></section>
+        <section class="card"><h2>แยกตามแผนกย่อย <small class="syncinfo">เรียงตามจำนวนที่หมดอายุแล้ว</small></h2><div class="tablewrap" style="max-height:260px"><table><thead><tr><th>แผนก</th><th>รายการ</th><th>หมดแล้ว</th><th>≤ 7 วัน</th><th>≤ 30 วัน</th><th>คงเหลือ</th></tr></thead><tbody id="deptBody"></tbody></table></div></section>
+      </div>
       <section class="card">
-        <h2>สินค้าใกล้หมดอายุ
+        <h2>รายการสินค้า
           <select id="days"><option value="0">หมดอายุ / ครบวันนี้</option><option value="7">≤ 7 วัน</option><option value="30" selected>≤ 30 วัน</option><option value="90">≤ 90 วัน</option><option value="9999">ทั้งหมด</option></select>
+          <select id="deptSel"><option value="">ทุกแผนก</option></select>
+          <input class="sm" id="expQ" type="search" placeholder="ค้นหาในตาราง">
           <label class="tag"><input type="checkbox" id="onlyLoc"> เฉพาะที่รู้บ้าน</label>
           <span class="grow"></span><span class="syncinfo" id="locCount"></span>
         </h2>
-        <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>แผนก</th><th>คงเหลือ</th><th>เหลือ (วัน)</th><th>บ้าน (Fixture)</th></tr></thead><tbody id="locBody"></tbody></table></div>
+        <div class="tablewrap"><table class="sortable"><thead><tr><th data-k="barcode">บาร์โค้ด</th><th data-k="name">สินค้า</th><th data-k="subDept">แผนก</th><th data-k="qty">คงเหลือ</th><th data-k="daysLeft">เหลือ (วัน)</th><th>บ้าน (Fixture)</th></tr></thead><tbody id="locBody"></tbody></table></div>
       </section>
     </div>
+
     <div id="p-oos" hidden>
       <div class="kpis" id="kpisOos"></div>
+      <div class="grid2">
+        <section class="card"><h2>SOH ของรายการ OOS</h2><div id="sohBar"></div></section>
+        <section class="card"><h2>ผลตรวจ Pick Check</h2><div id="resBar"></div></section>
+      </div>
       <section class="card">
         <h2>รายการ OOS
-          <label class="tag"><input type="checkbox" id="oosAll"> รวมที่ตรวจแล้ว</label>
+          <select id="oosStatus"><option value="pending">ค้างตรวจ</option><option value="done">ตรวจแล้ว</option><option value="all">ทั้งหมด</option></select>
+          <select id="oosSoh"><option value="">SOH ทุกค่า</option><option value="neg">SOH ติดลบ</option><option value="zero">SOH = 0</option><option value="pos">SOH &gt; 0</option></select>
+          <input class="sm" id="oosQ" type="search" placeholder="ค้นหาในตาราง">
           <span class="grow"></span><span class="syncinfo" id="oosCount"></span>
         </h2>
         <div class="syncinfo" id="oosSrc" style="margin-bottom:8px"></div>
-        <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>SOH</th><th>สถานะ</th></tr></thead><tbody id="oosBody"></tbody></table></div>
+        <div class="tablewrap"><table class="sortable"><thead><tr><th data-k="barcode">บาร์โค้ด</th><th data-k="name">สินค้า</th><th data-k="soh">SOH</th><th data-k="checked">สถานะ</th></tr></thead><tbody id="oosBody"></tbody></table></div>
       </section>
+    </div>
+
+    <div id="p-pdf" hidden>
+      <div class="kpis" id="kpisPdf"></div>
+      <section class="card"><p class="syncinfo" style="margin:0 0 10px">เอกสารใบส่งของที่แอป PDF อ่านแล้ว ดูรายละเอียดและแก้ไขในแท็บ “เอกสาร PDF”</p><button class="btn primary" id="goPdf">เปิดแท็บเอกสาร PDF</button></section>
     </div>
   </div></div>
   <div class="view" id="v-expiry"></div>
@@ -143,55 +171,93 @@ function goSearch(module,q){
 const fmt=n=>n==null?"–":Number(n).toLocaleString("th-TH");
 function ago(iso){if(!iso)return"ยังไม่เคย";const s=(Date.now()-new Date(iso))/1000;return s<90?"เมื่อสักครู่":s<5400?Math.round(s/60)+" นาทีที่แล้ว":s<172800?Math.round(s/3600)+" ชม.ที่แล้ว":Math.round(s/86400)+" วันที่แล้ว"}
 
+const COL={bad:"var(--bad)",warn:"var(--warn)",ok:"var(--ok)",mute:"#8d9bab",blue:"#4a8fd9"};
+const bar=(parts,total)=>{const t=total||parts.reduce((a,p)=>a+p.n,0);
+  return t?`<div class="bar">${parts.filter(p=>p.n).map(p=>`<i title="${esc(p.l)}: ${fmt(p.n)}" style="width:${(100*p.n/t).toFixed(2)}%;background:${p.c}"></i>`).join("")}</div><div class="legend">${parts.map(p=>`<span style="--c:${p.c}">${esc(p.l)} ${fmt(p.n)}</span>`).join("")}</div>`:'<div class="syncinfo">ยังไม่มีข้อมูล</div>'};
+const kpi=(h,n,l,cls="")=>`<div class="kpi ${cls}"><h3>${esc(h)}</h3><div class="n">${fmt(n)}</div><div class="l">${l}</div></div>`;
+const sortState={};
+function sortRows(rows,id,def){const st=sortState[id]||def;const k=st.k,d=st.d;return[...rows].sort((a,b)=>{let x=a[k],y=b[k];if(x==null)x=d>0?Infinity:-Infinity;if(y==null)y=d>0?Infinity:-Infinity;return(typeof x==="string"?x.localeCompare(y,"th"):x-y)*d})}
+document.addEventListener("click",e=>{const th=e.target.closest("table.sortable th[data-k]");if(!th)return;
+  const id=th.closest("table").querySelector("tbody").id,cur=sortState[id]||{};sortState[id]={k:th.dataset.k,d:cur.k===th.dataset.k?-cur.d:1};(id==="locBody"?renderLoc:renderOos)()});
+
 async function loadHome(){
   try{
-    const o=await api("/api/suite/overview"),e=o.expiry,a=o.atlas;
-    $("#kpisExp").innerHTML=`
-     <div class="kpi bad"><h3>หมดอายุแล้ว</h3><div class="n">${fmt(e.expired)}</div><div class="l">จาก ${fmt(e.rows)} รายการในไฟล์</div></div>
-     <div class="kpi warn"><h3>หมดอายุใน 7 วัน</h3><div class="n">${fmt(e.within7)}</div><div class="l">ภายใน 30 วัน ${fmt(e.within30)}</div></div>
-     <div class="kpi"><h3>รู้บ้านแล้ว</h3><div class="n">${fmt(e.located)}</div><div class="l">จากผลนับสต็อกใน Atlas</div></div>`;
-    $("#kpisOos").innerHTML=`
-     <div class="kpi ${a.oosOpen?"warn":""}"><h3>OOS ค้างตรวจ</h3><div class="n">${fmt(a.oosOpen)}</div><div class="l">จากทั้งหมด ${fmt(a.oosTotal)} รายการ</div></div>
-     <div class="kpi"><h3>ตรวจแล้ว</h3><div class="n">${fmt(a.oosTotal-a.oosOpen)}</div><div class="l">บันทึกผล Pick Check แล้ว</div></div>`;
+    const o=await api("/api/suite/overview"),e=o.expiry,a=o.atlas,p=o.pdf,b=e.buckets;
+    const when=iso=>iso?new Date(iso).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"}):"–";
+    $("#srcs").innerHTML=`
+     <div class="src ${e.rows?"":"bad"}"><b>ไฟล์วันหมดอายุ</b>${e.rows?`${esc(e.file)} · ${fmt(e.rows)} แถว<br>ไฟล์อัปเดต ${when(e.fileUpdated)}`:"ยังไม่มีไฟล์ — นำเข้าที่ปุ่ม “ตั้งค่า”"}${e.error?`<br><span class="err">${esc(e.error)}</span>`:""}</div>
+     <div class="src ${a.oosTotal>=5000?"bad":""}"><b>OOS / Pick Check</b>${a.oosTotal?`${fmt(a.oosTotal)} รายการ · นำเข้า ${when(a.oosImportedAt)}<br>${esc(a.oosSource||"")}`:"ยังไม่ได้นำเข้า"}</div>
+     <div class="src"><b>ผัง / ผลนับ (Atlas)</b>${a.sharedLayout?`${fmt(a.maps)} ผัง (ใช้ร่วมกันทุกเครื่อง)`:"ผังตั้งต้นในตัวโปรแกรม"}<br>ผลนับสต็อก ${fmt(a.countedProducts)} สินค้า</div>
+     <div class="src"><b>เอกสาร PDF</b>${fmt(p.docs)} เอกสาร · ${fmt(p.rows)} แถว${p.needReview?`<br><span class="err">รอตรวจ ${fmt(p.needReview)}</span>`:""}</div>`;
+    $("#kpisExp").innerHTML=
+      kpi("หมดอายุแล้ว",b.expired,`จาก ${fmt(e.rows)} รายการ · ${fmt(e.expiredQty)} ชิ้น`,b.expired?"bad":"")+
+      kpi("หมดอายุใน 7 วัน",b.d0_7,"รวมที่ครบกำหนดวันนี้",b.d0_7?"warn":"")+
+      kpi("8 – 30 วัน",b.d8_30,`รวมภายใน 30 วัน ${fmt(e.within30)}`)+
+      kpi("31 – 90 วัน",b.d31_90,`มากกว่า 90 วัน ${fmt(b.over90)}`)+
+      kpi("คงเหลือรวม",e.totalQty,"ชิ้น ทุกรายการในไฟล์")+
+      kpi("รู้บ้านแล้ว",e.located,"พบในผลนับสต็อกของ Atlas");
+    $("#bucketBar").innerHTML=bar([{l:"หมดอายุแล้ว",n:b.expired,c:COL.bad},{l:"0–7 วัน",n:b.d0_7,c:COL.warn},{l:"8–30 วัน",n:b.d8_30,c:"#d9b44a"},{l:"31–90 วัน",n:b.d31_90,c:COL.blue},{l:"> 90 วัน",n:b.over90,c:COL.ok},{l:"ไม่ระบุ",n:b.unknown,c:COL.mute}]);
+    $("#deptBody").innerHTML=e.byDept.length?e.byDept.map(d=>`<tr><td>${esc(d.name)}</td><td>${fmt(d.items)}</td><td>${d.expired?`<span class="tag bad">${fmt(d.expired)}</span>`:"0"}</td><td>${fmt(d.within7)}</td><td>${fmt(d.within30)}</td><td>${fmt(d.qty)}</td></tr>`).join(""):'<tr><td colspan=6 class="syncinfo">ยังไม่มีข้อมูล</td></tr>';
+    const cur=$("#deptSel").value;$("#deptSel").innerHTML='<option value="">ทุกแผนก</option>'+e.byDept.map(d=>`<option>${esc(d.name)}</option>`).join("");$("#deptSel").value=cur;
+
+    $("#kpisOos").innerHTML=
+      kpi("OOS ค้างตรวจ",a.oosOpen,`จากทั้งหมด ${fmt(a.oosTotal)} รายการ`,a.oosOpen?"warn":"")+
+      kpi("ตรวจแล้ว",a.oosTotal-a.oosOpen,"บันทึกผล Pick Check แล้ว")+
+      kpi("SOH ติดลบ",a.oosNegative,"ควรตรวจสต็อกในระบบ",a.oosNegative?"bad":"")+
+      kpi("SOH = 0",a.oosZero,"ของหมดตามระบบ")+
+      kpi("SOH > 0",a.oosPositive,"ระบบมีของแต่ชั้นว่าง")+
+      kpi("สินค้าโปรโมชัน",a.oosPromo,"อยู่ในรายการ OOS");
+    $("#sohBar").innerHTML=bar([{l:"ติดลบ",n:a.oosNegative,c:COL.bad},{l:"= 0",n:a.oosZero,c:COL.warn},{l:"> 0",n:a.oosPositive,c:COL.blue}]);
+    const rs=Object.entries(a.oosByResult||{});
+    $("#resBar").innerHTML=bar([{l:"ยังไม่ตรวจ",n:a.oosOpen,c:COL.mute},...rs.map(([k,n],i)=>({l:k,n,c:[COL.ok,COL.warn,COL.blue,COL.bad][i%4]}))]);
+
+    $("#kpisPdf").innerHTML=
+      kpi("เอกสาร",p.docs,`อ่านสำเร็จ ${fmt(p.completeDocs)}${p.errorDocs?` · ผิดพลาด ${fmt(p.errorDocs)}`:""}`,p.errorDocs?"warn":"")+
+      kpi("แถวสินค้า",p.rows,`${fmt(p.barcodes)} บาร์โค้ดไม่ซ้ำ`)+
+      kpi("รอตรวจ",p.needReview,"ระบบไม่มั่นใจพอ ให้คนตรวจ",p.needReview?"warn":"")+
+      kpi("ไม่ใช่สินค้า",p.nonProduct,"ของแถม / ไม่ใช่สินค้า");
     const ls=o.lastSync||{};
     $("#syncinfo").textContent="ซิงค์ล่าสุด: "+ago(ls.at)+(ls.ok===false?" (มีข้อผิดพลาด)":"");
     $("#syncinfo").className="syncinfo"+(ls.ok===false?" err":"");
   }catch(x){$("#kpisExp").innerHTML=`<div class="kpi bad"><h3>โหลดไม่ได้</h3><div class="l">${esc(x.message)}</div></div>`}
   loadLoc();loadOos();
 }
-let oosRows=[];
+let locRows=[],locTotal=0,oosRows=[],oosTotal=0;
+async function loadLoc(){
+  try{const d=await api(`/api/suite/expiry-locations?maxDays=${$("#days").value}&limit=5000`);locRows=d.rows;locTotal=d.total;renderLoc()}
+  catch(x){$("#locBody").innerHTML=`<tr><td colspan=6 class="err">${esc(x.message)}</td></tr>`}
+}
+function renderLoc(){
+  const q=$("#expQ").value.trim().toLowerCase(),dept=$("#deptSel").value;
+  const rows=sortRows(locRows.filter(r=>(!$("#onlyLoc").checked||r.homes.length)&&(!dept||r.subDept===dept)&&(!q||(r.barcode+" "+r.name).toLowerCase().includes(q))),"locBody",{k:"daysLeft",d:1});
+  $("#locCount").textContent=`แสดง ${fmt(Math.min(rows.length,1500))} จาก ${fmt(rows.length)}${locTotal>locRows.length?` (ทั้งหมด ${fmt(locTotal)})`:""}`;
+  $("#locBody").innerHTML=rows.length?rows.slice(0,1500).map(r=>`<tr class="row" data-b="${esc(r.barcode)}">
+    <td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${esc(r.subDept)}</td><td>${fmt(r.qty)}</td>
+    <td>${r.daysLeft==null?"–":r.daysLeft<0?`<span class="tag bad">เกิน ${-r.daysLeft}</span>`:r.daysLeft<=7?`<span class="tag warn">${r.daysLeft}</span>`:r.daysLeft}</td>
+    <td>${r.homes.length?esc(r.homes.slice(0,6).join(", "))+(r.homes.length>6?` +${r.homes.length-6}`:""):'<span class="syncinfo">ไม่พบในผลนับ</span>'}</td></tr>`).join(""):`<tr><td colspan=6 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`;
+}
 async function loadOos(){
-  try{const d=await api(`/api/suite/oos?pending=${$("#oosAll").checked?"false":"true"}&limit=1000`);oosRows=d.rows;
-    $("#oosCount").textContent=`แสดง ${fmt(d.rows.length)} จาก ${fmt(d.total)}`;
+  try{const d=await api("/api/suite/oos?pending=false&limit=5000");oosRows=d.rows;oosTotal=d.total;
     const big=d.total>=5000;
     $("#oosSrc").className="syncinfo"+(big?" err":"");
     $("#oosSrc").textContent=(d.source?`นำเข้าจาก: ${d.source}`:"")+(d.importedAt?` · เมื่อ ${new Date(d.importedAt).toLocaleString("th-TH")}`:"")+(big?" — จำนวนมากผิดปกติ รายงาน OOS ปกติมีไม่กี่ร้อยรายการ อาจนำเข้าไฟล์ผิด (เช่น ไฟล์ผลนับสต็อก) ถ้าใช่ ให้กด “ล้าง OOS” ในแท็บ ผังร้าน / OOS → งาน OOS แล้วนำเข้าไฟล์ที่ถูกต้อง":"");
-    $("#oosBody").innerHTML=d.rows.length?d.rows.map(r=>`<tr class="row" data-o="${esc(r.barcode)}"><td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${fmt(r.soh)}</td><td>${r.checked?`<span class="tag">ตรวจแล้ว</span>`:`<span class="tag warn">ค้างตรวจ</span>`}${r.promo?' <span class="tag">โปร</span>':""}</td></tr>`).join(""):`<tr><td colspan=4 class="syncinfo">ไม่มีรายการ OOS — นำเข้าไฟล์ OOS ในแท็บ “ผังร้าน / OOS”</td></tr>`;
-  }catch(x){$("#oosBody").innerHTML=`<tr><td colspan=4 class="err">${esc(x.message)}</td></tr>`}
+    renderOos()}catch(x){$("#oosBody").innerHTML=`<tr><td colspan=4 class="err">${esc(x.message)}</td></tr>`}
+}
+function renderOos(){
+  const q=$("#oosQ").value.trim().toLowerCase(),st=$("#oosStatus").value,sh=$("#oosSoh").value;
+  const rows=sortRows(oosRows.filter(r=>(st==="all"||(st==="done")===r.checked)&&(!sh||(sh==="neg"?r.soh<0:sh==="zero"?r.soh===0:r.soh>0))&&(!q||(r.barcode+" "+r.name).toLowerCase().includes(q))),"oosBody",{k:"soh",d:1});
+  $("#oosCount").textContent=`แสดง ${fmt(Math.min(rows.length,1500))} จาก ${fmt(rows.length)}${oosTotal>oosRows.length?` (ทั้งหมด ${fmt(oosTotal)})`:""}`;
+  $("#oosBody").innerHTML=rows.length?rows.slice(0,1500).map(r=>`<tr class="row" data-o="${esc(r.barcode)}"><td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${fmt(r.soh)}</td><td>${r.checked?`<span class="tag">ตรวจแล้ว${r.result?" · "+esc(r.result):""}</span>`:`<span class="tag warn">ค้างตรวจ</span>`}${r.promo?' <span class="tag">โปร</span>':""}</td></tr>`).join(""):`<tr><td colspan=4 class="syncinfo">ไม่มีรายการ — นำเข้าไฟล์ OOS ในแท็บ “ผังร้าน / OOS”</td></tr>`;
 }
 document.querySelectorAll("#seg button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#seg button").forEach(x=>x.setAttribute("aria-selected",x===b));
-  $("#p-exp").hidden=b.dataset.s!=="exp";$("#p-oos").hidden=b.dataset.s!=="oos"});
-$("#oosAll").onchange=loadOos;
-$("#oosBody").onclick=e=>{const tr=e.target.closest("tr[data-o]");if(tr)openProduct(tr.dataset.o,"oos")};
-let locRows=[];
-async function loadLoc(){
-  try{
-    const d=await api(`/api/suite/expiry-locations?maxDays=${$("#days").value}&limit=1000`);
-    locRows=d.rows;renderLoc(d.total);
-  }catch(x){$("#locBody").innerHTML=`<tr><td colspan=6 class="err">${esc(x.message)}</td></tr>`}
-}
-function renderLoc(total){
-  const rows=locRows.filter(r=>!$("#onlyLoc").checked||r.homes.length);
-  $("#locCount").textContent=`แสดง ${fmt(rows.length)} จาก ${fmt(total)}`;
-  $("#locBody").innerHTML=rows.length?rows.map(r=>`<tr class="row" data-b="${esc(r.barcode)}">
-    <td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${esc(r.subDept)}</td><td>${fmt(r.qty)}</td>
-    <td>${r.daysLeft==null?"–":r.daysLeft<0?`<span class="tag bad">เกิน ${-r.daysLeft}</span>`:r.daysLeft<=7?`<span class="tag warn">${r.daysLeft}</span>`:r.daysLeft}</td>
-    <td>${r.homes.length?esc(r.homes.slice(0,6).join(", "))+(r.homes.length>6?` +${r.homes.length-6}`:""):'<span class="syncinfo">ไม่พบในผลนับ</span>'}</td>
-</tr>`).join(""):`<tr><td colspan=6 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`;
-}
-$("#days").onchange=loadLoc;$("#onlyLoc").onchange=()=>renderLoc(locRows.length);
+  for(const k of ["exp","oos","pdf"])$("#p-"+k).hidden=b.dataset.s!==k});
+$("#days").onchange=loadLoc;
+for(const id of ["onlyLoc","deptSel"])$("#"+id).onchange=renderLoc;$("#expQ").oninput=renderLoc;
+for(const id of ["oosStatus","oosSoh"])$("#"+id).onchange=renderOos;$("#oosQ").oninput=renderOos;
+$("#goPdf").onclick=()=>show("pdf");
 $("#locBody").onclick=e=>{const tr=e.target.closest("tr[data-b]");if(tr)openProduct(tr.dataset.b,"expiry")};
+$("#oosBody").onclick=e=>{const tr=e.target.closest("tr[data-o]");if(tr)openProduct(tr.dataset.o,"oos")};
 
 async function openProduct(b,scope){
   const p=await api("/api/suite/product/"+encodeURIComponent(b));

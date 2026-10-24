@@ -14,7 +14,7 @@ The first run of `StoreSuite.bat` also puts a **Store Suite** icon on the Deskto
 
 | Tab | What it is |
 |---|---|
-| ภาพรวม | two separate panels - **สินค้าหมดอายุ** (expiry KPIs + table with the home each item was counted in) and **OOS / Pick Check** (its own KPIs + list). The two data sets are never mixed in one table; only the top search box looks a barcode up across everything |
+| ภาพรวม | a status strip (where each data set came from and when) plus three separate panels - expiry (KPIs, days-left distribution, per-department table, sortable/searchable item list with homes), OOS / Pick Check (KPIs, SOH and result breakdown, filterable list) and PDF documents. Formerly: two separate panels - **สินค้าหมดอายุ** (expiry KPIs + table with the home each item was counted in) and **OOS / Pick Check** (its own KPIs + list). The two data sets are never mixed in one table; only the top search box looks a barcode up across everything |
 | วันหมดอายุ | the Expiry Dashboard page, reading the shared `data.csv` |
 | ผังร้าน / OOS | Stock Atlas; its LAN-server API is built in, so layout / OOS / Pick Check state is shared by every device |
 | เอกสาร PDF | the original PDF app, unchanged, mounted at `/m/pdf/` |
