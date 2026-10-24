@@ -29,14 +29,29 @@ def config_path() -> Path:
     return get_data_dir() / "config.json"
 
 
+_cache: dict = {"key": None, "data": {}}
+
+
+def _file_config() -> dict:
+    """config.json parsed once per change - every request checks LAN-only."""
+    path = config_path()
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    if _cache["key"] != key:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            data = {}
+        _cache["key"], _cache["data"] = key, data if isinstance(data, dict) else {}
+    return _cache["data"]
+
+
 def load_config() -> dict:
     cfg = dict(DEFAULTS)
-    try:
-        data = json.loads(config_path().read_text(encoding="utf-8-sig"))
-        if isinstance(data, dict):
-            cfg.update({k: v for k, v in data.items() if k in DEFAULTS})
-    except (OSError, ValueError):
-        pass
+    cfg.update({k: v for k, v in _file_config().items() if k in DEFAULTS})
     if os.environ.get("STORE_SUITE_PORT", "").isdigit():
         cfg["port"] = int(os.environ["STORE_SUITE_PORT"])
     return cfg

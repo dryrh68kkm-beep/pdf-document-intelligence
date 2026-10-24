@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -71,6 +72,16 @@ async def _lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Store Suite", version=__version__, lifespan=_lifespan)
+# The Atlas page is 7 MB of HTML: gzip makes it ~1.5 MB (matters on store Wi-Fi).
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+
+def _page(request: Request, name: str, path: Path) -> Response:
+    """Shimmed module page with an ETag, so a repeat visit is a 304, not 7 MB."""
+    etag = f'"{name}-{int(path.stat().st_mtime_ns)}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag})
+    return HTMLResponse(shim.render(name, path), headers={"ETag": etag, "Cache-Control": "no-cache"})
 
 
 def _is_lan(host: str | None) -> bool:
@@ -182,8 +193,8 @@ def expiry_redirect():
 
 
 @app.get("/m/expiry/")
-def expiry_index():
-    return HTMLResponse(shim.render("expiry", WEB_DIR / "modules" / "expiry" / "index.html"), headers={"Cache-Control": "no-cache"})
+def expiry_index(request: Request):
+    return _page(request, "expiry", WEB_DIR / "modules" / "expiry" / "index.html")
 
 
 @app.get("/m/expiry/{name}")
@@ -211,8 +222,8 @@ def atlas_redirect():
 
 
 @app.get("/m/atlas/")
-def atlas_index():
-    return HTMLResponse(shim.render("atlas", WEB_DIR / "modules" / "atlas" / "index.html"), headers={"Cache-Control": "no-cache"})
+def atlas_index(request: Request):
+    return _page(request, "atlas", WEB_DIR / "modules" / "atlas" / "index.html")
 
 
 app.include_router(atlas_api.router, prefix="/m/atlas")
@@ -222,8 +233,8 @@ app.include_router(atlas_api.router, prefix="/m/atlas")
 
 
 @app.get("/m/pdf/")
-def pdf_index():
-    return HTMLResponse(shim.render("pdf", pdf_module.FRONTEND_DIR / "index.html"), headers={"Cache-Control": "no-cache"})
+def pdf_index(request: Request):
+    return _page(request, "pdf", pdf_module.FRONTEND_DIR / "index.html")
 
 
 app.mount("/m/pdf", pdf_app, name="pdf")

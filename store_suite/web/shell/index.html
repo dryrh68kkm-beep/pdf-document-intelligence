@@ -198,8 +198,7 @@ $("#cFile").onchange=async()=>{const f=$("#cFile").files[0];if(!f)return;const f
   try{const r=await api("/api/suite/expiry/upload",{method:"POST",body:fd});$("#cMsg").textContent=`นำเข้าแล้ว ${fmt(r.rows)} แถว`;$("#cMsg").className="syncinfo ok";loadHome()}
   catch(x){$("#cMsg").textContent=x.message;$("#cMsg").className="syncinfo err"}};
 
-let first="home";try{first=localStorage.getItem("suite-tab")||"home"}catch(_){}
-show(["home","expiry","atlas","pdf"].includes(first)?first:"home");
+show("home");
 setInterval(()=>{if(cur==="home"&&!document.hidden)loadHome()},60000);
 </script>
 </body>

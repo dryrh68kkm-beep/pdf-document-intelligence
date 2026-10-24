@@ -106,3 +106,10 @@ def test_path_traversal_is_rejected(client):
     assert client.get("/m/atlas/api/file?src=0&name=../config.json").status_code == 400
     assert client.put("/m/atlas/api/export/..%2Fx.csv", content="a").status_code in (400, 404)
     assert client.get("/m/expiry/..%2F..%2Fconfig.json").status_code == 404
+
+
+def test_big_pages_are_gzipped_and_cached(client):
+    r = client.get("/m/atlas/", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
+    again = client.get("/m/atlas/", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304
