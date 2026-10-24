@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import sys
 
-if sys.stdout is None or sys.stderr is None:  # pythonw: no console, so everything - even import errors - goes to a log file
+HIDDEN = sys.stdout is None or sys.stderr is None  # started with pythonw: no console window
+
+if HIDDEN:  # pythonw: no console, so everything - even import errors - goes to a log file
     import os as _os
     import pathlib as _pl
 
@@ -26,6 +28,18 @@ from store_suite.config import load_config
 from store_suite.paths import get_data_dir
 
 
+def _alert(text: str) -> None:
+    """A message box when there is no console to print to (Windows only)."""
+    print(text, flush=True)
+    if HIDDEN and os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(0, text, "Store Suite", 0x10)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _wait_and_open(url: str) -> None:
     # 127.0.0.1, not "localhost": on Windows "localhost" tries IPv6 first and
     # the server listens on IPv4, which adds a stall to every attempt.
@@ -41,7 +55,7 @@ def _wait_and_open(url: str) -> None:
                     return
         except (OSError, ValueError):
             time.sleep(0.5)
-    print(f"Still not ready - open {url} yourself once the log below says 'Application startup complete'.", flush=True)
+    _alert(f"Store Suite did not start within 3 minutes.\nDetails: %LOCALAPPDATA%\\store-suite\\last-run.log\nOr run StoreSuite_console.bat to see the error.")
 
 
 def _port_free(port: int) -> bool:
@@ -75,7 +89,7 @@ def main() -> None:
         print(f"Port {port} is used by another program - trying the next one...", flush=True)
     else:
         print(f"No free port between {first} and {first + 20}. Close other programs and try again.", flush=True)
-        input("Press Enter to close")
+        _alert("Store Suite: no free port found. Close other programs and try again.")
         return
     (get_data_dir() / "server.port").write_text(str(port))
     pid_file = get_data_dir() / "server.pid"
@@ -87,4 +101,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:  # noqa: BLE001
+        import traceback
+
+        traceback.print_exc()
+        _alert("Store Suite stopped because of an error.\nDetails: %LOCALAPPDATA%\\store-suite\\last-run.log")
+        raise

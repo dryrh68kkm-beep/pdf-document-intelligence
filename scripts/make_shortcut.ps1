@@ -8,10 +8,17 @@ if (Test-Path $b64) {  # always rewrite: an older icon may be on disk
 $w = New-Object -ComObject WScript.Shell
 $desktop = [Environment]::GetFolderPath('Desktop')
 $s = $w.CreateShortcut((Join-Path $desktop 'Store Suite.lnk'))
-# Starts StoreSuite.bat directly (normal window): works where Windows Script Host is blocked,
-# and any error stays visible instead of vanishing.
-$s.TargetPath = (Join-Path $app 'StoreSuite.bat')
-$s.WindowStyle = 1
+# pythonw.exe = Python without a console window. No wscript / cmd in between; errors go to
+# %LOCALAPPDATA%\store-suite\last-run.log and a message box. Falls back to the .bat if the venv is missing.
+$pyw = Join-Path $app '.venv\Scripts\pythonw.exe'
+if (Test-Path $pyw) {
+  $s.TargetPath = $pyw
+  $s.Arguments = '"' + (Join-Path $app 'scripts\run_suite.py') + '"'
+  $s.WindowStyle = 7
+} else {
+  $s.TargetPath = (Join-Path $app 'StoreSuite.bat')
+  $s.WindowStyle = 1
+}
 $s.WorkingDirectory = $app
 if (Test-Path $ico) { $s.IconLocation = $ico + ',0' }
 $s.Description = 'Store Suite'

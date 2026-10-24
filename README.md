@@ -5,7 +5,8 @@
 one server, one port (8100; picks the next free one if busy), one launcher, one data hub keyed by barcode.
 
 ```text
-Windows:  double-click StoreSuite.bat      (first run installs, then opens the browser)
+Windows:  double-click StoreSuite.bat      (first run installs, then starts with NO console window and opens the browser;
+                                            StoreSuite_console.bat shows the console; close from ตั้งค่า > ปิด Store Suite or StopStoreSuite.bat)
 Mac/Linux: ./StoreSuite.sh
 ```
 
@@ -13,7 +14,7 @@ The first run of `StoreSuite.bat` also puts a **Store Suite** icon on the Deskto
 
 | Tab | What it is |
 |---|---|
-| ภาพรวม | KPIs + expiring items joined with the home (fixture) they were counted in, OOS state and PDF-master presence. Click a row for the full cross-program card |
+| ภาพรวม | two separate panels - **สินค้าหมดอายุ** (expiry KPIs + table with the home each item was counted in) and **OOS / Pick Check** (its own KPIs + list). The two data sets are never mixed in one table; only the top search box looks a barcode up across everything |
 | วันหมดอายุ | the Expiry Dashboard page, reading the shared `data.csv` |
 | ผังร้าน / OOS | Stock Atlas; its LAN-server API is built in, so layout / OOS / Pick Check state is shared by every device |
 | เอกสาร PDF | the original PDF app, unchanged, mounted at `/m/pdf/` |

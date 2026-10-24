@@ -12,6 +12,7 @@ import ipaddress
 import logging
 import os
 import shutil
+import threading
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -142,6 +143,20 @@ def search(q: str = "", limit: int = 20):
 def expiry_locations(maxDays: float | None = 30, limit: int = 500):
     rows = hub.expiry_locations(None if maxDays is not None and maxDays >= 9999 else maxDays)
     return {"total": len(rows), "rows": rows[: max(1, min(limit, 5000))]}
+
+
+@app.get("/api/suite/oos")
+def oos(pending: bool = True, limit: int = 1000):
+    rows = hub.oos_items(pending)
+    return {"total": len(rows), "rows": rows[: max(1, min(limit, 5000))]}
+
+
+@app.post("/api/suite/shutdown")
+async def shutdown(request: Request):
+    """Close Store Suite (there is no console window to close). Server PC only."""
+    _require_local(request)
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+    return {"ok": True}
 
 
 @app.post("/api/suite/sync")

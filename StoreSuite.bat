@@ -54,11 +54,13 @@ if errorlevel 1 (
 )
 
 :start
-if not exist ".shortcut_v3" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make_shortcut.ps1" && echo done> ".shortcut_v3"
+if not exist ".shortcut_v4" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make_shortcut.ps1" && echo done> ".shortcut_v4"
 )
-echo Starting Store Suite at http://localhost:8100  (Ctrl+C to stop)
-python scripts\run_suite.py
+REM Run without a console window: pythonw. Errors are written to %LOCALAPPDATA%\store-suite\last-run.log
+REM and shown in a message box. Use StoreSuite_console.bat to watch the output instead.
+start "" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0scripts\run_suite.py"
+exit /b 0
 exit /b 0
 
 :findpy

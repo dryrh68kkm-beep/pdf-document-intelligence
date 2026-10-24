@@ -113,3 +113,30 @@ def test_big_pages_are_gzipped_and_cached(client):
     assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
     again = client.get("/m/atlas/", headers={"If-None-Match": r.headers["etag"]})
     assert again.status_code == 304
+
+
+def test_oos_and_expiry_are_kept_apart(client):
+    client.post("/api/suite/expiry/upload", files={"file": ("a.csv", CSV.encode("utf-8"))})
+    oos = json.dumps({"items": [{"barcode": "8859847102864", "name": "พัดลม", "soh": 0}, {"barcode": "111", "name": "ตรวจแล้ว", "soh": 2, "result": "FOUND"}]})
+    client.put("/m/atlas/api/state/oos", content=oos, headers={"X-If-Rev": "*"})
+
+    rows = client.get("/api/suite/expiry-locations?maxDays=9999").json()["rows"]
+    assert rows and all("oos" not in r and "inPdf" not in r for r in rows)
+    ov = client.get("/api/suite/overview").json()
+    assert "links" not in ov
+
+    pend = client.get("/api/suite/oos").json()
+    assert [r["barcode"] for r in pend["rows"]] == ["8859847102864"] and pend["total"] == 1
+    assert all("daysLeft" not in r and "homes" not in r for r in pend["rows"])
+    assert client.get("/api/suite/oos?pending=false").json()["total"] == 2
+
+    client.post("/api/suite/sync")
+    csv_text = client.get("/m/atlas/export/expiry-locations.csv").text
+    assert "OOS" not in csv_text.splitlines()[0]
+
+
+def test_shutdown_is_server_pc_only(client):
+    from starlette.testclient import TestClient as TC
+    from store_suite.app import app
+
+    assert TC(app, client=("192.168.1.50", 5000)).post("/api/suite/shutdown").status_code == 403

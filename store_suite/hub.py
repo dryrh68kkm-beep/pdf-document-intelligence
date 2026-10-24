@@ -165,7 +165,7 @@ class Hub:
 
     def expiry_locations(self, max_days: float | None = 30) -> list[dict]:
         """Expiring items with the homes they were counted in and OOS state."""
-        cnt, oos, pdf = self.count_index(), self.oos_index(), self.pdf_index()
+        cnt, pdf = self.count_index(), self.pdf_index()
         out = []
         for r in expiry_data.load_rows():
             b = _bc(r.get("BAR_CODE"))
@@ -173,7 +173,6 @@ class Hub:
             if not b or (max_days is not None and (days is None or days > max_days)):
                 continue
             homes = sorted((cnt.get(b) or {}).get("homes", {}))
-            o = oos.get(b)
             out.append({
                 "barcode": b,
                 "name": str(r.get("DESCRIPTION") or (pdf.get(b) or {}).get("name") or "").strip(),
@@ -181,10 +180,28 @@ class Hub:
                 "qty": _num(r.get("STOCK_QTY")),
                 "daysLeft": days,
                 "homes": homes,
-                "oos": bool(o and not o.get("result")),
-                "inPdf": b in pdf,
             })
         out.sort(key=lambda x: (x["daysLeft"] if x["daysLeft"] is not None else 1e9, x["barcode"]))
+        return out
+
+    def oos_items(self, pending_only: bool = True) -> list[dict]:
+        """OOS / Pick Check items exactly as Atlas saved them - no expiry data mixed in."""
+        out = []
+        for it in (atlas_api.read_state("oos") or {}).get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            checked = bool(it.get("result"))
+            if pending_only and checked:
+                continue
+            out.append({
+                "barcode": _bc(it.get("barcode")),
+                "name": str(it.get("name") or "").strip(),
+                "soh": _num(it.get("soh")),
+                "promo": bool(it.get("promo")),
+                "checked": checked,
+                "result": it.get("result") or "",
+            })
+        out.sort(key=lambda x: (x["checked"], x["soh"] if x["soh"] is not None else 0, x["barcode"]))
         return out
 
     def overview(self) -> dict:
@@ -214,11 +231,6 @@ class Hub:
                 "sharedLayout": atlas_api.state_file("layout").is_file(),
             },
             "pdf": {"barcodes": len(pdf), "needReview": sum(1 for e in pdf.values() if e["reviewRequired"])},
-            "links": {
-                "expiryAndCounted": sum(1 for x in loc if x["homes"]),
-                "expiryAndOos": sum(1 for x in loc if x["oos"]),
-                "expiryAndPdf": sum(1 for x in loc if x["inPdf"]),
-            },
             "lastSync": self.last_sync,
         }
 
@@ -263,9 +275,9 @@ class Hub:
         rows = self.expiry_locations(max_days=None)
         buf = io.StringIO(newline="")
         w = csv.writer(buf)
-        w.writerow(["BAR_CODE", "DESCRIPTION", "SUB_DEPT_NAME", "STOCK_QTY", "DAY_LEFT", "HOMES", "OOS_OPEN", "IN_PDF_MASTER"])
+        w.writerow(["BAR_CODE", "DESCRIPTION", "SUB_DEPT_NAME", "STOCK_QTY", "DAY_LEFT", "HOMES"])
         for r in rows:
-            vals = [r["barcode"], r["name"], r["subDept"], r["qty"] if r["qty"] is not None else "", r["daysLeft"] if r["daysLeft"] is not None else "", " ".join(r["homes"]), int(r["oos"]), int(r["inPdf"])]
+            vals = [r["barcode"], r["name"], r["subDept"], r["qty"] if r["qty"] is not None else "", r["daysLeft"] if r["daysLeft"] is not None else "", " ".join(r["homes"])]
             w.writerow([("'" + v) if isinstance(v, str) and v[:1] in "=+-@" else v for v in vals])
         f = atlas_export_dir() / "expiry-locations.csv"
         tmp = f.with_name(f.name + ".tmp")

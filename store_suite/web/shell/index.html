@@ -28,6 +28,7 @@ main{flex:1;position:relative;min-height:0}
 .view{position:absolute;inset:0;display:none}.view.on{display:block}
 iframe{border:0;width:100%;height:100%;background:var(--bg)}
 .page{padding:16px;overflow:auto;height:100%}
+.seg{display:flex;gap:6px;margin-bottom:14px}.seg button{border:1px solid var(--line);background:var(--card);color:var(--mute);font:inherit;padding:7px 16px;border-radius:999px;cursor:pointer}.seg button[aria-selected=true]{background:var(--brand);border-color:var(--brand);color:var(--brand-ink);font-weight:600}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:default}
 .kpi .n{font-size:28px;font-weight:700;line-height:1.1}.kpi .l{color:var(--mute);font-size:12px;margin-top:2px}.kpi.bad .n{color:var(--bad)}.kpi.warn .n{color:var(--warn)}
@@ -67,15 +68,28 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
 </header>
 <main>
   <div class="view on" id="v-home"><div class="page">
-    <div class="kpis" id="kpis"></div>
-    <section class="card">
-      <h2>สินค้าใกล้หมดอายุ + บ้านที่ต้องไปเก็บ
-        <select id="days"><option value="0">หมดอายุ / ครบวันนี้</option><option value="7">≤ 7 วัน</option><option value="30" selected>≤ 30 วัน</option><option value="90">≤ 90 วัน</option><option value="9999">ทั้งหมด</option></select>
-        <label class="tag"><input type="checkbox" id="onlyLoc"> เฉพาะที่รู้บ้าน</label>
-        <span class="grow"></span><span class="syncinfo" id="locCount"></span>
-      </h2>
-      <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>แผนก</th><th>คงเหลือ</th><th>เหลือ (วัน)</th><th>บ้าน (Fixture)</th><th>สถานะ</th></tr></thead><tbody id="locBody"></tbody></table></div>
-    </section>
+    <div class="seg" id="seg"><button data-s="exp" aria-selected="true">สินค้าหมดอายุ</button><button data-s="oos" aria-selected="false">OOS / Pick Check</button></div>
+    <div id="p-exp">
+      <div class="kpis" id="kpisExp"></div>
+      <section class="card">
+        <h2>สินค้าใกล้หมดอายุ
+          <select id="days"><option value="0">หมดอายุ / ครบวันนี้</option><option value="7">≤ 7 วัน</option><option value="30" selected>≤ 30 วัน</option><option value="90">≤ 90 วัน</option><option value="9999">ทั้งหมด</option></select>
+          <label class="tag"><input type="checkbox" id="onlyLoc"> เฉพาะที่รู้บ้าน</label>
+          <span class="grow"></span><span class="syncinfo" id="locCount"></span>
+        </h2>
+        <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>แผนก</th><th>คงเหลือ</th><th>เหลือ (วัน)</th><th>บ้าน (Fixture)</th></tr></thead><tbody id="locBody"></tbody></table></div>
+      </section>
+    </div>
+    <div id="p-oos" hidden>
+      <div class="kpis" id="kpisOos"></div>
+      <section class="card">
+        <h2>รายการ OOS
+          <label class="tag"><input type="checkbox" id="oosAll"> รวมที่ตรวจแล้ว</label>
+          <span class="grow"></span><span class="syncinfo" id="oosCount"></span>
+        </h2>
+        <div class="tablewrap"><table><thead><tr><th>บาร์โค้ด</th><th>สินค้า</th><th>SOH</th><th>สถานะ</th></tr></thead><tbody id="oosBody"></tbody></table></div>
+      </section>
+    </div>
   </div></div>
   <div class="view" id="v-expiry"></div>
   <div class="view" id="v-atlas"></div>
@@ -93,6 +107,8 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
   <input type="number" id="cAuto" min="0">
   <label>ดึงค่าจากโปรแกรมเดิม (ค้นหาในโฟลเดอร์ข้างๆ เช่น C:\LP-Tools)</label>
   <div id="cImp" class="syncinfo">กำลังค้นหา…</div>
+  <label>ปิดโปรแกรม (เมื่อเปิดแบบไม่มีหน้าต่าง cmd)</label>
+  <button class="btn" id="quitBtn">ปิด Store Suite</button>
   <label>นำเข้าไฟล์วันหมดอายุเอง (.csv / .txt / .xlsx)</label>
   <input type="file" id="cFile" accept=".csv,.txt,.xlsx">
   <div id="cMsg" class="syncinfo"></div>
@@ -128,25 +144,38 @@ function ago(iso){if(!iso)return"ยังไม่เคย";const s=(Date.now(
 
 async function loadHome(){
   try{
-    const o=await api("/api/suite/overview"),e=o.expiry,a=o.atlas,p=o.pdf;
-    $("#kpis").innerHTML=`
+    const o=await api("/api/suite/overview"),e=o.expiry,a=o.atlas;
+    $("#kpisExp").innerHTML=`
      <div class="kpi bad"><h3>หมดอายุแล้ว</h3><div class="n">${fmt(e.expired)}</div><div class="l">จาก ${fmt(e.rows)} รายการในไฟล์</div></div>
      <div class="kpi warn"><h3>หมดอายุใน 7 วัน</h3><div class="n">${fmt(e.within7)}</div><div class="l">ภายใน 30 วัน ${fmt(e.within30)}</div></div>
-     <div class="kpi"><h3>รู้บ้านแล้ว</h3><div class="n">${fmt(o.links.expiryAndCounted)}</div><div class="l">สินค้าใกล้หมดอายุที่พบในผลนับ Atlas</div></div>
-     <div class="kpi ${a.oosOpen?"warn":""}"><h3>OOS ค้างตรวจ</h3><div class="n">${fmt(a.oosOpen)}</div><div class="l">${fmt(o.links.expiryAndOos)} รายการซ้อนกับของใกล้หมดอายุ</div></div>
-     <div class="kpi"><h3>บาร์โค้ดจาก PDF</h3><div class="n">${fmt(p.barcodes)}</div><div class="l">รอตรวจ ${fmt(p.needReview)} · ตรงกับใกล้หมดอายุ ${fmt(o.links.expiryAndPdf)}</div></div>`;
+     <div class="kpi"><h3>รู้บ้านแล้ว</h3><div class="n">${fmt(e.located)}</div><div class="l">จากผลนับสต็อกใน Atlas</div></div>`;
+    $("#kpisOos").innerHTML=`
+     <div class="kpi ${a.oosOpen?"warn":""}"><h3>OOS ค้างตรวจ</h3><div class="n">${fmt(a.oosOpen)}</div><div class="l">จากทั้งหมด ${fmt(a.oosTotal)} รายการ</div></div>
+     <div class="kpi"><h3>ตรวจแล้ว</h3><div class="n">${fmt(a.oosTotal-a.oosOpen)}</div><div class="l">บันทึกผล Pick Check แล้ว</div></div>`;
     const ls=o.lastSync||{};
     $("#syncinfo").textContent="ซิงค์ล่าสุด: "+ago(ls.at)+(ls.ok===false?" (มีข้อผิดพลาด)":"");
     $("#syncinfo").className="syncinfo"+(ls.ok===false?" err":"");
-  }catch(x){$("#kpis").innerHTML=`<div class="kpi bad"><h3>โหลดไม่ได้</h3><div class="l">${esc(x.message)}</div></div>`}
-  loadLoc();
+  }catch(x){$("#kpisExp").innerHTML=`<div class="kpi bad"><h3>โหลดไม่ได้</h3><div class="l">${esc(x.message)}</div></div>`}
+  loadLoc();loadOos();
 }
+let oosRows=[];
+async function loadOos(){
+  try{const d=await api(`/api/suite/oos?pending=${$("#oosAll").checked?"false":"true"}&limit=1000`);oosRows=d.rows;
+    $("#oosCount").textContent=`แสดง ${fmt(d.rows.length)} จาก ${fmt(d.total)}`;
+    $("#oosBody").innerHTML=d.rows.length?d.rows.map(r=>`<tr class="row" data-o="${esc(r.barcode)}"><td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${fmt(r.soh)}</td><td>${r.checked?`<span class="tag">ตรวจแล้ว</span>`:`<span class="tag warn">ค้างตรวจ</span>`}${r.promo?' <span class="tag">โปร</span>':""}</td></tr>`).join(""):`<tr><td colspan=4 class="syncinfo">ไม่มีรายการ OOS — นำเข้าไฟล์ OOS ในแท็บ “ผังร้าน / OOS”</td></tr>`;
+  }catch(x){$("#oosBody").innerHTML=`<tr><td colspan=4 class="err">${esc(x.message)}</td></tr>`}
+}
+document.querySelectorAll("#seg button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#seg button").forEach(x=>x.setAttribute("aria-selected",x===b));
+  $("#p-exp").hidden=b.dataset.s!=="exp";$("#p-oos").hidden=b.dataset.s!=="oos"});
+$("#oosAll").onchange=loadOos;
+$("#oosBody").onclick=e=>{const tr=e.target.closest("tr[data-o]");if(tr)openProduct(tr.dataset.o,"oos")};
 let locRows=[];
 async function loadLoc(){
   try{
     const d=await api(`/api/suite/expiry-locations?maxDays=${$("#days").value}&limit=1000`);
     locRows=d.rows;renderLoc(d.total);
-  }catch(x){$("#locBody").innerHTML=`<tr><td colspan=7 class="err">${esc(x.message)}</td></tr>`}
+  }catch(x){$("#locBody").innerHTML=`<tr><td colspan=6 class="err">${esc(x.message)}</td></tr>`}
 }
 function renderLoc(total){
   const rows=locRows.filter(r=>!$("#onlyLoc").checked||r.homes.length);
@@ -155,22 +184,21 @@ function renderLoc(total){
     <td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${esc(r.subDept)}</td><td>${fmt(r.qty)}</td>
     <td>${r.daysLeft==null?"–":r.daysLeft<0?`<span class="tag bad">เกิน ${-r.daysLeft}</span>`:r.daysLeft<=7?`<span class="tag warn">${r.daysLeft}</span>`:r.daysLeft}</td>
     <td>${r.homes.length?esc(r.homes.slice(0,6).join(", "))+(r.homes.length>6?` +${r.homes.length-6}`:""):'<span class="syncinfo">ไม่พบในผลนับ</span>'}</td>
-    <td>${r.oos?'<span class="tag warn">OOS ค้าง</span> ':""}${r.inPdf?'<span class="tag">มีใน PDF</span>':""}</td></tr>`).join(""):`<tr><td colspan=7 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`;
+</tr>`).join(""):`<tr><td colspan=6 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`;
 }
 $("#days").onchange=loadLoc;$("#onlyLoc").onchange=()=>renderLoc(locRows.length);
-$("#locBody").onclick=e=>{const tr=e.target.closest("tr[data-b]");if(tr)openProduct(tr.dataset.b)};
+$("#locBody").onclick=e=>{const tr=e.target.closest("tr[data-b]");if(tr)openProduct(tr.dataset.b,"expiry")};
 
-async function openProduct(b){
+async function openProduct(b,scope){
   const p=await api("/api/suite/product/"+encodeURIComponent(b));
   $("#pTitle").textContent=p.name||p.barcode;
   const ex=p.expiry.map(x=>`${fmt(x.qty)} ชิ้น · เหลือ ${x.daysLeft??"–"} วัน${x.subDept?" · "+esc(x.subDept):""}`).join("<br>")||"–";
-  $("#pBody").innerHTML=`<dl class="kv">
-   <dt>บาร์โค้ด</dt><dd>${esc(p.barcode)}</dd>
-   <dt>วันหมดอายุ</dt><dd>${ex}</dd>
-   <dt>บ้าน (Atlas)</dt><dd>${p.homes.length?p.homes.map(h=>`${esc(h.home)} (${fmt(h.qty)})`).join(", "):"ไม่พบในผลนับ"}</dd>
-   <dt>OOS</dt><dd>${p.oos?(p.oos.checked?"ตรวจแล้ว":"ค้างตรวจ")+" · SOH "+fmt(p.oos.soh):"–"}</dd>
-   <dt>เอกสาร PDF</dt><dd>${p.pdf?esc(p.pdf.documents.join(", "))+(p.pdf.department?" · "+esc(p.pdf.department):""):"–"}</dd></dl>`;
-  $("#pActs").innerHTML=`<button class="btn" data-m="expiry">เปิดใน วันหมดอายุ</button><button class="btn" data-m="atlas">เปิดใน ผังร้าน</button><button class="btn" data-m="pdf">เปิดใน PDF</button><button class="btn primary" data-m="">ปิด</button>`;
+  // opened from the expiry table -> expiry facts only; from the OOS table -> OOS only; from the search box -> everything
+  const rowExp=`<dt>วันหมดอายุ</dt><dd>${ex}</dd><dt>บ้าน (Atlas)</dt><dd>${p.homes.length?p.homes.map(h=>`${esc(h.home)} (${fmt(h.qty)})`).join(", "):"ไม่พบในผลนับ"}</dd>`;
+  const rowOos=`<dt>OOS</dt><dd>${p.oos?(p.oos.checked?"ตรวจแล้ว":"ค้างตรวจ")+" · SOH "+fmt(p.oos.soh):"–"}</dd>`;
+  const rowPdf=`<dt>เอกสาร PDF</dt><dd>${p.pdf?esc(p.pdf.documents.join(", "))+(p.pdf.department?" · "+esc(p.pdf.department):""):"–"}</dd>`;
+  $("#pBody").innerHTML=`<dl class="kv"><dt>บาร์โค้ด</dt><dd>${esc(p.barcode)}</dd>${scope==="expiry"?rowExp:scope==="oos"?rowOos:rowExp+rowOos+rowPdf}</dl>`;
+  $("#pActs").innerHTML=`${scope==="oos"?"":'<button class="btn" data-m="expiry">เปิดใน วันหมดอายุ</button>'}${scope==="expiry"?"":'<button class="btn" data-m="atlas">เปิดใน ผังร้าน / OOS</button>'}${scope?"":'<button class="btn" data-m="pdf">เปิดใน PDF</button>'}<button class="btn primary" data-m="">ปิด</button>`;
   $("#pActs").onclick=e=>{const m=e.target.dataset?.m;if(m===undefined)return;$("#prod").close();if(m)goSearch(m,p.barcode)};
   $("#prod").showModal();
 }
@@ -206,6 +234,8 @@ async function scanImport(){
         const c=await api("/api/suite/config");$("#cSrc").value=c.expirySourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";loadHome()}
       catch(x){$("#cMsg").className="syncinfo err";$("#cMsg").textContent=x.message}go.disabled=false}
   }catch(x){box.className="syncinfo err";box.textContent=x.message}}
+$("#quitBtn").onclick=async()=>{if(!confirm("ปิด Store Suite ทั้งหมด? เครื่องอื่นในร้านจะใช้งานไม่ได้จนกว่าจะเปิดใหม่"))return;
+  try{await api("/api/suite/shutdown",{method:"POST"})}catch(x){}document.body.innerHTML='<p style="padding:24px;font:16px sans-serif">ปิด Store Suite แล้ว — ปิดหน้าต่างนี้ได้เลย</p>'};
 $("#cClose").onclick=()=>$("#cfg").close();
 $("#cSave").onclick=async()=>{try{
   await api("/api/suite/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({expirySourceFolder:$("#cSrc").value.trim(),expirySourceBasename:$("#cBase").value.trim(),autoSyncMinutes:Math.max(0,+$("#cAuto").value||0)})});
