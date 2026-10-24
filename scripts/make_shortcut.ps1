@@ -2,7 +2,7 @@
 $app = Split-Path -Parent $PSScriptRoot
 $b64 = Join-Path $app 'assets\suite_icon.ico.b64'
 $ico = Join-Path $app 'assets\suite_icon.ico'
-if ((Test-Path $b64) -and -not (Test-Path $ico)) {
+if (Test-Path $b64) {  # always rewrite: an older icon may be on disk
   [IO.File]::WriteAllBytes($ico, [Convert]::FromBase64String([IO.File]::ReadAllText($b64)))
 }
 $w = New-Object -ComObject WScript.Shell

@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Store Suite</title>
+<link rel="icon" type="image/png" href="/shell/favicon.png">
 <style>
 :root{--bg:#f4f6f8;--card:#fff;--ink:#1c2630;--mute:#6a7886;--line:#dde3e9;--brand:#0b6b4d;--brand-ink:#fff;--warn:#b45309;--bad:#b42318;--ok:#0b6b4d;--chip:#e8f2ee}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#10161c;--card:#18212a;--ink:#e6edf3;--mute:#8d9bab;--line:#2a3541;--brand:#3fb68b;--brand-ink:#08140f;--warn:#e0a458;--bad:#f2766b;--ok:#3fb68b;--chip:#1c2e27}}
 *{box-sizing:border-box}html,body{height:100%;margin:0}
 body{font:14px/1.45 "IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif;background:var(--bg);color:var(--ink);display:flex;flex-direction:column}
 header{display:flex;align-items:center;gap:12px;padding:8px 16px;background:var(--card);border-bottom:1px solid var(--line);flex-wrap:wrap}
-.logo{font-weight:700;font-size:16px;letter-spacing:.2px;margin-right:4px}
+.logo{font-weight:700;font-size:16px;letter-spacing:.2px;margin-right:4px;display:inline-flex;align-items:center;gap:8px}.logo img{border-radius:7px}
 nav{display:flex;gap:4px}
 nav button{border:0;background:none;color:var(--mute);font:inherit;padding:8px 14px;border-radius:8px;cursor:pointer}
 nav button:hover{background:var(--chip)}nav button[aria-selected=true]{background:var(--brand);color:var(--brand-ink);font-weight:600}
@@ -51,7 +52,7 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
 </head>
 <body>
 <header>
-  <span class="logo">Store Suite</span>
+  <span class="logo"><img src="/shell/logo.png" alt="" width="28" height="28"> Store Suite</span>
   <nav role="tablist" id="tabs">
     <button role="tab" data-v="home" aria-selected="true">ภาพรวม</button>
     <button role="tab" data-v="expiry" aria-selected="false">วันหมดอายุ</button>

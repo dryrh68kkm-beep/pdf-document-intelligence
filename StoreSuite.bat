@@ -54,8 +54,8 @@ if errorlevel 1 (
 )
 
 :start
-if not exist ".shortcut_v2" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make_shortcut.ps1" && echo done> ".shortcut_v2"
+if not exist ".shortcut_v3" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\make_shortcut.ps1" && echo done> ".shortcut_v3"
 )
 echo Starting Store Suite at http://localhost:8100  (Ctrl+C to stop)
 python scripts\run_suite.py
