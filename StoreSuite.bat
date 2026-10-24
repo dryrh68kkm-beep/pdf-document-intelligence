@@ -45,6 +45,12 @@ goto start
 
 :run
 call .venv\Scripts\activate.bat
+REM A .venv made earlier by install.bat may not know the store_suite package yet - repair it.
+python -c "import store_suite.app" >nul 2>nul
+if errorlevel 1 (
+  echo Updating the installation ^(one time^)...
+  python -m pip install --retries 10 --timeout 60 --disable-pip-version-check -e ".[api,ocr]" || (pause & exit /b 1)
+)
 
 :start
 if not exist ".shortcut_v2" (
