@@ -50,6 +50,7 @@ python -c "import store_suite.app" >nul 2>nul
 if errorlevel 1 (
   echo Updating the installation ^(one time^)...
   python -m pip install --retries 10 --timeout 60 --disable-pip-version-check -e ".[api,ocr]" || (pause & exit /b 1)
+  python -m pip uninstall -y pymupdf-layout pymupdf4llm onnxruntime >nul 2>nul
 )
 
 :start

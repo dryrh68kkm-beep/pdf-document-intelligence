@@ -8,7 +8,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "pikepdf>=9.0",
     "pdfplumber>=0.11",
-    "pymupdf>=1.24",
+    "pymupdf>=1.24,<2",  # 2.x pulls onnxruntime (native, crashes silently on some PCs)
     "openpyxl>=3.1",
 ]
 
