@@ -117,6 +117,7 @@ class Hub:
                 if p.get("docFilename") and p["docFilename"] not in e["documents"]:
                     e["documents"].append(p["docFilename"])
         except Exception:  # noqa: BLE001 - PDF side being down must not break the other modules
+            self._pdf_cache = (now, self._pdf_cache[1])  # keep serving the last good index; retry after the TTL
             return self._pdf_cache[1]
         self._pdf_cache = (now, idx)
         return idx

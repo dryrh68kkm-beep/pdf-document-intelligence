@@ -62,11 +62,12 @@ async def _lifespan(_: FastAPI):
     # (recovers interrupted documents, starts the PDF inbox watcher).
     async with pdf_app.router.lifespan_context(pdf_app):
         task = asyncio.create_task(_auto_sync_loop())
-        asyncio.create_task(asyncio.to_thread(hub.run_sync))  # first sync at startup
+        first_sync = asyncio.create_task(asyncio.to_thread(hub.run_sync))  # first sync at startup (kept referenced)
         try:
             yield
         finally:
             task.cancel()
+            first_sync.cancel()
 
 
 app = FastAPI(title="Store Suite", version=__version__, lifespan=_lifespan)
@@ -82,6 +83,25 @@ def _is_lan(host: str | None) -> bool:
     if getattr(ip, "ipv4_mapped", None):
         ip = ip.ipv4_mapped
     return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
+def _is_loopback(host: str | None) -> bool:
+    if not host or host in ("localhost", "testclient"):  # "testclient": Starlette's TestClient, never a real peer
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
+def _require_local(request: Request) -> None:
+    """Settings name folders this server will read files from, so only a
+    browser on the server PC itself may change them - not any LAN device."""
+    if not _is_loopback(request.client.host if request.client else None):
+        raise HTTPException(403, "ตั้งค่าได้เฉพาะจากเครื่องที่รันโปรแกรมนี้")
 
 
 @app.middleware("http")
@@ -125,6 +145,7 @@ def get_config():
 
 @app.put("/api/suite/config")
 async def put_config(request: Request):
+    _require_local(request)
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(400, "config must be an object")
@@ -137,8 +158,9 @@ def health():
 
 
 @app.post("/api/suite/expiry/upload")
-async def upload_expiry(file: UploadFile):
+async def upload_expiry(file: UploadFile, request: Request):
     """Manual drop of a NEARLY_EXPIRED file (same validation as the network fetch)."""
+    _require_local(request)
     suffix = Path(file.filename or "data.csv").suffix.lower()
     if suffix not in (".csv", ".txt", ".xlsx"):
         raise HTTPException(400, "รองรับเฉพาะ .csv .txt .xlsx")

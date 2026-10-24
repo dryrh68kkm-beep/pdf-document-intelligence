@@ -88,3 +88,21 @@ def test_lan_only_blocks_public_ip(client):
 
     c = TC(app, client=("8.8.8.8", 5000))
     assert c.get("/api/suite/health").status_code == 403
+
+
+def test_settings_and_upload_are_server_pc_only(client):
+    from starlette.testclient import TestClient as TC
+    from store_suite.app import app
+
+    lan = TC(app, client=("192.168.1.50", 5000))   # allowed to browse, not to change settings
+    assert lan.get("/api/suite/overview").status_code == 200
+    assert lan.put("/api/suite/config", json={"atlasSources": [{"path": "C:/"}]}).status_code == 403
+    assert lan.post("/api/suite/expiry/upload", files={"file": ("a.csv", b"x")}).status_code == 403
+    local = TC(app, client=("127.0.0.1", 5000))
+    assert local.put("/api/suite/config", json={"autoSyncMinutes": 5}).status_code == 200
+
+
+def test_path_traversal_is_rejected(client):
+    assert client.get("/m/atlas/api/file?src=0&name=../config.json").status_code == 400
+    assert client.put("/m/atlas/api/export/..%2Fx.csv", content="a").status_code in (400, 404)
+    assert client.get("/m/expiry/..%2F..%2Fconfig.json").status_code == 404

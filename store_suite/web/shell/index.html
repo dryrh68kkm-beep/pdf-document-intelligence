@@ -69,7 +69,7 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
     <div class="kpis" id="kpis"></div>
     <section class="card">
       <h2>สินค้าใกล้หมดอายุ + บ้านที่ต้องไปเก็บ
-        <select id="days"><option value="0">หมดอายุแล้ว</option><option value="7">≤ 7 วัน</option><option value="30" selected>≤ 30 วัน</option><option value="90">≤ 90 วัน</option><option value="9999">ทั้งหมด</option></select>
+        <select id="days"><option value="0">หมดอายุ / ครบวันนี้</option><option value="7">≤ 7 วัน</option><option value="30" selected>≤ 30 วัน</option><option value="90">≤ 90 วัน</option><option value="9999">ทั้งหมด</option></select>
         <label class="tag"><input type="checkbox" id="onlyLoc"> เฉพาะที่รู้บ้าน</label>
         <span class="grow"></span><span class="syncinfo" id="locCount"></span>
       </h2>
@@ -174,7 +174,7 @@ async function openProduct(b){
 
 let st;$("#q").oninput=()=>{clearTimeout(st);const v=$("#q").value.trim();if(v.length<2){$("#hits").hidden=true;return}
   st=setTimeout(async()=>{try{const r=await api("/api/suite/search?q="+encodeURIComponent(v));
-    $("#hits").innerHTML=r.length?r.map(p=>`<div class="hit" data-b="${esc(p.barcode)}">${esc(p.name||"(ไม่มีชื่อ)")}<small>${esc(p.barcode)} · ${[p.expiry.length?"ใกล้หมดอายุ":"",p.homes.length?"บ้าน "+p.homes.slice(0,3).map(h=>h.home).join(","):"",p.oos?"OOS":"",p.pdf?"PDF":""].filter(Boolean).join(" · ")||"—"}</small></div>`).join(""):'<div class="hit">ไม่พบ</div>';
+    $("#hits").innerHTML=r.length?r.map(p=>`<div class="hit" data-b="${esc(p.barcode)}">${esc(p.name||"(ไม่มีชื่อ)")}<small>${esc(p.barcode)} · ${esc([p.expiry.length?"ใกล้หมดอายุ":"",p.homes.length?"บ้าน "+p.homes.slice(0,3).map(h=>h.home).join(","):"",p.oos?"OOS":"",p.pdf?"PDF":""].filter(Boolean).join(" · ")||"—")}</small></div>`).join(""):'<div class="hit">ไม่พบ</div>';
     $("#hits").hidden=false}catch(_){}},250)};
 $("#hits").onclick=e=>{const h=e.target.closest(".hit[data-b]");if(h){$("#hits").hidden=true;openProduct(h.dataset.b)}};
 document.addEventListener("click",e=>{if(!e.target.closest(".search"))$("#hits").hidden=true});
