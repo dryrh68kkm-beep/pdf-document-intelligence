@@ -28,6 +28,8 @@ The first run of `StoreSuite.bat` also puts a **Store Suite** icon on the Deskto
 
 Data lives in `%LOCALAPPDATA%\store-suite` (override: `STORE_SUITE_DATA_DIR`); the PDF app keeps its existing data dir, so current documents carry over. Settings: `config.json` there (or the ตั้งค่า dialog). Only LAN / loopback clients are accepted unless `lanOnly` is turned off.
 
+**Import from the standalone programs.** *ตั้งค่า → ดึงค่าจากโปรแกรมเดิม* looks next to this folder (e.g. `C:\LP-Tools\ExpiryApp`, `C:\LP-Tools\Ooslayout`), reads expiry-dashboard's `config.ps1` (network folder, file name, extensions) and Stock Atlas' `server\config.json` (extra drop folders), and copies the current `data.csv` and Atlas' saved layout / OOS / count / POG state. It never overwrites anything Store Suite already has.
+
 **Accuracy cross-checks (automatic, no manual input).** While reading a PDF, every
 row is compared with the other programs' data (`catalog/cross_reference.py`):
 

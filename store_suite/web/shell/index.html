@@ -90,6 +90,8 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
   <input type="text" id="cBase">
   <label>ซิงค์อัตโนมัติทุก (นาที) — 0 = ปิด</label>
   <input type="number" id="cAuto" min="0">
+  <label>ดึงค่าจากโปรแกรมเดิม (ค้นหาในโฟลเดอร์ข้างๆ เช่น C:\LP-Tools)</label>
+  <div id="cImp" class="syncinfo">กำลังค้นหา…</div>
   <label>นำเข้าไฟล์วันหมดอายุเอง (.csv / .txt / .xlsx)</label>
   <input type="file" id="cFile" accept=".csv,.txt,.xlsx">
   <div id="cMsg" class="syncinfo"></div>
@@ -189,7 +191,20 @@ $("#syncBtn").onclick=async()=>{const b=$("#syncBtn");b.disabled=true;b.textCont
   b.disabled=false;b.textContent="ซิงค์ข้อมูล"};
 
 $("#cfgBtn").onclick=async()=>{const c=await api("/api/suite/config");
-  $("#cSrc").value=c.expirySourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";$("#cAuto").value=c.autoSyncMinutes??10;$("#cMsg").textContent="";$("#cfg").showModal()};
+  $("#cSrc").value=c.expirySourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";$("#cAuto").value=c.autoSyncMinutes??10;$("#cMsg").textContent="";$("#cfg").showModal();scanImport()};
+async function scanImport(){
+  const box=$("#cImp");box.className="syncinfo";box.textContent="กำลังค้นหา…";
+  try{const f=await api("/api/suite/import/scan");let h="";
+    f.expiry.forEach(e=>h+=`<div><label style="display:flex;gap:8px;margin:4px 0"><input type="checkbox" data-k="expiry" value="${esc(e.path)}" checked> Expiry Dashboard — ${esc(e.path)}<br><small>โฟลเดอร์ต้นทาง: ${esc(e.expirySourceFolder||"(ไม่ได้ตั้ง)")} · ไฟล์ข้อมูล: ${e.dataFile?"มี":"ไม่มี"}</small></label></div>`);
+    f.atlas.forEach(a=>h+=`<div><label style="display:flex;gap:8px;margin:4px 0"><input type="checkbox" data-k="atlas" value="${esc(a.path)}" checked> Stock Atlas — ${esc(a.path)}<br><small>ข้อมูลที่บันทึกไว้: ${esc(a.states.join(", ")||"ไม่มี")} · โฟลเดอร์รับไฟล์: ${a.atlasSources.length}</small></label></div>`);
+    box.innerHTML=h?h+'<button class="btn primary" id="impGo">นำเข้าค่าที่เลือก (ไม่ทับของที่มีอยู่แล้ว)</button>':"ไม่พบโปรแกรมเดิมในโฟลเดอร์ข้างๆ";
+    const go=$("#impGo");if(go)go.onclick=async()=>{go.disabled=true;
+      const pick=k=>(box.querySelector(`input[data-k=${k}]:checked`)||{}).value||null;
+      try{const r=await api("/api/suite/import/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({expiry:pick("expiry"),atlas:pick("atlas")})});
+        $("#cMsg").className="syncinfo ok";$("#cMsg").textContent=`นำเข้าแล้ว ${r.copied.length} รายการ · ตั้งค่า ${Object.keys(r.settings).length} ค่า`+(r.skipped.length?` · ข้าม: `+r.skipped.map(x=>x.item).join(", "):"");
+        const c=await api("/api/suite/config");$("#cSrc").value=c.expirySourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";loadHome()}
+      catch(x){$("#cMsg").className="syncinfo err";$("#cMsg").textContent=x.message}go.disabled=false}
+  }catch(x){box.className="syncinfo err";box.textContent=x.message}}
 $("#cClose").onclick=()=>$("#cfg").close();
 $("#cSave").onclick=async()=>{try{
   await api("/api/suite/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({expirySourceFolder:$("#cSrc").value.trim(),expirySourceBasename:$("#cBase").value.trim(),autoSyncMinutes:Math.max(0,+$("#cAuto").value||0)})});

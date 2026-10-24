@@ -21,7 +21,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from store_suite import __version__, atlas_api, expiry_data, shim
+from store_suite import __version__, atlas_api, expiry_data, import_config, shim
 from store_suite.config import load_config, save_config
 from store_suite.hub import Hub
 from store_suite.paths import WEB_DIR, expiry_dir
@@ -161,6 +161,24 @@ async def put_config(request: Request):
     if not isinstance(body, dict):
         raise HTTPException(400, "config must be an object")
     return save_config(body)
+
+
+@app.get("/api/suite/import/scan")
+def import_scan(dirs: str = ""):
+    """Look for the standalone programs next to this folder (read-only)."""
+    return import_config.scan([d for d in dirs.split("|") if d])
+
+
+@app.post("/api/suite/import/apply")
+async def import_apply(request: Request):
+    _require_local(request)
+    body = await request.json()
+    try:
+        res = import_config.apply(body.get("expiry"), body.get("atlas"), body.get("dirs") or [])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    hub.run_sync()
+    return res
 
 
 @app.get("/api/suite/health")
