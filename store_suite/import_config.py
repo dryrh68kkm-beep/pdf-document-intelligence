@@ -159,7 +159,7 @@ def apply(expiry_path: str | None, atlas_path: str | None, extra_dirs: list[str]
             raise ValueError("ไม่พบ expiry-dashboard ที่เลือก")
         if e["expirySourceFolder"] and not cfg.get("expirySourceFolder"):
             patch["expirySourceFolder"] = e["expirySourceFolder"]
-        if e["expirySourceBasename"] and cfg.get("expirySourceBasename") == "NEARLY_EXPIRED_1003":
+        if e["expirySourceBasename"] and cfg.get("expirySourceBasename") == "NEARLY_EXPIRED_1003" and e["expirySourceBasename"] != cfg.get("expirySourceBasename"):
             patch["expirySourceBasename"] = e["expirySourceBasename"]
         if e["expirySourceExtensions"] and e["expirySourceExtensions"] != cfg.get("expirySourceExtensions"):
             patch["expirySourceExtensions"] = e["expirySourceExtensions"]
