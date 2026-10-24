@@ -2,7 +2,7 @@
 
 `store_suite/` combines **PDF Document Intelligence**, **Expiry Dashboard**
 (expiry-dashboard) and **Stock Atlas** (Ooslayout) into a single program:
-one server, one port (8000), one launcher, one data hub keyed by barcode.
+one server, one port (8100; picks the next free one if busy), one launcher, one data hub keyed by barcode.
 
 ```text
 Windows:  double-click StoreSuite.bat      (first run installs, then opens the browser)

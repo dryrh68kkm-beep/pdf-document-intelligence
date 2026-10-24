@@ -9,7 +9,8 @@ from pathlib import Path
 from store_suite.paths import get_data_dir
 
 DEFAULTS: dict = {
-    "port": 8000,
+    # 8100: the standalone apps already use 8000 (PDF), 8080 (Atlas) and 8090 (expiry), so a still-running old app cannot block Store Suite.
+    "port": 8100,
     # Only loopback + private LAN addresses may connect (same rule as Stock Atlas).
     "lanOnly": True,
     # Folder the POS drops NEARLY_EXPIRED_* files into (UNC path ok). Empty = off.
