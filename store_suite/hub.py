@@ -53,16 +53,44 @@ class Hub:
         self._count_cache: tuple | None = None
         self._count_idx: dict[str, dict] = {}
         self._pdf_cache: tuple[float, dict[str, dict]] = (0.0, {})
+        self._pdf_stamp = 0
+        self._pdf_refreshing = False
+        self._memo: dict[str, tuple] = {}
         self.last_sync: dict = self._load_sync_state()
+
+    # ---------- derived-data cache ----------
+    def _sig(self) -> tuple:
+        """Cheap fingerprint of every input: results derived from it are reused until one changes."""
+        def fs(p):
+            try:
+                st = p.stat()
+                return (st.st_mtime_ns, st.st_size)
+            except OSError:
+                return None
+
+        df = expiry_data.data_file()
+        return (fs(df) if df else None, fs(atlas_api.state_file("count")), fs(atlas_api.state_file("oos")), fs(atlas_api.state_file("layout")), self._pdf_stamp)
+
+    def _memoized(self, name: str, build):
+        sig = self._sig()
+        hit = self._memo.get(name)
+        if hit and hit[0] == sig:
+            return hit[1]
+        value = build()
+        self._memo[name] = (sig, value)
+        return value
 
     # ---------- expiry ----------
     def expiry_index(self) -> dict[str, list[dict]]:
-        idx: dict[str, list[dict]] = {}
-        for r in expiry_data.load_rows():
-            b = _bc(r.get("BAR_CODE"))
-            if b:
-                idx.setdefault(b, []).append(r)
-        return idx
+        def build():
+            idx: dict[str, list[dict]] = {}
+            for r in expiry_data.load_rows():
+                b = _bc(r.get("BAR_CODE"))
+                if b:
+                    idx.setdefault(b, []).append(r)
+            return idx
+
+        return self._memoized("expiry_index", build)
 
     # ---------- atlas ----------
     def count_index(self) -> dict[str, dict]:
@@ -93,18 +121,36 @@ class Hub:
         return idx
 
     def oos_index(self) -> dict[str, dict]:
-        data = atlas_api.read_state("oos") or {}
-        out: dict[str, dict] = {}
-        for it in data.get("items") or []:
-            if isinstance(it, dict) and it.get("barcode"):
-                out[_bc(it["barcode"])] = it
-        return out
+        def build():
+            data = atlas_api.read_state("oos") or {}
+            out: dict[str, dict] = {}
+            for it in data.get("items") or []:
+                if isinstance(it, dict) and it.get("barcode"):
+                    out[_bc(it["barcode"])] = it
+            return out
+
+        return self._memoized("oos_index", build)
 
     # ---------- pdf ----------
     def pdf_index(self) -> dict[str, dict]:
         now = time.monotonic()
         if now - self._pdf_cache[0] < _PDF_TTL or self._pdf_products is None:
             return self._pdf_cache[1]
+        if self._pdf_cache[0] > 0:  # have an older index: serve it, refresh in the background
+            if not self._pdf_refreshing:
+                self._pdf_refreshing = True
+
+                def refresh():
+                    try:
+                        self._build_pdf_index(time.monotonic())
+                    finally:
+                        self._pdf_refreshing = False
+
+                threading.Thread(target=refresh, daemon=True).start()
+            return self._pdf_cache[1]
+        return self._build_pdf_index(now)
+
+    def _build_pdf_index(self, now: float) -> dict[str, dict]:
         idx: dict[str, dict] = {}
         stats = {"docs": 0, "completeDocs": 0, "errorDocs": 0, "rows": 0, "needReview": 0, "nonProduct": 0}
         try:
@@ -130,6 +176,8 @@ class Hub:
         except Exception:  # noqa: BLE001 - PDF side being down must not break the other modules
             self._pdf_cache = (now, self._pdf_cache[1])  # keep serving the last good index; retry after the TTL
             return self._pdf_cache[1]
+        if self._pdf_cache[1].keys() != idx.keys() or self._pdf_stats != stats:
+            self._pdf_stamp += 1
         self._pdf_cache = (now, idx)
         self._pdf_stats = stats
         return idx
@@ -155,34 +203,43 @@ class Hub:
             "pdf": pdf,
         }
 
+    def _search_corpus(self) -> list[tuple[str, str]]:
+        def build():
+            names: dict[str, str] = {}
+            for r in expiry_data.load_rows():
+                b = _bc(r.get("BAR_CODE"))
+                if b:
+                    names.setdefault(b, str(r.get("DESCRIPTION", "")))
+            for source in (self.count_index(), self.pdf_index()):
+                for b, e in source.items():
+                    names.setdefault(b, str(e["name"]))
+            return [(b, f"{b} {n}".lower()) for b, n in names.items()]
+
+        return self._memoized("search_corpus", build)
+
     def search(self, q: str, limit: int = 20) -> list[dict]:
-        q = q.strip()
+        q = q.strip().lower()
         if not q:
             return []
-        ql = q.lower()
-        seen: dict[str, str] = {}
-        for r in expiry_data.load_rows():
-            b = _bc(r.get("BAR_CODE"))
-            if b and (ql in b.lower() or ql in str(r.get("DESCRIPTION", "")).lower()):
-                seen.setdefault(b, str(r.get("DESCRIPTION", "")))
-        for b, e in self.count_index().items():
-            if len(seen) >= limit * 3:
-                break
-            if ql in b.lower() or ql in str(e["name"]).lower():
-                seen.setdefault(b, e["name"])
-        for b, e in self.pdf_index().items():
-            if ql in b.lower() or ql in str(e["name"]).lower():
-                seen.setdefault(b, e["name"])
-        return [self.product(b) for b in list(seen)[:limit]]
+        self.pdf_index()
+        hits = [b for b, text in self._search_corpus() if q in text][:limit]
+        return [self.product(b) for b in hits]
 
     def expiry_locations(self, max_days: float | None = 30) -> list[dict]:
-        """Expiring items with the homes they were counted in and OOS state."""
+        """Expiring items with the homes they were counted in (sorted by days left)."""
+        self.pdf_index()
+        full = self._memoized("loc_all", self._build_locations)
+        if max_days is None:
+            return full
+        return [x for x in full if x["daysLeft"] is not None and x["daysLeft"] <= max_days]
+
+    def _build_locations(self) -> list[dict]:
         cnt, pdf = self.count_index(), self.pdf_index()
         out = []
         for r in expiry_data.load_rows():
             b = _bc(r.get("BAR_CODE"))
             days = _num(r.get("DAY_LEFT"))
-            if not b or (max_days is not None and (days is None or days > max_days)):
+            if not b:
                 continue
             homes = sorted((cnt.get(b) or {}).get("homes", {}))
             out.append({
@@ -198,25 +255,35 @@ class Hub:
 
     def oos_items(self, pending_only: bool = True) -> list[dict]:
         """OOS / Pick Check items exactly as Atlas saved them - no expiry data mixed in."""
+        full = self._memoized("oos_all", self._build_oos_items)
+        return [x for x in full if not x["checked"]] if pending_only else full
+
+    def _build_oos_items(self) -> list[dict]:
         out = []
         for it in (atlas_api.read_state("oos") or {}).get("items") or []:
             if not isinstance(it, dict):
-                continue
-            checked = bool(it.get("result"))
-            if pending_only and checked:
                 continue
             out.append({
                 "barcode": _bc(it.get("barcode")),
                 "name": str(it.get("name") or "").strip(),
                 "soh": _num(it.get("soh")),
                 "promo": bool(it.get("promo")),
-                "checked": checked,
+                "checked": bool(it.get("result")),
                 "result": it.get("result") or "",
             })
         out.sort(key=lambda x: (x["checked"], x["soh"] if x["soh"] is not None else 0, x["barcode"]))
         return out
 
     def overview(self) -> dict:
+        core = self._memoized("overview", self._overview_core)
+        status = expiry_data.read_status()  # small and changes without the data file changing
+        return {
+            **core,
+            "expiry": {**core["expiry"], "lastFetch": status.get("lastAttempt"), "lastFetchOk": status.get("success"), "error": status.get("errorMessage") or ""},
+            "lastSync": self.last_sync,
+        }
+
+    def _overview_core(self) -> dict:
         ex_rows = expiry_data.load_rows()
         loc = self.expiry_locations(max_days=None)
         status = expiry_data.read_status()

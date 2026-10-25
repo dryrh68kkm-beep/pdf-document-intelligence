@@ -175,10 +175,10 @@ const COL={bad:"var(--bad)",warn:"var(--warn)",ok:"var(--ok)",mute:"#8d9bab",blu
 const bar=(parts,total)=>{const t=total||parts.reduce((a,p)=>a+p.n,0);
   return t?`<div class="bar">${parts.filter(p=>p.n).map(p=>`<i title="${esc(p.l)}: ${fmt(p.n)}" style="width:${(100*p.n/t).toFixed(2)}%;background:${p.c}"></i>`).join("")}</div><div class="legend">${parts.map(p=>`<span style="--c:${p.c}">${esc(p.l)} ${fmt(p.n)}</span>`).join("")}</div>`:'<div class="syncinfo">ยังไม่มีข้อมูล</div>'};
 const kpi=(h,n,l,cls="")=>`<div class="kpi ${cls}"><h3>${esc(h)}</h3><div class="n">${fmt(n)}</div><div class="l">${l}</div></div>`;
-const sortState={};
-function sortRows(rows,id,def){const st=sortState[id]||def;const k=st.k,d=st.d;return[...rows].sort((a,b)=>{let x=a[k],y=b[k];if(x==null)x=d>0?Infinity:-Infinity;if(y==null)y=d>0?Infinity:-Infinity;return(typeof x==="string"?x.localeCompare(y,"th"):x-y)*d})}
+const sortState={locBody:{k:"daysLeft",d:1},oosBody:{k:"soh",d:1}};
+const debounce=(fn,ms=250)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}};
 document.addEventListener("click",e=>{const th=e.target.closest("table.sortable th[data-k]");if(!th)return;
-  const id=th.closest("table").querySelector("tbody").id,cur=sortState[id]||{};sortState[id]={k:th.dataset.k,d:cur.k===th.dataset.k?-cur.d:1};(id==="locBody"?renderLoc:renderOos)()});
+  const id=th.closest("table").querySelector("tbody").id,cur=sortState[id];sortState[id]={k:th.dataset.k,d:cur.k===th.dataset.k?-cur.d:1};(id==="locBody"?loadLoc:loadOos)(false)});
 
 async function loadHome(){
   try{
@@ -220,41 +220,52 @@ async function loadHome(){
     $("#syncinfo").textContent="ซิงค์ล่าสุด: "+ago(ls.at)+(ls.ok===false?" (มีข้อผิดพลาด)":"");
     $("#syncinfo").className="syncinfo"+(ls.ok===false?" err":"");
   }catch(x){$("#kpisExp").innerHTML=`<div class="kpi bad"><h3>โหลดไม่ได้</h3><div class="l">${esc(x.message)}</div></div>`}
-  loadLoc();loadOos();
+  if(!$("#p-exp").hidden)loadLoc(false);if(!$("#p-oos").hidden)loadOos(false);
 }
-let locRows=[],locTotal=0,oosRows=[],oosTotal=0;
-async function loadLoc(){
-  try{const d=await api(`/api/suite/expiry-locations?maxDays=${$("#days").value}&limit=5000`);locRows=d.rows;locTotal=d.total;renderLoc()}
+let locRows=[],locTotal=0,oosRows=[],oosTotal=0,oosLoaded=false;
+const PAGE=1000;
+const locRow=r=>`<tr class="row" data-b="${esc(r.barcode)}">
+    <td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${esc(r.subDept)}</td><td>${fmt(r.qty)}</td>
+    <td>${r.daysLeft==null?"–":r.daysLeft<0?`<span class="tag bad">เกิน ${-r.daysLeft}</span>`:r.daysLeft<=7?`<span class="tag warn">${r.daysLeft}</span>`:r.daysLeft}</td>
+    <td>${r.homes.length?esc(r.homes.slice(0,6).join(", "))+(r.homes.length>6?` +${r.homes.length-6}`:""):'<span class="syncinfo">ไม่พบในผลนับ</span>'}</td></tr>`;
+// the server filters, sorts and pages (a big file is 10k+ rows); the browser only draws what is shown
+async function loadLoc(append){
+  const off=append===true?locRows.length:0,st=sortState.locBody;
+  const qs=new URLSearchParams({maxDays:$("#days").value,q:$("#expQ").value.trim(),dept:$("#deptSel").value,onlyLoc:$("#onlyLoc").checked,sort:st.k,dir:st.d,offset:off,limit:PAGE});
+  try{const d=await api("/api/suite/expiry-locations?"+qs);locRows=append===true?locRows.concat(d.rows):d.rows;locTotal=d.total;renderLoc()}
   catch(x){$("#locBody").innerHTML=`<tr><td colspan=6 class="err">${esc(x.message)}</td></tr>`}
 }
 function renderLoc(){
-  const q=$("#expQ").value.trim().toLowerCase(),dept=$("#deptSel").value;
-  const rows=sortRows(locRows.filter(r=>(!$("#onlyLoc").checked||r.homes.length)&&(!dept||r.subDept===dept)&&(!q||(r.barcode+" "+r.name).toLowerCase().includes(q))),"locBody",{k:"daysLeft",d:1});
-  $("#locCount").textContent=`แสดง ${fmt(Math.min(rows.length,1500))} จาก ${fmt(rows.length)}${locTotal>locRows.length?` (ทั้งหมด ${fmt(locTotal)})`:""}`;
-  $("#locBody").innerHTML=rows.length?rows.slice(0,1500).map(r=>`<tr class="row" data-b="${esc(r.barcode)}">
-    <td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${esc(r.subDept)}</td><td>${fmt(r.qty)}</td>
-    <td>${r.daysLeft==null?"–":r.daysLeft<0?`<span class="tag bad">เกิน ${-r.daysLeft}</span>`:r.daysLeft<=7?`<span class="tag warn">${r.daysLeft}</span>`:r.daysLeft}</td>
-    <td>${r.homes.length?esc(r.homes.slice(0,6).join(", "))+(r.homes.length>6?` +${r.homes.length-6}`:""):'<span class="syncinfo">ไม่พบในผลนับ</span>'}</td></tr>`).join(""):`<tr><td colspan=6 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`;
+  $("#locCount").textContent=`แสดง ${fmt(locRows.length)} จาก ${fmt(locTotal)}`;
+  const more=locRows.length<locTotal?`<tr><td colspan=6><button class="btn" id="locMore">โหลดเพิ่ม</button></td></tr>`:"";
+  $("#locBody").innerHTML=(locRows.length?locRows.map(locRow).join(""):`<tr><td colspan=6 class="syncinfo">ไม่มีข้อมูล — นำเข้าไฟล์วันหมดอายุในปุ่ม “ตั้งค่า”</td></tr>`)+more;
 }
-async function loadOos(){
-  try{const d=await api("/api/suite/oos?pending=false&limit=5000");oosRows=d.rows;oosTotal=d.total;
-    const big=d.total>=5000;
-    $("#oosSrc").className="syncinfo"+(big?" err":"");
-    $("#oosSrc").textContent=(d.source?`นำเข้าจาก: ${d.source}`:"")+(d.importedAt?` · เมื่อ ${new Date(d.importedAt).toLocaleString("th-TH")}`:"")+(big?" — จำนวนมากผิดปกติ รายงาน OOS ปกติมีไม่กี่ร้อยรายการ อาจนำเข้าไฟล์ผิด (เช่น ไฟล์ผลนับสต็อก) ถ้าใช่ ให้กด “ล้าง OOS” ในแท็บ ผังร้าน / OOS → งาน OOS แล้วนำเข้าไฟล์ที่ถูกต้อง":"");
-    renderOos()}catch(x){$("#oosBody").innerHTML=`<tr><td colspan=4 class="err">${esc(x.message)}</td></tr>`}
+async function loadOos(append){
+  const off=append===true?oosRows.length:0,st=sortState.oosBody;
+  const qs=new URLSearchParams({status:$("#oosStatus").value,soh:$("#oosSoh").value,q:$("#oosQ").value.trim(),sort:st.k,dir:st.d,offset:off,limit:PAGE});
+  try{const d=await api("/api/suite/oos?"+qs);oosRows=append===true?oosRows.concat(d.rows):d.rows;oosTotal=d.total;oosLoaded=true;
+    const meta=await oosMeta(d);
+    $("#oosSrc").className="syncinfo"+(meta.big?" err":"");$("#oosSrc").textContent=meta.text;renderOos()}
+  catch(x){$("#oosBody").innerHTML=`<tr><td colspan=4 class="err">${esc(x.message)}</td></tr>`}
+}
+let oosAll=0;
+async function oosMeta(d){
+  if(!oosAll){try{oosAll=(await api("/api/suite/overview")).atlas.oosTotal}catch(_){}}
+  const big=oosAll>=5000;
+  return{big,text:(d.source?`นำเข้าจาก: ${d.source}`:"")+(d.importedAt?` · เมื่อ ${new Date(d.importedAt).toLocaleString("th-TH")}`:"")+(big?" — จำนวนมากผิดปกติ รายงาน OOS ปกติมีไม่กี่ร้อยรายการ อาจนำเข้าไฟล์ผิด (เช่น ไฟล์ผลนับสต็อก) ถ้าใช่ ให้กด “ล้าง OOS” ในแท็บ ผังร้าน / OOS → งาน OOS แล้วนำเข้าไฟล์ที่ถูกต้อง":"")}
 }
 function renderOos(){
-  const q=$("#oosQ").value.trim().toLowerCase(),st=$("#oosStatus").value,sh=$("#oosSoh").value;
-  const rows=sortRows(oosRows.filter(r=>(st==="all"||(st==="done")===r.checked)&&(!sh||(sh==="neg"?r.soh<0:sh==="zero"?r.soh===0:r.soh>0))&&(!q||(r.barcode+" "+r.name).toLowerCase().includes(q))),"oosBody",{k:"soh",d:1});
-  $("#oosCount").textContent=`แสดง ${fmt(Math.min(rows.length,1500))} จาก ${fmt(rows.length)}${oosTotal>oosRows.length?` (ทั้งหมด ${fmt(oosTotal)})`:""}`;
-  $("#oosBody").innerHTML=rows.length?rows.slice(0,1500).map(r=>`<tr class="row" data-o="${esc(r.barcode)}"><td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${fmt(r.soh)}</td><td>${r.checked?`<span class="tag">ตรวจแล้ว${r.result?" · "+esc(r.result):""}</span>`:`<span class="tag warn">ค้างตรวจ</span>`}${r.promo?' <span class="tag">โปร</span>':""}</td></tr>`).join(""):`<tr><td colspan=4 class="syncinfo">ไม่มีรายการ — นำเข้าไฟล์ OOS ในแท็บ “ผังร้าน / OOS”</td></tr>`;
+  $("#oosCount").textContent=`แสดง ${fmt(oosRows.length)} จาก ${fmt(oosTotal)}`;
+  const more=oosRows.length<oosTotal?`<tr><td colspan=4><button class="btn" id="oosMore">โหลดเพิ่ม</button></td></tr>`:"";
+  $("#oosBody").innerHTML=(oosRows.length?oosRows.map(r=>`<tr class="row" data-o="${esc(r.barcode)}"><td>${esc(r.barcode)}</td><td>${esc(r.name)}</td><td>${fmt(r.soh)}</td><td>${r.checked?`<span class="tag">ตรวจแล้ว${r.result?" · "+esc(r.result):""}</span>`:`<span class="tag warn">ค้างตรวจ</span>`}${r.promo?' <span class="tag">โปร</span>':""}</td></tr>`).join(""):`<tr><td colspan=4 class="syncinfo">ไม่มีรายการ — นำเข้าไฟล์ OOS ในแท็บ “ผังร้าน / OOS”</td></tr>`)+more;
 }
 document.querySelectorAll("#seg button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#seg button").forEach(x=>x.setAttribute("aria-selected",x===b));
-  for(const k of ["exp","oos","pdf"])$("#p-"+k).hidden=b.dataset.s!==k});
-$("#days").onchange=loadLoc;
-for(const id of ["onlyLoc","deptSel"])$("#"+id).onchange=renderLoc;$("#expQ").oninput=renderLoc;
-for(const id of ["oosStatus","oosSoh"])$("#"+id).onchange=renderOos;$("#oosQ").oninput=renderOos;
+  for(const k of ["exp","oos","pdf"])$("#p-"+k).hidden=b.dataset.s!==k;
+  if(b.dataset.s==="oos"&&!oosLoaded)loadOos(false)});
+for(const id of ["days","onlyLoc","deptSel"])$("#"+id).onchange=()=>loadLoc(false);$("#expQ").oninput=debounce(()=>loadLoc(false));
+for(const id of ["oosStatus","oosSoh"])$("#"+id).onchange=()=>loadOos(false);$("#oosQ").oninput=debounce(()=>loadOos(false));
+$("#locBody").addEventListener("click",e=>{if(e.target.id==="locMore")loadLoc(true)});$("#oosBody").addEventListener("click",e=>{if(e.target.id==="oosMore")loadOos(true)});
 $("#goPdf").onclick=()=>show("pdf");
 $("#locBody").onclick=e=>{const tr=e.target.closest("tr[data-b]");if(tr)openProduct(tr.dataset.b,"expiry")};
 $("#oosBody").onclick=e=>{const tr=e.target.closest("tr[data-o]");if(tr)openProduct(tr.dataset.o,"oos")};
@@ -315,7 +326,7 @@ $("#cFile").onchange=async()=>{const f=$("#cFile").files[0];if(!f)return;const f
   catch(x){$("#cMsg").textContent=x.message;$("#cMsg").className="syncinfo err"}};
 
 show("home");
-setInterval(()=>{if(cur==="home"&&!document.hidden)loadHome()},60000);
+setInterval(()=>{if(cur==="home"&&!document.hidden)loadHome()},120000);
 </script>
 </body>
 </html>

@@ -52,12 +52,31 @@ def rev_of(path: Path) -> str:
         return ""
 
 
+_state_cache: dict[str, tuple] = {}
+
+
 def read_state(key: str):
-    """Parsed shared state, or None when it has never been saved."""
+    """Parsed shared state, or None when it has never been saved.
+
+    Parsed once per change of the file (a saved OOS list or layout is several MB
+    of JSON; every overview refresh used to re-parse it). Callers must treat the
+    result as read-only."""
+    f = state_file(key)
     try:
-        return json.loads(state_file(key).read_text(encoding="utf-8-sig"))
+        st = f.stat()
+    except OSError:
+        _state_cache.pop(key, None)
+        return None
+    sig = (st.st_mtime_ns, st.st_size)
+    hit = _state_cache.get(key)
+    if hit and hit[0] == sig:
+        return hit[1]
+    try:
+        data = json.loads(f.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
+    _state_cache[key] = (sig, data)
+    return data
 
 
 def _validate_state(key: str, body: bytes) -> str:

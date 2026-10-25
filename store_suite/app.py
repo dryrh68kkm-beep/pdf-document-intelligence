@@ -140,20 +140,48 @@ def search(q: str = "", limit: int = 20):
     return hub.search(q, max(1, min(limit, 100)))
 
 
+def _page_rows(rows: list[dict], sort: str, direction: int, offset: int, limit: int, allowed: set[str]) -> list[dict]:
+    key = sort if sort in allowed else next(iter(allowed))
+    sign = -1 if direction < 0 else 1
+
+    def k(r):
+        v = r.get(key)
+        # empty values always sort last, whichever direction
+        return (v is None, (v.lower() if isinstance(v, str) else v) if v is not None else 0)
+
+    present = sorted((r for r in rows if r.get(key) is not None), key=lambda r: k(r)[1], reverse=sign < 0)
+    missing = [r for r in rows if r.get(key) is None]
+    ordered = present + missing
+    offset = max(0, offset)
+    return ordered[offset: offset + max(1, min(limit, 2000))]
+
+
 @app.get("/api/suite/expiry-locations")
-def expiry_locations(maxDays: float | None = 30, limit: int = 500):
+def expiry_locations(maxDays: float | None = 30, q: str = "", dept: str = "", onlyLoc: bool = False,
+                     sort: str = "daysLeft", dir: int = 1, offset: int = 0, limit: int = 1000):
     rows = hub.expiry_locations(None if maxDays is not None and maxDays >= 9999 else maxDays)
-    return {"total": len(rows), "rows": rows[: max(1, min(limit, 5000))]}
+    ql = q.strip().lower()
+    if ql or dept or onlyLoc:
+        rows = [r for r in rows if (not dept or r["subDept"] == dept) and (not onlyLoc or r["homes"])
+                and (not ql or ql in f'{r["barcode"]} {r["name"]}'.lower())]
+    return {"total": len(rows), "rows": _page_rows(rows, sort, dir, offset, limit, {"daysLeft", "barcode", "name", "subDept", "qty"})}
 
 
 @app.get("/api/suite/oos")
-def oos(pending: bool = True, limit: int = 1000):
-    rows = hub.oos_items(pending)
+def oos(pending: bool | None = None, status: str = "", soh: str = "", q: str = "",
+        sort: str = "soh", dir: int = 1, offset: int = 0, limit: int = 1000):
+    status = status or ("pending" if pending is not False else "all")
+    rows = hub.oos_items(False)
+    ql = q.strip().lower()
+    rows = [r for r in rows
+            if (status == "all" or (status == "done") == r["checked"])
+            and (not soh or (r["soh"] is not None and (r["soh"] < 0 if soh == "neg" else r["soh"] == 0 if soh == "zero" else r["soh"] > 0)))
+            and (not ql or ql in f'{r["barcode"]} {r["name"]}'.lower())]
     state = atlas_api.read_state("oos") or {}
     src = state.get("source")
     return {
         "total": len(rows),
-        "rows": rows[: max(1, min(limit, 5000))],
+        "rows": _page_rows(rows, sort, dir, offset, limit, {"soh", "barcode", "name", "checked"}),
         "source": src if isinstance(src, str) else json.dumps(src, ensure_ascii=False) if src else "",
         "importedAt": state.get("importedAt") or "",
     }

@@ -141,3 +141,25 @@ def test_shutdown_is_server_pc_only(client):
     from store_suite.app import app
 
     assert TC(app, client=("192.168.1.50", 5000)).post("/api/suite/shutdown").status_code == 403
+
+
+def test_server_side_filter_sort_and_paging(client):
+    rows_csv = "BAR_CODE,DESCRIPTION,STOCK_QTY,DAY_LEFT,SUB_DEPT_NAME,DIV,DEPT\n" + "\n".join(
+        f"88500000000{i:02d},สินค้า{i},{i},{i - 10},{'A' if i % 2 else 'B'},1,2" for i in range(30))
+    client.post("/api/suite/expiry/upload", files={"file": ("a.csv", rows_csv.encode("utf-8"))})
+    base = "/api/suite/expiry-locations?maxDays=9999"
+    d = client.get(base + "&limit=10").json()
+    assert d["total"] == 30 and len(d["rows"]) == 10 and d["rows"][0]["daysLeft"] == -10     # sorted by days left
+    desc = client.get(base + "&sort=qty&dir=-1&limit=3").json()["rows"]
+    assert [r["qty"] for r in desc] == [29, 28, 27]
+    page2 = client.get(base + "&limit=10&offset=10").json()["rows"]
+    assert page2[0]["daysLeft"] == 0 and page2[0]["barcode"] != d["rows"][0]["barcode"]
+    assert client.get(base + "&dept=A").json()["total"] == 15
+    assert client.get(base + "&q=" + "สินค้า7").json()["total"] >= 1
+
+    items = [{"barcode": f"1{i:03d}", "name": f"ของ{i}", "soh": i - 5, **({"result": "FOUND"} if i % 3 == 0 else {})} for i in range(20)]
+    client.put("/m/atlas/api/state/oos", content=json.dumps({"items": items}), headers={"X-If-Rev": "*"})
+    assert client.get("/api/suite/oos?status=pending").json()["total"] == 13
+    assert client.get("/api/suite/oos?status=all&soh=neg").json()["total"] == 5
+    assert client.get("/api/suite/oos?status=all&soh=zero").json()["total"] == 1
+    assert client.get("/api/suite/oos?status=done&sort=soh&dir=-1&limit=2").json()["rows"][0]["soh"] == 13
