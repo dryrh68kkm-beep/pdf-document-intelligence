@@ -136,6 +136,8 @@ dialog h3{margin-top:0}dialog label{display:block;margin:10px 0 4px;color:var(--
   <input type="number" id="cAuto" min="0">
   <label>ดึงค่าจากโปรแกรมเดิม (ค้นหาในโฟลเดอร์ข้างๆ เช่น C:\LP-Tools)</label>
   <div id="cImp" class="syncinfo">กำลังค้นหา…</div>
+  <label>โฟลเดอร์รายงาน OOS (เครือข่าย) — ใส่ {year} แทนปีได้ เช่น \\server\share\OOS\{year}\OOS</label>
+  <input type="text" id="cOos" placeholder="\\10.x.x.x\share\...\OOS\2026\OOS">
   <label>ปิดโปรแกรม (เมื่อเปิดแบบไม่มีหน้าต่าง cmd)</label>
   <button class="btn" id="quitBtn">ปิด Store Suite</button>
   <label>นำเข้าไฟล์วันหมดอายุเอง (.csv / .txt / .xlsx)</label>
@@ -180,13 +182,20 @@ const debounce=(fn,ms=250)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout((
 document.addEventListener("click",e=>{const th=e.target.closest("table.sortable th[data-k]");if(!th)return;
   const id=th.closest("table").querySelector("tbody").id,cur=sortState[id];sortState[id]={k:th.dataset.k,d:cur.k===th.dataset.k?-cur.d:1};(id==="locBody"?loadLoc:loadOos)(false)});
 
+function oosFolderLine(f){
+  if(!f||!f.configured)return'<br><span class="syncinfo">ยังไม่ได้ตั้งโฟลเดอร์รายงาน OOS (ตั้งค่า)</span>';
+  if(f.scanning&&!f.newest)return"<br>กำลังอ่านโฟลเดอร์เครือข่าย…";
+  if(!f.ok)return`<br><span class="err">อ่านโฟลเดอร์ OOS ไม่ได้: ${esc(f.error||"")}</span>`;
+  if(!f.newest)return"<br>โฟลเดอร์ OOS ว่าง (ไม่พบไฟล์รายงาน)";
+  const when=new Date(f.newest.mtime).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"});
+  return`<br>ไฟล์ล่าสุดในโฟลเดอร์: <b style="display:inline">${esc(f.newest.name)}</b> (${when}) ${f.newestImported?"· นำเข้าแล้ว":'· <span class="err">ยังไม่ได้นำเข้า</span> — แท็บ ผังร้าน / OOS → ไฟล์จากโปรแกรมอื่น'}`}
 async function loadHome(){
   try{
     const o=await api("/api/suite/overview"),e=o.expiry,a=o.atlas,p=o.pdf,b=e.buckets;
     const when=iso=>iso?new Date(iso).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"}):"–";
     $("#srcs").innerHTML=`
      <div class="src ${e.rows?"":"bad"}"><b>ไฟล์วันหมดอายุ</b>${e.rows?`${esc(e.file)} · ${fmt(e.rows)} แถว<br>ไฟล์อัปเดต ${when(e.fileUpdated)}`:"ยังไม่มีไฟล์ — นำเข้าที่ปุ่ม “ตั้งค่า”"}${e.error?`<br><span class="err">${esc(e.error)}</span>`:""}</div>
-     <div class="src ${a.oosTotal>=5000||(a.oosQuality&&!a.oosQuality.looksLikeOos)?"bad":""}"><b>OOS / Pick Check</b>${a.oosTotal?`${fmt(a.oosTotal)} รายการ · นำเข้า ${when(a.oosImportedAt)}<br>${esc(a.oosSource||"")}`:"ยังไม่ได้นำเข้า"}</div>
+     <div class="src ${a.oosTotal>=5000||(a.oosQuality&&!a.oosQuality.looksLikeOos)?"bad":""}"><b>OOS / Pick Check</b>${a.oosTotal?`${fmt(a.oosTotal)} รายการ · นำเข้า ${when(a.oosImportedAt)}<br>${esc(a.oosSource||"")}`:"ยังไม่ได้นำเข้า"}${oosFolderLine(a.oosFolder)}</div>
      <div class="src"><b>ผัง / ผลนับ (Atlas)</b>${a.sharedLayout?`${fmt(a.maps)} ผัง (ใช้ร่วมกันทุกเครื่อง)`:"ผังตั้งต้นในตัวโปรแกรม"}<br>ผลนับสต็อก ${fmt(a.countedProducts)} สินค้า</div>
      <div class="src"><b>เอกสาร PDF</b>${fmt(p.docs)} เอกสาร · ${fmt(p.rows)} แถว${p.needReview?`<br><span class="err">รอตรวจ ${fmt(p.needReview)}</span>`:""}</div>`;
     $("#kpisExp").innerHTML=
@@ -304,7 +313,7 @@ $("#syncBtn").onclick=async()=>{const b=$("#syncBtn");b.disabled=true;b.textCont
   b.disabled=false;b.textContent="ซิงค์ข้อมูล"};
 
 $("#cfgBtn").onclick=async()=>{const c=await api("/api/suite/config");
-  $("#cSrc").value=c.expirySourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";$("#cAuto").value=c.autoSyncMinutes??10;$("#cMsg").textContent="";$("#cfg").showModal();scanImport()};
+  $("#cSrc").value=c.expirySourceFolder||"";$("#cOos").value=c.oosSourceFolder||"";$("#cBase").value=c.expirySourceBasename||"";$("#cAuto").value=c.autoSyncMinutes??10;$("#cMsg").textContent="";$("#cfg").showModal();scanImport()};
 async function scanImport(){
   const box=$("#cImp");box.className="syncinfo";box.textContent="กำลังค้นหา…";
   try{const f=await api("/api/suite/import/scan");let h="";
@@ -322,7 +331,7 @@ $("#quitBtn").onclick=async()=>{if(!confirm("ปิด Store Suite ทั้ง�
   try{await api("/api/suite/shutdown",{method:"POST"})}catch(x){}document.body.innerHTML='<p style="padding:24px;font:16px sans-serif">ปิด Store Suite แล้ว — ปิดหน้าต่างนี้ได้เลย</p>'};
 $("#cClose").onclick=()=>$("#cfg").close();
 $("#cSave").onclick=async()=>{try{
-  await api("/api/suite/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({expirySourceFolder:$("#cSrc").value.trim(),expirySourceBasename:$("#cBase").value.trim(),autoSyncMinutes:Math.max(0,+$("#cAuto").value||0)})});
+  await api("/api/suite/config",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({expirySourceFolder:$("#cSrc").value.trim(),oosSourceFolder:$("#cOos").value.trim(),expirySourceBasename:$("#cBase").value.trim(),autoSyncMinutes:Math.max(0,+$("#cAuto").value||0)})});
   $("#cMsg").textContent="บันทึกแล้ว";$("#cMsg").className="syncinfo ok"}catch(x){$("#cMsg").textContent=x.message;$("#cMsg").className="syncinfo err"}};
 $("#cFile").onchange=async()=>{const f=$("#cFile").files[0];if(!f)return;const fd=new FormData();fd.append("file",f);
   try{const r=await api("/api/suite/expiry/upload",{method:"POST",body:fd});$("#cMsg").textContent=`นำเข้าแล้ว ${fmt(r.rows)} แถว`;$("#cMsg").className="syncinfo ok";loadHome()}

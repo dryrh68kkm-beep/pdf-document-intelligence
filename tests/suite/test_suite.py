@@ -174,3 +174,32 @@ def test_oos_quality_flags_data_that_is_not_an_oos_report(client):
     real = [{"barcode": f"88500{i:05d}", "name": f"สินค้า{i}", "soh": 0, "status": "A-A", "sale7": 3} for i in range(50)]
     client.put("/m/atlas/api/state/oos", content=json.dumps({"items": real}), headers={"X-If-Rev": "*"})
     assert client.get("/api/suite/overview").json()["atlas"]["oosQuality"]["looksLikeOos"] is True
+
+
+def test_oos_report_folder_offers_only_the_latest_file(client, tmp_path):
+    from datetime import datetime
+    from starlette.testclient import TestClient as TC
+    from store_suite.app import app
+    import os, time
+
+    folder = tmp_path / "OOS" / str(datetime.now().year) / "OOS"
+    folder.mkdir(parents=True)
+    now = time.time()
+    for name, age in (("BCOOS05R_0101.xls", 7200), ("BCOOS05R_0102.xls", 3600), ("BCOOS05R_0103.xls", 60)):
+        (folder / name).write_bytes(name.encode())
+        os.utime(folder / name, (now - age, now - age))
+    (folder / "~$BCOOS05R_0104.xls").write_bytes(b"lock")       # Excel lock file of an open report
+    (folder / "notes.docx").write_bytes(b"z")                    # not a report type
+
+    TC(app, client=("127.0.0.1", 1)).put("/api/suite/config", json={"oosSourceFolder": str(tmp_path / "OOS" / "{year}" / "OOS")})
+    files = client.get("/m/atlas/api/files").json()
+    oos_src = next(s for s in files if s["name"].startswith("รายงาน OOS"))
+    assert oos_src["ok"] and [f["name"] for f in oos_src["files"]] == ["BCOOS05R_0103.xls"]
+
+    info = client.get("/api/suite/overview").json()["atlas"]["oosFolder"]
+    assert info["configured"] and info["newest"]["name"] == "BCOOS05R_0103.xls" and info["newestImported"] is False
+    sid = oos_src["id"]
+    assert client.get(f"/m/atlas/api/file?src={sid}&name=BCOOS05R_0103.xls").content == b"BCOOS05R_0103.xls"
+
+    client.put("/m/atlas/api/state/oos", content=json.dumps({"items": [{"barcode": "1", "name": "n", "soh": 0}], "source": "BCOOS05R_0103.xls"}), headers={"X-If-Rev": "*"})
+    assert client.get("/api/suite/overview").json()["atlas"]["oosFolder"]["newestImported"] is True

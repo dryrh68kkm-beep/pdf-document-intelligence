@@ -12,6 +12,7 @@ import os
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -120,22 +121,75 @@ def _atomic_write(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def oos_folder() -> str:
+    """Configured OOS report folder with {year} filled in ('' when not set)."""
+    raw = str(load_config().get("oosSourceFolder") or "").strip()
+    return raw.replace("{year}", str(datetime.now().year)).replace("{yyyy}", str(datetime.now().year))
+
+
 def _sources() -> list[dict]:
     out = [{"name": "Inbox (data/inbox)", "path": str(atlas_inbox_dir())}]
+    if oos_folder():
+        out.append({"name": "รายงาน OOS (โฟลเดอร์เครือข่าย) - เฉพาะไฟล์ล่าสุด", "path": oos_folder(), "latestOnly": True})
     for s in load_config().get("atlasSources") or []:
         if isinstance(s, dict) and s.get("path"):
             out.append({"name": str(s.get("name") or s["path"]), "path": str(s["path"])})
     return out
 
 
+_executor = ThreadPoolExecutor(max_workers=2)
+_list_cache: dict[str, tuple[float, dict]] = {}
+_list_pending: dict[str, object] = {}
+_LIST_TTL = 20.0
+
+
+def _is_unc(path: str) -> bool:
+    return path.startswith("\\\\") or path.startswith("//")
+
+
 def _list_source(i: int, src: dict) -> dict:
+    """Local folders are listed directly. A network share can hang for half a minute when
+    unreachable, so it is listed in the background: callers get the last result (or
+    'scanning') instead of waiting."""
+    path = src["path"]
+    if not _is_unc(path):
+        return {**_list_source_now(i, src)}
+    now = time.monotonic()
+    cached = _list_cache.get(path)
+    fut = _list_pending.get(path)
+    if fut is not None and fut.done():
+        try:
+            _list_cache[path] = (time.monotonic(), fut.result())
+        except Exception as exc:  # noqa: BLE001
+            _list_cache[path] = (time.monotonic(), {"ok": False, "error": str(exc), "files": []})
+        _list_pending.pop(path, None)
+        fut = None
+        cached = _list_cache[path]
+    if (cached is None or now - cached[0] > _LIST_TTL) and fut is None:
+        _list_pending[path] = _executor.submit(_list_source_now, i, src)
+        fut = _list_pending[path]
+    if cached is None:
+        try:
+            res = fut.result(timeout=4)
+            _list_cache[path] = (time.monotonic(), res)
+            _list_pending.pop(path, None)
+            return {**res, "id": i, "name": src["name"], "path": path}
+        except Exception:  # noqa: BLE001 - still scanning / timed out
+            return {"id": i, "name": src["name"], "path": path, "ok": True, "error": "", "files": [], "scanning": True}
+    return {**cached[1], "id": i, "name": src["name"], "path": path, "scanning": fut is not None}
+
+
+def _list_source_now(i: int, src: dict) -> dict:
     entry = {"id": i, "name": src["name"], "path": src["path"], "ok": True, "error": "", "files": []}
     try:
         folder = Path(src["path"])
         if not folder.is_dir():
             raise OSError("folder not found")
-        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in FILE_EXT]
+        # "~$x.xlsx" is the lock file Excel leaves while someone has the report open - never a report
+        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in FILE_EXT and not p.name.startswith(("~$", "."))]
         files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        if src.get("latestOnly"):
+            files = files[:1]  # this folder holds years of daily reports: only the newest one is wanted
         entry["files"] = [{"name": p.name, "size": p.stat().st_size, "mtime": int(p.stat().st_mtime * 1000)} for p in files[:200]]
     except OSError as exc:
         entry["ok"], entry["error"] = False, str(exc)

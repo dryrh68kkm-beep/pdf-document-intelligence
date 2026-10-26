@@ -280,7 +280,24 @@ class Hub:
         return {
             **core,
             "expiry": {**core["expiry"], "lastFetch": status.get("lastAttempt"), "lastFetchOk": status.get("success"), "error": status.get("errorMessage") or ""},
+            "atlas": {**core["atlas"], "oosFolder": self._oos_folder_info(core["atlas"].get("oosSource") or "")},
             "lastSync": self.last_sync,
+        }
+
+    def _oos_folder_info(self, imported_source: str) -> dict:
+        """Newest report in the configured OOS folder, and whether it is the one that was imported."""
+        folder = atlas_api.oos_folder()
+        if not folder:
+            return {"configured": False}
+        srcs = atlas_api._sources()
+        idx = next((i for i, s in enumerate(srcs) if s["path"] == folder), None)
+        res = atlas_api._list_source(idx, srcs[idx]) if idx is not None else {"ok": False, "error": "", "files": []}
+        files = res.get("files") or []
+        newest = files[0] if files else None
+        return {
+            "configured": True, "path": folder, "ok": bool(res.get("ok")), "error": res.get("error") or "",
+            "scanning": bool(res.get("scanning")), "fileCount": len(files),
+            "newest": newest, "newestImported": bool(newest and imported_source and newest["name"] in imported_source),
         }
 
     def _overview_core(self) -> dict:

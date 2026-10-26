@@ -17,6 +17,9 @@ DEFAULTS: dict = {
     "expirySourceFolder": "",
     "expirySourceBasename": "NEARLY_EXPIRED_1003",
     "expirySourceExtensions": [".csv", ".xlsx", ".txt"],
+    # Where the OOS report files are saved (UNC path ok). "{year}" becomes the current year,
+    # e.g. \\\\server\\share\\OOS\\{year}\\OOS. Listed in Atlas under "ไฟล์จากโปรแกรมอื่น". Empty = off.
+    "oosSourceFolder": "",
     # Extra folders other programs drop OOS / layout files into (Atlas "files from other programs").
     "atlasSources": [],
     # Background sync period; 0 = only when someone presses the sync button.
