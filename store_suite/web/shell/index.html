@@ -186,7 +186,7 @@ async function loadHome(){
     const when=iso=>iso?new Date(iso).toLocaleString("th-TH",{dateStyle:"short",timeStyle:"short"}):"–";
     $("#srcs").innerHTML=`
      <div class="src ${e.rows?"":"bad"}"><b>ไฟล์วันหมดอายุ</b>${e.rows?`${esc(e.file)} · ${fmt(e.rows)} แถว<br>ไฟล์อัปเดต ${when(e.fileUpdated)}`:"ยังไม่มีไฟล์ — นำเข้าที่ปุ่ม “ตั้งค่า”"}${e.error?`<br><span class="err">${esc(e.error)}</span>`:""}</div>
-     <div class="src ${a.oosTotal>=5000?"bad":""}"><b>OOS / Pick Check</b>${a.oosTotal?`${fmt(a.oosTotal)} รายการ · นำเข้า ${when(a.oosImportedAt)}<br>${esc(a.oosSource||"")}`:"ยังไม่ได้นำเข้า"}</div>
+     <div class="src ${a.oosTotal>=5000||(a.oosQuality&&!a.oosQuality.looksLikeOos)?"bad":""}"><b>OOS / Pick Check</b>${a.oosTotal?`${fmt(a.oosTotal)} รายการ · นำเข้า ${when(a.oosImportedAt)}<br>${esc(a.oosSource||"")}`:"ยังไม่ได้นำเข้า"}</div>
      <div class="src"><b>ผัง / ผลนับ (Atlas)</b>${a.sharedLayout?`${fmt(a.maps)} ผัง (ใช้ร่วมกันทุกเครื่อง)`:"ผังตั้งต้นในตัวโปรแกรม"}<br>ผลนับสต็อก ${fmt(a.countedProducts)} สินค้า</div>
      <div class="src"><b>เอกสาร PDF</b>${fmt(p.docs)} เอกสาร · ${fmt(p.rows)} แถว${p.needReview?`<br><span class="err">รอตรวจ ${fmt(p.needReview)}</span>`:""}</div>`;
     $("#kpisExp").innerHTML=
@@ -250,9 +250,12 @@ async function loadOos(append){
 }
 let oosAll=0;
 async function oosMeta(d){
-  if(!oosAll){try{oosAll=(await api("/api/suite/overview")).atlas.oosTotal}catch(_){}}
+  let q={looksLikeOos:true};
+  try{const a=(await api("/api/suite/overview")).atlas;oosAll=a.oosTotal;q=a.oosQuality||q;q.n=a.oosTotal}catch(_){}
   const big=oosAll>=5000;
-  return{big,text:(d.source?`นำเข้าจาก: ${d.source}`:"")+(d.importedAt?` · เมื่อ ${new Date(d.importedAt).toLocaleString("th-TH")}`:"")+(big?" — จำนวนมากผิดปกติ รายงาน OOS ปกติมีไม่กี่ร้อยรายการ อาจนำเข้าไฟล์ผิด (เช่น ไฟล์ผลนับสต็อก) ถ้าใช่ ให้กด “ล้าง OOS” ในแท็บ ผังร้าน / OOS → งาน OOS แล้วนำเข้าไฟล์ที่ถูกต้อง":"")}
+  const bad=!q.looksLikeOos;
+  const why=bad?` — ข้อมูลชุดนี้ไม่เหมือนรายงาน OOS: มี SOH ${fmt(q.withSoh)} · สถานะ ${fmt(q.withStatus)} · ยอดขาย ${fmt(q.withSales)} จาก ${fmt(q.n)} รายการ (รายงาน OOS จริงจะมีค่าเหล่านี้) ตัวอย่าง: ${(q.sample||[]).map(x=>x.barcode+" "+x.name).join(" | ")}`:"";
+  return{big:big||bad,text:(d.source?`นำเข้าจาก: ${d.source}`:"")+(d.importedAt?` · เมื่อ ${new Date(d.importedAt).toLocaleString("th-TH")}`:"")+why+(big&&!bad?" — จำนวนมากผิดปกติ รายงาน OOS ปกติมีไม่กี่ร้อยรายการ อาจนำเข้าไฟล์ผิด (เช่น ไฟล์ผลนับสต็อก) ถ้าใช่ ให้กด “ล้าง OOS” ในแท็บ ผังร้าน / OOS → งาน OOS แล้วนำเข้าไฟล์ที่ถูกต้อง":"")}
 }
 function renderOos(){
   $("#oosCount").textContent=`แสดง ${fmt(oosRows.length)} จาก ${fmt(oosTotal)}`;

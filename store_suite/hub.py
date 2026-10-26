@@ -314,6 +314,12 @@ class Hub:
         depts = sorted(by_dept.values(), key=lambda e: (-e["expired"], -e["within7"], -e["items"]))[:15]
 
         soh = [_num(i.get("soh")) for i in oos_items]
+        n_items = len(oos_items) or 1
+        with_soh = sum(1 for v in soh if v is not None)
+        with_status = sum(1 for i in oos_items if str(i.get("status") or "").strip())
+        with_sales = sum(1 for i in oos_items if _num(i.get("sale7")) is not None or _num(i.get("avg")) is not None)
+        # a real OOS report carries stock-on-hand, a status code and sales; a stock-count or product list does not
+        looks_like_oos = (not oos_items) or (with_soh / n_items >= 0.2 or with_status / n_items >= 0.2 or with_sales / n_items >= 0.2)
         by_result: dict[str, int] = {}
         for i in oos_items:
             if i.get("result"):
@@ -351,6 +357,8 @@ class Hub:
                 "oosPositive": sum(1 for v in soh if v is not None and v > 0),
                 "oosPromo": sum(1 for i in oos_items if i.get("promo")),
                 "oosByResult": by_result,
+                "oosQuality": {"withSoh": with_soh, "withStatus": with_status, "withSales": with_sales, "looksLikeOos": looks_like_oos,
+                               "sample": [{"barcode": str(i.get("barcode") or ""), "name": str(i.get("name") or "")} for i in oos_items[:3]]},
                 "oosSource": src if isinstance(src, str) else (json.dumps(src, ensure_ascii=False) if src else ""),
                 "oosImportedAt": oos_state.get("importedAt") or "",
                 "countedProducts": len(self.count_index()),

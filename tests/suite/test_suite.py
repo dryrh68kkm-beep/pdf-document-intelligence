@@ -163,3 +163,14 @@ def test_server_side_filter_sort_and_paging(client):
     assert client.get("/api/suite/oos?status=all&soh=neg").json()["total"] == 5
     assert client.get("/api/suite/oos?status=all&soh=zero").json()["total"] == 1
     assert client.get("/api/suite/oos?status=done&sort=soh&dir=-1&limit=2").json()["rows"][0]["soh"] == 13
+
+
+def test_oos_quality_flags_data_that_is_not_an_oos_report(client):
+    count_like = [{"barcode": f"88500{i:05d}", "name": f"สินค้า{i}"} for i in range(50)]   # barcode + name only, like a stock-count file
+    client.put("/m/atlas/api/state/oos", content=json.dumps({"items": count_like, "source": "ผลนับ 2.xlsx"}), headers={"X-If-Rev": "*"})
+    q = client.get("/api/suite/overview").json()["atlas"]["oosQuality"]
+    assert q["looksLikeOos"] is False and q["withSoh"] == 0 and len(q["sample"]) == 3
+
+    real = [{"barcode": f"88500{i:05d}", "name": f"สินค้า{i}", "soh": 0, "status": "A-A", "sale7": 3} for i in range(50)]
+    client.put("/m/atlas/api/state/oos", content=json.dumps({"items": real}), headers={"X-If-Rev": "*"})
+    assert client.get("/api/suite/overview").json()["atlas"]["oosQuality"]["looksLikeOos"] is True
